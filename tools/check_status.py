@@ -48,7 +48,7 @@ def _report_checks(path: Path) -> dict | None:
 
 
 def check_plan_counts(errs: list[str]) -> None:
-    """B：行数分项 + status 摘要（复用 plan_stats 的声明正则）。"""
+    """B：行数分项 + status 摘要 + 证据 JSON（复用 plan_stats 的声明正则）。"""
     from tools import plan_stats as PS
     try:
         payload = PS.measure()
@@ -58,6 +58,8 @@ def check_plan_counts(errs: list[str]) -> None:
         return
     errs.extend(PS.check_docs(payload))
     errs.extend(PS.check_status_summary(payload))
+    # R4-H2：reports/E0_plan_stats.json 必须与 measure() 逐字段相等
+    errs.extend(PS.check_evidence(payload))
 
 
 def check_stage_semantics(st: dict, errs: list[str]) -> None:

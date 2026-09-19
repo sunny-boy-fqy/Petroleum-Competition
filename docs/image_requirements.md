@@ -107,12 +107,22 @@ bash /code/workspace/v4/run_train.sh --mode env
 ```
 [OK  ] python_version          python 3.11.x (expected 3.11)
 [OK  ] torch_version           torch 2.4.0+cu124 (expected 2.4.0)
+[OK  ] cuda_runtime_version    torch.version.cuda=12.4 (expected 12.4 = torch 2.4.0+cu124 runtime; 平台驱动能力见 cuda_driver_version)
+[WARN] cuda_driver_version     nvidia-smi CUDA Version=12.6 (平台声明 12.6；驱动能力由平台保证，advisory 不阻塞)
 [OK  ] cuda_available          torch.cuda.is_available()=True
 [OK  ] gpu_is_a100             NVIDIA A100-SXM4-80GB sm_80 79.3 GiB
 [OK  ] bf16_supported          torch.cuda.is_bf16_supported()=True
 [OK  ] disk_headroom           ... free=XX GiB (require >= 8 GiB)
 hard failures: 0
 ```
+
+> **CUDA 语义（R4-B1，务必分清）**：平台镜像是 `torch==2.4.0+cu124`，该 wheel 的
+> `torch.version.cuda` 恒为 **12.4**；镜像文档里的 **CUDA 12.6** 指的是**驱动能力**
+> （`nvidia-smi` 头部的 `CUDA Version: 12.6`），两者不是同一个数。`check_env.py` 现在
+> 用 `cuda_runtime_version` 硬校验 12.4、用 `cuda_driver_version` 以 **warn** 提示 12.6；
+> 旧版拿 `torch.version.cuda` 硬比 12.6 会让云端 `--mode env` 必然 `exit 11`，
+> 使 `E0_cloud_gate` 永远点不亮。`E0_env.json::expected` 也分别给出
+> `cuda_runtime` 与 `cuda_driver_min` 两个键。
 
 结果写入 `/data/v4/reports/E0_env.json`；磁盘分布写入 `E0_disk_budget.json`。
 

@@ -282,6 +282,24 @@ def atom_bce(q_atom_logit, y_atom, mask, pos_weight=None, alpha_nonjoint: float 
     return mean
 
 
+def _require_logit(out: dict, logit_key: str, prob_key: str):
+    """取 logits，**拒绝**把概率当 logits 用（R4-B2）。
+
+    `RowMLP.forward` 同时给出 `q_*`（概率，门控用）与 `q_*_logit`（logits，损失用）。
+    只给概率却要算 BCE 时，若静默接受会让 BCEWithLogits 在 [0,1] 输入上错训，
+    所以这里显式报错并提示正确的键名。
+    """
+    if logit_key in out and out[logit_key] is not None:
+        return out[logit_key]
+    if prob_key in out and out[prob_key] is not None:
+        raise ValueError(
+            f"total_loss: 只找到概率键 out[{prob_key!r}]，缺少 logit 键 out[{logit_key!r}]。"
+            "BCEWithLogits 需要 logits（概率会静默错训）；请改用模型 forward 返回的 "
+            f"{logit_key!r}（RowMLP 同时给出两者）。"
+        )
+    raise KeyError(f"total_loss: out 既没有 {logit_key!r} 也没有 {prob_key!r}")
+
+
 # ---------------------------------------------------------------- 组合
 def total_loss(out: dict, batch: dict, lam1: float = 1.0, lam2: float | None = None,
                lam_atom: float = 0.5, lam_joint: float = 0.2,
@@ -292,7 +310,9 @@ def total_loss(out: dict, batch: dict, lam1: float = 1.0, lam2: float | None = N
 
         L = L_align + λ1·L_aux + λ_joint·L_joint + λ_atom·L_atom
 
-    out  : 模型输出 {'por','perm_z','sw','q_atom','q_joint','ph_logit'}
+    out  : 模型输出 `{'por','perm_z','sw','q_atom','q_joint',...}`。
+           **R4-B2**：BCE 项一律取 `q_joint_logit` / `q_atom_logit`（logits）；
+           只给概率键时会抛出清晰错误，而不是把概率当 logits 静默错训。
     batch: {'por','perm_z','sw','mask'} + 新键 {'y_atom'(B,3), 'y_joint'(B,)}
            旧键 'y_ph'(B,) 仍作为联合标签的 fallback。
     返回 (total, parts_dict_of_floats)
@@ -341,14 +361,14 @@ def total_loss(out: dict, batch: dict, lam1: float = 1.0, lam2: float | None = N
         if y_joint is None:
             raise ValueError("total_loss: joint term enabled but batch has neither 'y_joint' nor 'y_ph'")
         joint_mask = (mask.sum(dim=1) > 0).to(mask.dtype)
-        jl = joint_bce(out["q_joint"], y_joint, joint_mask)
+        jl = joint_bce(_require_logit(out, "q_joint_logit", "q_joint"), y_joint, joint_mask)
         _add("joint", jl, w_joint)
         parts["ph"] = jl            # 旧键别名（日志兼容）
     if atom_on:
         y_atom = batch.get("y_atom")
         if y_atom is None:
             raise ValueError("total_loss: atom term enabled but batch is missing 'y_atom' (B,3)")
-        ap = atom_bce(out["q_atom"], y_atom, mask,
+        ap = atom_bce(_require_logit(out, "q_atom_logit", "q_atom"), y_atom, mask,
                       pos_weight=pos_weight,
                       alpha_nonjoint=alpha_nonjoint,
                       y_joint=batch.get("y_joint"), return_parts=True)

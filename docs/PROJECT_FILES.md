@@ -11,7 +11,7 @@
 ```
 v4/
 ├── README.md                 总入口：环境、平台速查、当前状态
-├── PLAN.md                   总计划（808 行，唯一权威）
+├── PLAN.md                   总计划（851 行，唯一权威）
 ├── 资料引用索引.md            每处引用的可核验定位
 ├── run_train.sh              平台训练任务统一入口（env/data/e0/smoke/stage/all）
 ├── predict.py                推理入口（官方 --data_dir/--output）
@@ -66,13 +66,13 @@ v4/
 │   └── locks/{cloud.txt,submit.txt}  训练/推理依赖快照
 │
 ├── reports/                  必须进 git 的**门禁证据快照**（权威副本在 $V4_REPORTS_DIR=/data/v4/reports）
-│   ├── E0_gate.json              本地契约 Gate 判定（12/12，passed=true）
+│   ├── E0_gate.json              本地契约 Gate 判定（mandatory 13/13，passed=true）
 │   ├── E0_cloud_gate.json        云端 Gate（blocked_pending_cloud_run）
 │   ├── E0_data_card.json         数据卡（计数/状态/schema 异常；shard_cache.cache_root 为可复现形式）
 │   ├── E0_score_check.json       常数基线锚点与总分恒等式
 │   ├── E0_gate_prereg.json       E0 实际预注册
 │   ├── E0_folds.json             折导出
-│   ├── E0_contract_tests.json    契约自检（6 负样例）
+│   ├── E0_contract_tests.json    契约自检（正/负样例）
 │   ├── V4_PLAN_REVIEW{,_2,_3}.md 三轮独立审查报告（负资产，保留）
 │   └── V4_PLAN_IMPROVEMENT_PROPOSAL.md  计划改进建议（已落地）
 │   > `run_train.sh --mode e0` 会把 `$REPORTS_DIR/E0_*.json` **全部**回拷到此处（R3-H5）
@@ -141,9 +141,9 @@ v4/
 
 | 类别 | 已实现 | 计划中（未实现，不在仓库） |
 |---|---|---|
-| `src/` | constants, portability, score, data/{parse,labels,dataset,disk_guard}, features/basic, losses/score_aligned, models/row_mlp, inference/contract, validation/{folds,gates}, versioning/registry | features/{physics,window,well}, models/{unet1d,tcn,patchtf,heads,mmoe,state_head}, inference/{atomic_gate,predictor,decode}, ensemble/blend, losses 的物理项 |
+| `src/` | constants, portability, score, data/{parse,labels,dataset,disk_guard}, features/basic, losses/score_aligned, models/row_mlp（含 E6 的 `q_joint + q_por/q_perm/q_sw` 五个头）, inference/{contract,atomic_gate}, validation/{folds,gates}, versioning/registry | features/{physics,window,well}, models/{unet1d,tcn,patchtf,heads,mmoe}, inference/{predictor,decode}, ensemble/blend, losses 的物理项 |
 | 根目录 | predict.py, run_train.sh, requirements.txt | train.py, configs/v4.yaml（当前为 `configs/paths.yaml`） |
-| 产物 | reports/E0_*.json（7 份）、versions/registry.json、versions/candidates.json、versions/status.json、versions/folds_sha256.json、versions/prereg_templates/（33 份） | 各阶段的 E*.json |
+| 产物 | reports/E0_*.json（10 份）、versions/registry.json、versions/candidates.json、versions/status.json、versions/folds_sha256.json、versions/prereg_templates/（33 份） | 各阶段的 E*.json |
 | `run_train.sh` | `env` / `data` / `e0` 可用 | `smoke` / `stage` 需 E1 代码（当前会明确报错） |
 
 ## 四、文件数量核对（截至 E0 完成时）
@@ -151,8 +151,8 @@ v4/
 | 项 | 数量 |
 |---|---:|
 | git 跟踪文件 | 见 `git ls-files \| wc -l` |
-| 计划文件（`PLAN.md`） | 1（总，808 行）+ 12（阶段，754 行）+ 33（P，5,219 行）= **46 份 / 6,781 行** |
-| P 级计划平均篇幅 | **158 行**（合计 5,219；由 `tools/plan_stats.py` 统计） |
+| 计划文件（`PLAN.md`） | 1（总，851 行）+ 12（阶段，756 行）+ 33（P，5,220 行）= **46 份 / 6,827 行** |
+| P 级计划平均篇幅 | **158 行**（合计 5,220；由 `tools/plan_stats.py` 统计） |
 | 代码模块（`v4/src/**/*.py`） | 见 `find v4/src -name '*.py' \| wc -l` |
 | E 层脚本（`v4/E*/code/*.py`） | 见 `find v4/E* -name '*.py' \| wc -l` |
 

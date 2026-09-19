@@ -48,9 +48,13 @@ def measure() -> dict:
     p_level = count("E*/P*/PLAN.md")
     total = main_p["lines"] + stage["lines"] + p_level["lines"]
     total_files = main_p["files"] + stage["files"] + p_level["files"]
+    e0_reports = sorted(V4.glob("reports/E0_*.json"))
     return {
         "total_plan_files": total_files,
         "total_lines": total,
+        # R4-H2：`reports/E0_*.json` 的份数也是实测值（文档曾写死 7 份，实际已 10 份）
+        "e0_reports": {"files": len(e0_reports),
+                       "names": [p.name for p in e0_reports]},
         "main": {"files": main_p["files"], "lines": main_p["lines"],
                  "avg": main_p["lines"] // max(main_p["files"], 1)},
         "stage": {"files": stage["files"], "lines": stage["lines"],
@@ -96,6 +100,24 @@ def _claims() -> list[Claim]:
         Claim("README.md",
               r"E0 口径层已实现并通过本地契约 Gate (?P<n>\d+)/(?P<d>\d+)",
               (("n", "gate.mandatory_passed"), ("d", "gate.mandatory_total"))),
+        # R4-H1：PLAN.md 里三处"本地契约 Gate N/M"（口径层/r3 修订块 + 状态汇总）也必须有断言，
+        # 否则 13/13 之后它们会静默停在 12/12。三条模式互不重叠，可安全顺序替换。
+        Claim("PLAN.md",
+              r"本地契约 Gate\*\*（(?P<n>\d+)/(?P<d>\d+) PASS",
+              (("n", "gate.mandatory_passed"), ("d", "gate.mandatory_total"))),
+        Claim("PLAN.md",
+              r"E0 本地契约 Gate：(?P<n>\d+)/(?P<d>\d+) mandatory PASS",
+              (("n", "gate.mandatory_passed"), ("d", "gate.mandatory_total"))),
+        Claim("PLAN.md",
+              r"本地契约 Gate (?P<n>\d+)/(?P<d>\d+) PASS（`reports/E0_local_contract_gate\.json`）",
+              (("n", "gate.mandatory_passed"), ("d", "gate.mandatory_total"))),
+        Claim("PLAN.md",
+              r"本地契约 Gate (?P<n>\d+)/(?P<d>\d+) 通过（含 cache 两项）",
+              (("n", "gate.mandatory_passed"), ("d", "gate.mandatory_total"))),
+        # R4-H1：PROJECT_FILES 的文件树里也写死了 Gate 项数
+        Claim("docs/PROJECT_FILES.md",
+              r"E0_gate\.json\s+本地契约 Gate 判定（mandatory (?P<n>\d+)/(?P<d>\d+)，passed=true）",
+              (("n", "gate.mandatory_passed"), ("d", "gate.mandatory_total"))),
         Claim("docs/PROJECT_FILES.md",
               r"├── PLAN\.md\s+总计划（(?P<lines>[\d,]+) 行，唯一权威）",
               (("lines", f"{M}.lines"),)),
@@ -109,9 +131,17 @@ def _claims() -> list[Claim]:
         Claim("docs/PROJECT_FILES.md",
               r"\| P 级计划平均篇幅 \| \*\*(?P<avg>\d+) 行\*\*（合计 (?P<lines>[\d,]+)；",
               (("avg", f"{P}.avg"), ("lines", f"{P}.lines"))),
+        # R4-H2：E0 证据快照份数也是实测值（曾写死 7 份，实际已 10 份）
+        Claim("docs/PROJECT_FILES.md",
+              r"reports/E0_\*\.json（(?P<n>\d+) 份）",
+              (("n", "e0_reports.files"),)),
         # R3-C3：E0 数据卡里的 Gate 项数也是"实物声明"，必须由报告实测（此前写死 10/10）
         Claim("E0/docs/data_card.md",
               r"`reports/E0_local_contract_gate\.json` \| ✅ passed（mandatory (?P<n>\d+)/(?P<d>\d+)）",
+              (("n", "gate.mandatory_passed"), ("d", "gate.mandatory_total"))),
+        # R4-H1：E0/PLAN.md 的状态块（由 E0/code/mark_status.py --force 写入）同样不能手写项数
+        Claim("E0/PLAN.md",
+              r"E0 本地契约 Gate：(?P<n>\d+)/(?P<d>\d+) mandatory PASS",
               (("n", "gate.mandatory_passed"), ("d", "gate.mandatory_total"))),
     ]
 
@@ -184,6 +214,40 @@ def check_status_summary(payload: dict) -> list[str]:
     return errs
 
 
+EVIDENCE_JSON_RELPATH = ("reports", "E0_plan_stats.json")
+
+
+def check_evidence(payload: dict) -> list[str]:
+    """R4-H2：`reports/E0_plan_stats.json` 是**证据副本**，必须与 `measure()` 逐字段相等。
+
+    四审发现它停在旧值（730/708/4988/6426），而 PLAN/README/status 都已同步到 6781；
+    `check_status.py` 与 `test_plan_stats.py` 都不查这个 JSON，于是它成了一份
+    "已提交但过期"的手写副本。现在把它纳入同一次 `--check`（并可由 `--json` 重生成、
+    由 `tools/sync_plan_stats.py` 自动同步），从机制上消除再次过期的可能。
+    """
+    p = V4.joinpath(*EVIDENCE_JSON_RELPATH)
+    if not p.is_file():
+        return [f"{'/'.join(EVIDENCE_JSON_RELPATH)}: 证据 JSON 缺失"
+                "（运行 tools/sync_plan_stats.py 或 tools/plan_stats.py --json 生成）"]
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as exc:                                     # noqa: BLE001
+        return [f"{'/'.join(EVIDENCE_JSON_RELPATH)}: 无法解析 {exc!r}"]
+    errs: list[str] = []
+    for key in ("total_plan_files", "total_lines"):
+        if int(d.get(key, -1)) != int(payload[key]):
+            errs.append(f"{'/'.join(EVIDENCE_JSON_RELPATH)}: {key}={d.get(key)} 与实测 "
+                        f"{payload[key]} 不一致（证据 JSON 已过期）")
+    for section in ("main", "stage", "p_level"):
+        got = d.get(section) or {}
+        want = payload[section]
+        for key in ("files", "lines", "avg"):
+            if int(got.get(key, -1)) != int(want[key]):
+                errs.append(f"{'/'.join(EVIDENCE_JSON_RELPATH)}: {section}.{key}="
+                            f"{got.get(key)} 与实测 {want[key]} 不一致（证据 JSON 已过期）")
+    return errs
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", default=None)
@@ -215,16 +279,19 @@ def main() -> int:
     if args.check is not None:
         paths = args.check or None
         errs = check_docs(payload, paths)
-        # 默认（未显式指定文件）时额外校验 status.json 摘要
+        # 默认（未显式指定文件）时额外校验 status.json 摘要 + 证据 JSON（R4-H2）
         if paths is None:
             errs += check_status_summary(payload)
+            errs += check_evidence(payload)
         if errs:
             for e in errs:
                 print(f"WARN: {e}")
             print(f"RESULT: FAIL（{len(errs)} 条声明不一致；运行 tools/sync_plan_stats.py 修复）")
             rc = 1
         else:
-            scope = ", ".join(sorted(set(paths))) if paths else "PLAN.md, README.md, docs/PROJECT_FILES.md, versions/status.json"
+            scope = ", ".join(sorted(set(paths))) if paths else (
+                "PLAN.md, README.md, docs/PROJECT_FILES.md, versions/status.json, "
+                "reports/E0_plan_stats.json")
             print(f"RESULT: OK（{scope} 的行数声明全部与实测一致）")
     return rc
 

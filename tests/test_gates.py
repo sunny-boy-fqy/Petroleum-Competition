@@ -316,5 +316,108 @@ class TestGateTypeInferenceSingleSource(unittest.TestCase):
         self.assertEqual(G.validate_prereg(d), [])
 
 
+class TestAbsoluteGateMetricMapping(unittest.TestCase):
+    """R4-M3：`gate_type=absolute` 的判定必须走指标字段映射，而不是永远读 `score`。
+
+    旧实现在 absolute 分支里硬编码 `result["score"]`，因此
+    `primary_threshold_key=min_auc` / `max_minutes` 这类键会取错值（或取不到值而
+    静默判失败）。33 份模板目前没有 absolute Gate，所以这是个 latent bug。
+    """
+
+    def _abs(self, key: str, want: float):
+        return _prereg(gate_type="absolute", primary_metric="state_auc",
+                       primary_threshold_key=key, thresholds={key: want})
+
+    def test_min_auc_uses_auc_field_not_score(self):
+        d = self._abs("min_auc", 0.97)
+        checks = {c: True for c in d["mandatory_checks"]}
+        # auc 达标但 score 很低：旧实现会因为读 score 而误判
+        ok = G.aggregate_gate(d, {"checks": checks, "auc": 0.98, "score": 1.0})
+        self.assertTrue(ok["passed"], ok)
+        self.assertEqual(ok["details"]["field"], "auc")
+        bad = G.aggregate_gate(d, {"checks": checks, "auc": 0.95, "score": 100.0})
+        self.assertFalse(bad["passed"])
+        self.assertEqual(bad["details"]["field"], "auc")
+
+    def test_max_minutes_uses_minutes_field_and_max_direction(self):
+        d = self._abs("max_minutes", 40.0)
+        checks = {c: True for c in d["mandatory_checks"]}
+        ok = G.aggregate_gate(d, {"checks": checks, "minutes": 31.0, "score": 0.0})
+        self.assertTrue(ok["passed"], ok)
+        self.assertEqual(ok["details"]["direction"], "max")
+        self.assertEqual(ok["details"]["field"], "minutes")
+        bad = G.aggregate_gate(d, {"checks": checks, "minutes": 55.0})
+        self.assertFalse(bad["passed"])
+
+    def test_state_auc_alias_is_accepted(self):
+        d = self._abs("min_auc", 0.9)
+        checks = {c: True for c in d["mandatory_checks"]}
+        ok = G.aggregate_gate(d, {"checks": checks, "state_auc": 0.95})
+        self.assertTrue(ok["passed"])
+        self.assertEqual(ok["details"]["field"], "state_auc")
+
+    def test_missing_metric_fails_not_passes(self):
+        d = self._abs("min_auc", 0.9)
+        checks = {c: True for c in d["mandatory_checks"]}
+        res = G.aggregate_gate(d, {"checks": checks, "score": 100.0})
+        self.assertFalse(res["passed"], "拿不到 auc 时必须判失败（宁严勿松）")
+        self.assertIn("缺少", res["details"]["error"])
+
+    def test_legacy_score_key_still_works(self):
+        """未登记映射的键（如 'score'）保留旧行为：回落到 result['score']。"""
+        d = self._abs("score", 60.0)
+        checks = {c: True for c in d["mandatory_checks"]}
+        self.assertTrue(G.aggregate_gate(d, {"checks": checks, "score": 61.0})["passed"])
+        self.assertFalse(G.aggregate_gate(d, {"checks": checks, "score": 59.0})["passed"])
+
+
+class TestE0PreregRecompute(unittest.TestCase):
+    """R4-H1：E0 的 prereg 与实物报告必须能用**同一个**校验器复算通过。
+
+    四审实测：prereg 有 13 项（含 `contract_ok`），report 只有 12 项（含
+    `contract_selftest`），且 report 没有 `abs_diff` -> `aggregate_gate` 直接
+    `passed=False`。这个回归把"预注册能否被实物复算"变成硬断言。
+    """
+
+    def _load(self, name: str) -> dict | None:
+        p = V4 / "reports" / name
+        if not p.is_file():
+            return None
+        return json.loads(p.read_text(encoding="utf-8"))
+
+    def test_reports_exist(self):
+        for name in ("E0_gate_prereg.json", "E0_local_contract_gate.json"):
+            self.assertIsNotNone(self._load(name), f"缺少 {name}")
+
+    def test_aggregate_gate_recompute_passes(self):
+        prereg = self._load("E0_gate_prereg.json")
+        report = self._load("E0_local_contract_gate.json")
+        checks = report.get("mandatory_checks") or report.get("checks")
+        result = {"checks": checks}
+        for k in ("abs_diff", "score_total_abs_diff"):
+            if k in report:
+                result[k] = report[k]
+        out = G.aggregate_gate(prereg, result)
+        self.assertEqual(out["prereg_errors"], [], out["prereg_errors"])
+        self.assertEqual(out["mandatory_failures"], [], out["mandatory_failures"])
+        self.assertTrue(out["passed"], json.dumps(out, ensure_ascii=False)[:1200])
+
+    def test_prereg_and_report_declare_the_same_checks(self):
+        prereg = self._load("E0_gate_prereg.json")
+        report = self._load("E0_local_contract_gate.json")
+        declared = set(prereg["mandatory_checks"])
+        actual = set(report.get("mandatory_checks") or report.get("checks") or {})
+        self.assertEqual(declared - actual, set(),
+                         "prereg 声明了 report 没有的 mandatory check（无法复算）")
+        self.assertEqual(actual - declared, set(),
+                         "report 有 prereg 未声明的 mandatory check（预注册漏记）")
+
+    def test_report_exposes_abs_tolerance_metric(self):
+        report = self._load("E0_local_contract_gate.json")
+        self.assertIn("abs_diff", report)
+        self.assertLessEqual(abs(float(report["abs_diff"])), 1e-4,
+                             "常数基线锚点偏差必须 <= abs_tolerance=1e-4")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -5,7 +5,7 @@
   "project": {
     "version": "v4",
     "phase": "E0",
-    "summary": "E0 本地契约 Gate 12/12 PASS（云端 Gate 待 P0 实机）；计划全部完成（46 份 / 6,781 行，由 tools/plan_stats.py 实测）；三审 R3-C1..C3/H1..H5/M1..M5 已修复并回归验证；改进 proposal 已落进 PLAN.md / E6 与 src/",
+    "summary": "E0 本地契约 Gate 13/13 PASS（云端 Gate 待 P0 实机）；计划全部完成（46 份 / 6,827 行，由 tools/plan_stats.py 实测）；三审 R3-C1..C3/H1..H5/M1..M5 与四审 R4-B1..B3/H1..H3/M1..M6 已修复并回归验证；改进 proposal 已落进 PLAN.md / E6 与 src/",
     "last_updated": "2026-09-19T21:10:00+00:00"
   },
   "stages": [
@@ -35,13 +35,18 @@
             "versions/folds_sha256.json",
             "reports/E0_folds.json",
             "$V4_CACHE_ROOT/manifest.json",
-            "reports/E0_score_check.json"
+            "reports/E0_score_check.json",
+            "reports/E0_gate_prereg.json",
+            "reports/E0_gate_result.json",
+            "reports/E0_plan_stats.json"
           ],
           "findings": [
             "3 口训练井 schema 非规范：17,426 行多列（含 CASE）+ 9,654 行缺 CASE",
             "输入列泄漏曾使 inputs[:,13]==POR（80 井全中），已修复并加 input_no_label_leak 回归",
             "分片缓存已纳入 E0 产出（32.39 MB，90 井输入列校验通过；cache_root 已改为可复现形式，不再是 /tmp 临时路径）",
-            "缓存证据持久化：本地证据 `cache_root` 记为可复现形式（repo 相对），云端为 `$V4_CACHE_ROOT`（= /data/v4/cache），manifest 见 `$V4_CACHE_ROOT/manifest.json`"
+            "缓存证据持久化：本地证据 `cache_root` 记为可复现形式（repo 相对），云端为 `$V4_CACHE_ROOT`（= /data/v4/cache），manifest 见 `$V4_CACHE_ROOT/manifest.json`",
+            "R4-H1：`E0_gate_prereg.json` × `E0_local_contract_gate.json` 可用同一 `aggregate_gate` 复算通过（13/13 + `abs_diff`），结论落在 `reports/E0_gate_result.json`",
+            "R4-H2：`reports/E0_plan_stats.json` 由 `tools/sync_plan_stats.py` 与实测同源生成，并被 `plan_stats.py --check` / `check_status.py` 强制校验"
           ]
         },
         {
@@ -72,7 +77,7 @@
             "versions/candidates.json"
           ],
           "findings": [
-            "CONST 基线端到端 10 井/95,948 行/1.4 s CPU，契约 6 负样例全拒绝"
+            "CONST 基线端到端 10 井/95,948 行/1.4 s CPU，契约全部负样例被拒绝（项数见 reports/E0_contract_tests.json）"
           ]
         }
       ],
@@ -80,10 +85,12 @@
         "local": {
           "id": "E0_local_contract_gate",
           "passed": true,
-          "mandatory_passed": 12,
-          "mandatory_total": 12,
+          "mandatory_passed": 13,
+          "mandatory_total": 13,
           "report": "reports/E0_local_contract_gate.json",
-          "note": "12 项 = 原 10 项 + `shard_cache_built` + `shard_cache_input_cols_ok`；由 tools/plan_stats.py 从报告实测，禁止手写。"
+          "prereg": "reports/E0_gate_prereg.json",
+          "prereg_recompute": "reports/E0_gate_result.json",
+          "note": "13 项 = 原 12 项 + `contract_ok`（`contract_selftest` 的显式别名，R4-H1：此前 prereg 有 13 项、report 只有 12 项，用 aggregate_gate 复算会 mandatory_failures=['contract_ok']）；由 tools/plan_stats.py 从报告实测，禁止手写。"
         },
         "cloud": {
           "id": "E0_cloud_gate",
@@ -379,7 +386,7 @@
       "resolved": {
         "C1_sw_scale_residue": "fixed（全仓统一单一标签尺度；SW<1=0；生成器已改，E0/docs/data_card.md 由脚本生成）",
         "C2_plan_line_sync": "fixed（plan_stats 改为逐条带上下文断言；sync 复用同一份正则；check_status 校验阶段/P 分项）",
-        "C3_gate_count_and_cache_root": "fixed（统一 12/12；cache_root 改可复现形式；status 补 $V4_CACHE_ROOT/manifest.json）",
+        "C3_gate_count_and_cache_root": "fixed（项数由报告实测；cache_root 改可复现形式；status 补 $V4_CACHE_ROOT/manifest.json）；R4-H1 后统一为 13/13 且 prereg 可复算",
         "H1_gate_direction_and_field_mapping": "fixed（min_*/max_* 分组 + 指标字段映射 + E9_P2/E10 单测）",
         "H2_disk_budget_data_root": "fixed（disk_guard --data-root/--path，E0_disk_budget.json 含 paths/worst_level/primary_path）",
         "H3_proposal_not_landed": "fixed（proposal 已落进 PLAN.md / E6 / src/）",

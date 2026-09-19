@@ -29,7 +29,7 @@
 
 ## 4. 输出契约
 
-- `src/models/state_head.py`（`q_joint + q_por/q_perm/q_sw` 五个头）、`$V4_RUN_ROOT/E6/state/{foldk}.pt`（含 stage 1/2 元数据）
+- `src/models/row_mlp.py`（`RowMLP` 的 `q_joint + q_por/q_perm/q_sw` 五个头）、`$V4_RUN_ROOT/E6/state/{foldk}.pt`（含 stage 1/2 元数据）
 - `$V4_REPORTS_DIR/E6_atomic_report.json`（逐目标 AUC / Acc / Precision / Recall / F1、joint atom AUC、两阶段曲线）
 
 ## 5. 执行步骤
@@ -87,7 +87,7 @@
 
 ## 11. 代码归属
 
-- `src/models/state_head.py`
+- `src/models/row_mlp.py`
 - `E6/code/train_state.py`
 
 ## 12. 复算与证据

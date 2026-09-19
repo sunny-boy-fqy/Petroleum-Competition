@@ -26,7 +26,7 @@
 > 2. **SW 尺度误判**：实测有效 SW 为 min **8.305** / median **82.805** / max **99.9**，**SW<1 的行数为 0** → SW 是**单一标签尺度（百分数）**，取消"×100 双尺度"前提；`SW_SMALL_BRANCH=False`（旧对照路径已 deprecated，永久关闭）；仍然严禁全局裁剪到 [0,1]。
 > 3. **非规范井描述错误**：只有 `c7611b01` 缺 CASE；`42f2870b`/`b7eb1274` 含 CASE，只是多了 K/U/CGR → 17,426 行"多列" + 9,654 行"缺 CASE"。
 >
-> 同时修复：E0 Gate 拆分为**本地契约 Gate**（12/12 PASS，含 cache 两项）与**云端 Gate**（`blocked_pending_cloud_run`）；候选注册表逐目标分数按实测回填并加总分恒等式校验（`tools/check_consistency.py`）；`build_cache` 纳入 E0 产出（32.4 MB，90 井输入列校验通过）；33 份 P 级 Gate 预注册模板全部通过 `src/validation/gates.py::validate_prereg`；新增 `tools/check_status.py` 校验状态台账与实物一致。
+> 同时修复：E0 Gate 拆分为**本地契约 Gate**（13/13 PASS，含 cache 两项）与**云端 Gate**（`blocked_pending_cloud_run`）；候选注册表逐目标分数按实测回填并加总分恒等式校验（`tools/check_consistency.py`）；`build_cache` 纳入 E0 产出（32.4 MB，90 井输入列校验通过）；33 份 P 级 Gate 预注册模板全部通过 `src/validation/gates.py::validate_prereg`；新增 `tools/check_status.py` 校验状态台账与实物一致。
 >
 > **E0-R1 修订（2026-09-19，本机复算后的契约修订）—— ⚠️ 本节已被下方 E0-R2 取代**，保留仅作历史追溯；其中「3 口井都缺 CASE」的表述是错的。
 >
@@ -37,13 +37,13 @@
 > 2. **SW 尺度误判**：实测有效 SW 为 min **8.305** / median **82.805** / max **99.9**，**SW<1 的行数为 0** → SW 是**单一标签尺度（百分数）**，取消"×100 双尺度"前提；`SW_SMALL_BRANCH=False`（旧对照路径已 deprecated，永久关闭）；仍然严禁全局裁剪到 [0,1]。
 > 3. **非规范井描述错误**：只有 `c7611b01` 缺 CASE；`42f2870b`/`b7eb1274` 含 CASE，只是多了 K/U/CGR → 17,426 行"多列" + 9,654 行"缺 CASE"。
 >
-> 同时修复：E0 Gate 拆分为**本地契约 Gate**（12/12 PASS，含 cache 两项）与**云端 Gate**（`blocked_pending_cloud_run`）；候选注册表逐目标分数按实测回填并加总分恒等式校验（`tools/check_consistency.py`）；`build_cache` 纳入 E0 产出（32.4 MB，90 井输入列校验通过）；33 份 P 级 Gate 预注册模板全部通过 `src/validation/gates.py::validate_prereg`；新增 `tools/check_status.py` 校验状态台账与实物一致。
+> 同时修复：E0 Gate 拆分为**本地契约 Gate**（13/13 PASS，含 cache 两项）与**云端 Gate**（`blocked_pending_cloud_run`）；候选注册表逐目标分数按实测回填并加总分恒等式校验（`tools/check_consistency.py`）；`build_cache` 纳入 E0 产出（32.4 MB，90 井输入列校验通过）；33 份 P 级 Gate 预注册模板全部通过 `src/validation/gates.py::validate_prereg`；新增 `tools/check_status.py` 校验状态台账与实物一致。
 >
 > **E0-R1 修订（2026-09-19，本机复算后的契约修订，最高优先级）**：执行 E0 口径层时发现**两个会静默吃掉分数的硬事实**，已冻结进契约：
 > 1. **3 口训练井的表头不是官方 17 列**（`42f2870b` 20 列含 K/U/CGR 缺 CASE；`b7eb1274` 21 列含 TH/K/U/CGR 缺 CASE；`c7611b01` 16 列缺 CASE），共 **27,080 行（3.71%）**，且这 3 口井**都在 80 井折内、三目标齐全**。→ **禁止按列位置解析**，必须按表头名对齐、缺列补 `NaN`、多余列忽略，并对内部列宽做硬断言。开发中已实际触发一次 numpy 越界切片静默截断（丢掉 SW 列且不报错）。
 > 2. **评分分母口径确定**：常数基线 (0.1, 0.01, 99.9) 在 `missing_mode="drop"`（逐目标排除缺测行）下 = **70.490735**，命中锚点 70.4907 ±1e-4；在 `"mask"`（全行分母）下 = 69.843218。→ **全项目统一使用 `drop`**，所有 OOF 数字必须标注该口径。
 >
-> 同时已复算并冻结：训练 80 井 / **730,268 行**；测试 10 井 / **95,948 行**；状态计数 缺测 **6,700** / 占位 **487,225** / 有效 **236,343**；折指纹 sha256 `f7c2c58b…d94b87e`（80 井 / 5 折）。E0 **本地契约 Gate 12/12 通过（含 cache 两项）**（`reports/E0_local_contract_gate.json`）；云端 Gate 待 P0（`E0_cloud_gate.json` 状态 `blocked_pending_cloud_run`）。
+> 同时已复算并冻结：训练 80 井 / **730,268 行**；测试 10 井 / **95,948 行**；状态计数 缺测 **6,700** / 占位 **487,225** / 有效 **236,343**；折指纹 sha256 `f7c2c58b…d94b87e`（80 井 / 5 折）。E0 **本地契约 Gate 13/13 通过（含 cache 两项）**（`reports/E0_local_contract_gate.json`）；云端 Gate 待 P0（`E0_cloud_gate.json` 状态 `blocked_pending_cloud_run`）。
 
 ---
 
@@ -51,10 +51,10 @@
 
 | 层级 | 数量 | 篇幅 | 状态 |
 |---|---:|---:|---|
-| 总计划 `PLAN.md` | 1 | **808 行** | ✅ 完成 |
-| 阶段计划 `E*/PLAN.md` | 12 | 平均 62 行（合计 754） | ✅ 完成 |
-| P 级子计划 `E*/P*/PLAN.md` | 33 | **平均 158 行**（合计 5,219） | ✅ 完成（V2 深度：输入/输出契约、执行步骤、参数表、完成判据、禁止事项、风险对策、停止规则、inner-OOF 选择协议、复算命令、Gate 预注册 JSON） |
-| 计划文件合计 | 46 | **6,781 行** | ✅ |
+| 总计划 `PLAN.md` | 1 | **851 行** | ✅ 完成 |
+| 阶段计划 `E*/PLAN.md` | 12 | 平均 63 行（合计 756） | ✅ 完成 |
+| P 级子计划 `E*/P*/PLAN.md` | 33 | **平均 158 行**（合计 5,220） | ✅ 完成（V2 深度：输入/输出契约、执行步骤、参数表、完成判据、禁止事项、风险对策、停止规则、inner-OOF 选择协议、复算命令、Gate 预注册 JSON） |
+| 计划文件合计 | 46 | **6,827 行** | ✅ |
 
 > **行数由 `tools/plan_stats.py` 实测、`tools/sync_plan_stats.py` 同步、`plan_stats.py --check` 校验**
 > （审查 R2-H6/R3-C2：此前手写数字两次过期，且旧校验只查总量、漏检阶段/P 分项）。
@@ -68,9 +68,9 @@
 | P0 | 云端环境与磁盘实测 | ⏸ 待云端（本机无 GPU/torch） | `E0/code/check_env.py`、`setup_deps.sh` |
 | P1 | 数据卡、哨兵与标签三状态 | ✅ | `reports/E0_data_card.json`、`E0/docs/data_card.md`、`versions/folds_sha256.json` |
 | P2 | 评分器与分母口径冻结 | ✅ | `src/score.py`、常数基线 **70.490735**（锚点 70.4907） |
-| P3 | 提交契约、版本路由、干净目录冒烟 | ✅ | `predict.py`、`reports/E0_contract_tests.json`（6 负样例全拒绝） |
+| P3 | 提交契约、版本路由、干净目录冒烟 | ✅ | `predict.py`、`reports/E0_contract_tests.json`（全部负样例被拒绝） |
 
-**E0 本地契约 Gate：12/12 mandatory PASS（含 `shard_cache_built` / `shard_cache_input_cols_ok`）**（`reports/E0_local_contract_gate.json`）；
+**E0 本地契约 Gate：13/13 mandatory PASS（含 `contract_ok` = `contract_selftest` 别名、`shard_cache_built`、`shard_cache_input_cols_ok`）**（`reports/E0_local_contract_gate.json`）；
 **E0 云端 Gate：`blocked_pending_cloud_run`**（需 E0/P0 在 A100 任务实测，`reports/E0_cloud_gate.json`）。
 
 E0 的两个硬发现（已冻结进契约，详见 §6.1 与 [`E0/docs/data_card.md`](E0/docs/data_card.md)）：
@@ -296,6 +296,16 @@ python v4/src/data/disk_guard.py --min-free-gb 8 --report /home,/tmp \
 
 `v4/src/data/disk_guard.py` 提供 `assert_disk_headroom(min_gb=8.0)`（已实现，含 `cleanup` / `save_and_exit` / `abort` 三级动作与 `disk_guard` 上下文管理器）：
 
+> **R4-H3：所有降级路径必须经过同一套出口**。此前只在**初次**测得 `save_and_exit` 时调
+> `capacity_hook()` 保存 `last.pt`；若初次是 `cleanup`、cleanup 之后才降到 `save_and_exit`，
+> 就只抛错不保存（磁盘快满时**最后一个 checkpoint 丢失**，`--resume` 无从续训）。
+> 现在 `save_and_exit` → 先 `capacity_hook()` 再抛 `DiskBudgetError`；`abort`（free < 3 GB）
+> → **不调 hook、且不受 `allow_soft` 影响**（软接受只对"cleanup 后仍低于 8 GB 但高于 5 GB
+> 安全线"的情形有效），保证机器绝不在 < 3 GB 时继续写盘。
+> 对应回归：`tests/test_disk_guard.py` 用 monkeypatch 覆盖 `ok / cleanup→ok /
+> cleanup→save_and_exit / cleanup→abort / cleanup→cleanup(allow_soft) / save_and_exit 直达 /
+> abort 直达` 七条路径，并断言 hook 调用次数与 `risk_accepted` 标记。
+
 > 不安装：`tensorboard`/`matplotlib`/`jupyter`/`wandb`（用 CSV+JSON 日志替代）、`torchvision`/`timm`（不需要图像侧依赖）、任何 CUDA 编译扩展。
 
 > 每个任务开始时在 `v4/reports/training_time_log.json` 写入 `task/planned_h/started_at/git_rev`，结束时回填 `actual_h`、`best_epoch`、`peak_mem_gb`、`checkpoint_path`。**所有训练脚本必须实现 `--resume`、`--time-budget-h`（到点保存并优雅退出）与每 epoch checkpoint。**
@@ -390,6 +400,16 @@ python v4/src/data/disk_guard.py --min-free-gb 8 --report /home,/tmp \
 | **井级分支 H4** | 只做**辅助**、小容量、强正则；所有井级偏差/校准参数只在 inner-OOF 选 | **必须消融**（前代证据：80 井上井级校准极易过拟合）；无效即 NO-GO |
 
 ### 5.3 输出头
+
+> **logit / probability 契约（R4-B2，实现与测试都必须遵守）**：上表第二列描述的是**头本身的输出**
+> （logit）。`RowMLP.forward` 同时返回两套键，**绝不混用**：
+> `q_atom_logit`/`q_joint_logit`（**loss 专用**，喂 `BCEWithLogits`）与
+> `q_atom = sigmoid(q_atom_logit)`/`q_joint = sigmoid(q_joint_logit)`（**门控专用**，
+> 喂 `per_target_hard_switch`/`joint_guard`/`select_tau_per_target`）；`ph_logit` 是
+> `q_joint_logit` 的旧键别名。把 logits 直接送进 `[0.05, 0.95]` 的 τ 网格等于只在
+> `sigmoid([0.05,0.95]) ≈ [0.512,0.721]` 上搜阈值；把概率送进 `BCEWithLogits` 会静默错训。
+> 对应回归测试：真实 `forward` → `decode_predictions` 链路 + logit-only dict 与
+> probability dict 逐位一致 + `total_loss` 只给概率时显式报错。
 
 | 头 | 结构 | 监督信号 | 输出语义 |
 |---|---|---|---|
@@ -548,6 +568,11 @@ L = L_align(主) + λ₁·L_aux(稠密梯度) + λ_joint·L_joint + λ_atom·L_a
    ```
    目标函数是**官方加权总分**（POR 0.30 / PERM 0.35 / SW 0.35），**不是 F1、不是原子分类准确率**；
    取**平台区中点**而非 argmax 尖峰（防 inner-OOF 过拟合）；outer 折只推理一次。
+   **口径唯一事实源（R4-M2/M4）**：`τ` 网格固定为 `[0.05, 0.95]` **步长 0.01（91 点）**、
+   平台相对容差 `tol = 1e-3`，由 `inference/atomic_gate.py::default_tau_grid()` /
+   `DEFAULT_PLATEAU_TOL` 提供，计划与代码不得各写一份；目标函数默认走
+   `official_score_fns()`（**直接包装 `src/score.py`** 的 `Acc_POR/Acc_PERM/Acc_SW`，
+   drop 口径 soft score），禁止自写 0/1 容差准确率冒充"官方"。
    必须报告：`τ_t` 曲线（阈值 vs inner-OOF Total）、平台区、逐目标 `atomic_precision/recall/F1/acc`、
    连续切片 Acc、以及**误判代价分解**（有效行判原子 / 原子行判连续各自的分数变化）。
 3. **`joint_guard` 是可选门禁，默认关闭**：仅当 `q_joint > tau_joint_high` 时把三目标一起置为原子值。
@@ -557,6 +582,15 @@ L = L_align(主) + λ₁·L_aux(稠密梯度) + λ_joint·L_joint + λ_atom·L_a
    atom action 与 continuous action 的期望分，再做单调化），最终仍落成可复算的单调动作表或 τ 数组。
    POR 吸附同理：`q_por` 高置信 → 精确 0.1；灰区用 inner-OOF 期望分判断吸附还是保留连续预测。
 5. **Gate 强制上报**：占位行在 OOF 上的**逐目标命中率**（POR/PERM/SW 各自的 Acc），并给出"若全部输出常量"的分数 70.4907 作为下界对照。任何版本只要在占位行上的 Acc 低于 0.98，该目标即 NO-GO。
+6. **提交契约的 SW 尺度四重守卫（R4-B3）**：`inference/contract.py` 不得只用"全体中位数"判断 SW 尺度
+   —— 原子行占 2/3 时中位数会被 99.9 拉高，剩余连续分支即使被错误归一化到 `[0,1]` 也会"通过"。
+   现在四重判据任一触发即拒绝提交：**(a)** `n(SW < 1.0)/n_obs > 1e-3`
+   （训练标签里 `SW<1` 的行数实测为 **0**）；**(b)** `n(SW < SW_VALID_MIN)/n_obs > 1%`
+   （容忍个别边界外推——真值最小 8.305——但整片低于下界必然是尺度错）；**(c)** 非原子行
+   p05 `< SW_VALID_MIN`（仅当非原子行 ≥ 20 条时判定，避免小样例把单点外推误判成量纲错误）；
+   **(d)** 全体中位数 `< SW_VALID_MIN`。
+   契约自检的正样例必须使用真实尺度（`SW ≥ 8.305`），
+   负样例必须包含"原子行占多数 + 连续行被归一化"的反例（`E0_contract_tests.json`）。
 
 ---
 
@@ -564,7 +598,7 @@ L = L_align(主) + λ₁·L_aux(稠密梯度) + λ_joint·L_joint + λ_atom·L_a
 
 执行顺序：**E0 → E1 → E2 ⇒ E3 → E4 → E5 → E6 →（E7 公共件）→ E8 → E9 → E10 → E11**
 
-- [E0 数据、评测与提交契约](E0/PLAN.md) — 数据卡、哨兵、标签状态、评分器复算（70.4907）、按井折、提交契约与 CPU-only 单测。**不训练任何模型。**　**状态：本地契约 Gate 12/12 PASS（`reports/E0_local_contract_gate.json`）；云端 Gate `blocked_pending_cloud_run`（`reports/E0_cloud_gate.json`）。**
+- [E0 数据、评测与提交契约](E0/PLAN.md) — 数据卡、哨兵、标签状态、评分器复算（70.4907）、按井折、提交契约与 CPU-only 单测。**不训练任何模型。**　**状态：本地契约 Gate 13/13 PASS（`reports/E0_local_contract_gate.json`）；云端 Gate `blocked_pending_cloud_run`（`reports/E0_cloud_gate.json`）。**
 - [E1 纯 DL 行级基线](E1/PLAN.md) — **当前阶段（P0/P1 代码待写）**。32 维行级输入 + MLP（无序列上下文），对接对齐损失，建立纯 DL 分母与容量标定；硬 Gate ≥ 78.0。
 - [E2 特征工程与数据管线](E2/PLAN.md) — `F_phys`/`F_win`/`F_well` 三组特征、增强策略、按井分片缓存与 16 GiB 内存纪律。
 - [E3 深度序列主干](E3/PLAN.md) — 1D U-Net 与 TCN 头对头，含**感受野消融**；硬 Gate ≥ 81.0 且序列主干必须优于同头行级模型。
@@ -630,6 +664,15 @@ L = L_align(主) + λ₁·L_aux(稠密梯度) + λ_joint·L_joint + λ_atom·L_a
 | E8 | EMA/SWA/快照**至少一个策略**在 inner-OOF ≥ 最佳单成员，且 CI 下界 > 0 | 成员相关性/同源性报告完整；**同源平均不得计为增益**（CI 含 0 即 NO-GO） |
 | E9 | 80 井 OOF ≥ 82.0 且护栏通过（`choose_submission.py`） | 16 井体检不得崩坏（掉 >1.5 分即触发复核） |
 | E10 | 干净目录两次运行结果一致；10 井/95,948 行；CPU 单次 < 30 min | README 两条命令可执行 |
+
+> **预注册必须可被实物报告复算（R4-H1）**：每个 Gate 的 `reports/E<stage>_gate_prereg.json` 与
+> 对应报告必须能用**同一个** `src/validation/gates.py::aggregate_gate` 复算出 `passed=true`
+> —— 即 prereg 的 `mandatory_checks` 与报告的 checks **逐项同名同数**，且 `primary_threshold_key`
+> 所需的指标字段（如 `abs_tolerance` → `abs_diff`）在报告里真实存在。
+> E0 曾出现 prereg 13 项、报告 12 项（`contract_ok` vs `contract_selftest`）导致复算直接失败；
+> 现在 E0 的复算结论落在 `reports/E0_gate_result.json`，并由
+> `tests/test_gates.py::TestE0PreregRecompute` 与 `tests/test_platform_scripts.py` 硬断言。
+> `gate_type=absolute` 的判定也必须走 `METRIC_RESULT_FIELDS` 指标映射（不是永远读 `score`）。
 
 ### 8.3 停止规则
 

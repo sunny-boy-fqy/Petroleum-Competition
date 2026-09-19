@@ -4,7 +4,7 @@
 
 > **性质**：交付契约冻结：格式错误 = 零分风险　|　**依赖**：E0/P1（数据）、E0/P2（评分）
 >
-> **状态**：✅ 已完成　　证据：`reports/E0_contract_tests.json`（6 负样例全拒绝）、`versions/registry.json`、`versions/candidates.json`
+> **状态**：✅ 已完成　　证据：`reports/E0_contract_tests.json`（全部负样例被拒绝；项数由 JSON 实测）、`versions/registry.json`、`versions/candidates.json`
 
 > 本目录是最小可执行单元：`code/` 放本 P 专属脚本，`docs/` 放本 P 的结论与证据。
 
@@ -38,7 +38,7 @@
 1. 实现 `validate_payload`：顶层键集合、logId 集合与文件名一致、行数、逐行键名、depth 严格递增、有限性、PERM>0、禁止 SW 裁剪
 2. 实现 `predict.py`：识别 `--data_dir` 指向 `data/` 或测试井目录两种形态；生成后自动调用契约校验，失败即非零退出
 3. 支持 `--use-version CONST` 走常数基线（用于契约自检，不参与评分竞争）
-4. 跑 6 个负样例单测（PERM≤0 / 缺顶层键 / 行数不符 / depth 乱序 / 大写 DEPTH / NaN）
+4. 跑**全部负样例**单测（PERM≤0 / 缺顶层键 / 行数不符 / depth 乱序 / 大写 DEPTH / NaN / **SW 被归一化到小数区间** / **原子行占多数掩盖归一化**），项数以 `E0_contract_tests.json::n_negative` 为准，文档不手写数字
 5. 在只含 `v4/` 与 `data/` 的干净目录执行 `python3 predict.py --data_dir ./data --output result.json`
 6. 建立 `versions/candidates.json` 空表与 schema 注释
 
@@ -52,11 +52,11 @@
 
 ## 7. 完成判据
 
-- 6 个负样例**全部被正确拒绝**，正样例通过（`E0_contract_tests.json::passed=true`）
+- **全部负样例**被正确拒绝（`n_negative == n_rejected`）、正样例通过（`E0_contract_tests.json::passed=true`）
 - 干净目录下 `python3 predict.py --use-version CONST --data_dir ./data --output result.json` 在一次运行内产出 10 井 / 95,948 行且 `contract_ok=true`（实测 ≈1.4 s，单核 CPU）
 - `predict.py` 在**无 torch** 环境可运行；`--list-versions` 正确区分可用/未训练版本
 - `versions/registry.json` 建立且被 `predict.py` 读取（`src/versioning/registry.py`）
-- E0 **本地契约 Gate 12/12（含 cache）**全部 mandatory 通过（10 项原检查 + `shard_cache_built` + `shard_cache_input_cols_ok`，见 `reports/E0_local_contract_gate.json`）
+- E0 **本地契约 Gate** 全部 mandatory 通过（项数见 `reports/E0_local_contract_gate.json`，由 tools/plan_stats.py 实测，禁止手写；含 `contract_ok` + `shard_cache_built` + `shard_cache_input_cols_ok`），且与 `reports/E0_gate_prereg.json` 可用同一个 `aggregate_gate` 复算通过
 
 ## 8. 禁止事项
 
@@ -85,7 +85,7 @@
 
 ## 12. 复算与证据
 
-- `reports/E0_contract_tests.json`（6 负样例全拒绝）
+- `reports/E0_contract_tests.json`（全部负样例被拒绝；项数由 JSON 实测）
 - `versions/registry.json`
 - `versions/candidates.json`
 

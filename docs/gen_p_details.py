@@ -241,19 +241,20 @@ P["E0"] = [
                "实现 `predict.py`：识别 `--data_dir` 指向 `data/` 或测试井目录两种形态；"
                "生成后自动调用契约校验，失败即非零退出",
                "支持 `--use-version CONST` 走常数基线（用于契约自检，不参与评分竞争）",
-               "跑 6 个负样例单测（PERM≤0 / 缺顶层键 / 行数不符 / depth 乱序 / 大写 DEPTH / NaN）",
+               "跑**全部负样例**单测（PERM≤0 / 缺顶层键 / 行数不符 / depth 乱序 / 大写 DEPTH / NaN / **SW 被归一化到小数区间** / **原子行占多数掩盖归一化**），项数以 `E0_contract_tests.json::n_negative` 为准，文档不手写数字",
                "在只含 `v4/` 与 `data/` 的干净目录执行 `python3 predict.py --data_dir ./data --output result.json`",
                "建立 `versions/candidates.json` 空表与 schema 注释"],
         params=[("预期测试井数", "10", "冻结", "`constants.EXPECTED_N_TEST_WELLS`"),
                 ("预期测试行数", "95,948", "冻结", "`constants.EXPECTED_N_TEST_ROWS`"),
                 ("depth 小数位", "1", "冻结", "相对输入深度对齐，容差 1e-6")],
-        done=["6 个负样例**全部被正确拒绝**，正样例通过（`E0_contract_tests.json::passed=true`）",
+        done=["**全部负样例**被正确拒绝（`n_negative == n_rejected`）、正样例通过（`E0_contract_tests.json::passed=true`）",
               "干净目录下 `python3 predict.py --use-version CONST --data_dir ./data --output result.json` "
               "在一次运行内产出 10 井 / 95,948 行且 `contract_ok=true`（实测 ≈1.4 s，单核 CPU）",
               "`predict.py` 在**无 torch** 环境可运行；`--list-versions` 正确区分可用/未训练版本",
               "`versions/registry.json` 建立且被 `predict.py` 读取（`src/versioning/registry.py`）",
-              "E0 **本地契约 Gate 12/12（含 cache）**全部 mandatory 通过"
-              "（10 项原检查 + `shard_cache_built` + `shard_cache_input_cols_ok`，见 `reports/E0_local_contract_gate.json`）"],
+              "E0 **本地契约 Gate** 全部 mandatory 通过（项数见 `reports/E0_local_contract_gate.json`，"
+              "由 tools/plan_stats.py 实测，禁止手写；含 `contract_ok` + `shard_cache_built` + `shard_cache_input_cols_ok`），"
+              "且与 `reports/E0_gate_prereg.json` 可用同一个 `aggregate_gate` 复算通过"],
         forbid=["契约校验依赖 torch 或网络",
                 "静默裁剪 SW / POR 到物理区间",
                 "允许 logId 缺失、行数不符、深度错位通过校验",
@@ -263,7 +264,7 @@ P["E0"] = [
               ("浮点序列化差异", "两次运行 sha256 不同", "固定小数位与序列化参数，E10 做两次运行一致性校验")],
         stop=["契约自检未全绿，禁止任何候选进入 `submitted` 状态"],
         code=["predict.py", "src/inference/contract.py", "src/versioning/registry.py"],
-        evidence=["`reports/E0_contract_tests.json`（6 负样例全拒绝）",
+        evidence=["`reports/E0_contract_tests.json`（全部负样例被拒绝；项数由 JSON 实测）",
                   "`versions/registry.json`", "`versions/candidates.json`"],
         prereg_extra={"primary_metric": "contract_selftest_passed",
                       "mandatory_checks": ["contract_selftest", "no_torch_required"]},
@@ -1026,7 +1027,7 @@ P["E6"] = [
              "改进 proposal §5 D1：两步训练能避免连续损失把刚学好的原子边界冲掉；"
              "非 joint 原子行加权比整行过采样更精确，避免不同目标互相干扰。"],
         inputs=["E3/E4 主干逐行表示或 E1 行级特征", "E0 的占位标签与三目标 mask"],
-        outputs=["`src/models/state_head.py`（`q_joint + q_por/q_perm/q_sw` 五个头）、"
+        outputs=["`src/models/row_mlp.py`（`RowMLP` 的 `q_joint + q_por/q_perm/q_sw` 五个头）、"
                  "`$V4_RUN_ROOT/E6/state/{foldk}.pt`（含 stage 1/2 元数据）",
                  "`$V4_REPORTS_DIR/E6_atomic_report.json`（逐目标 AUC / Acc / Precision / Recall / F1、joint atom AUC、两阶段曲线）"],
         steps=["实现原子头：`q_t = sigmoid(Linear(d→1))`（`t∈{por,perm,sw}`）+ `q_joint = sigmoid(Linear(d→1))`；"
@@ -1065,7 +1066,7 @@ P["E6"] = [
               ("原子头过拟合", "inner AUC 高 outer 低", "减容量 + dropout + 折内早停"),
               ("两阶段第二段遗忘原子头", "stage 2 后 atom Acc 下降", "冻结或极低 lr；inner-OOF 监控 atom Acc；必要时联合微调")],
         stop=["AUC < 0.9 且无改善 → 记录 NO-GO，改用固定常量策略并重新评估总分上限"],
-        code=["src/models/state_head.py", "E6/code/train_state.py"],
+        code=["src/models/row_mlp.py", "E6/code/train_state.py"],
         evidence=["`reports/E6_atomic_report.json`"],
         prereg_extra={"primary_metric": "state_auc",
                       "thresholds": {"min_auc": 0.97, "min_atom_acc": 0.99, "min_atom_recall": 0.98},
@@ -1094,7 +1095,11 @@ P["E6"] = [
                  "`$V4_REPORTS_DIR/E6_tau_search.json`（τ-总分曲线、平台、逐目标 atomic P/R/F1/acc、连续切片 acc、误判代价分解）",
                  "三个 τ 值与 `joint_guard` 开关写入 `versions/candidates.json::PD1.atomic` 与 manifest"],
         steps=["对每个目标 t，在 inner-OOF 上网格搜索 τ∈[0.05,0.95]（步长 0.01），"
-               "目标函数 `100·w_t·Acc_t(τ)`（官方 drop 口径）",
+               "网格与容差**只从 `src/inference/atomic_gate.py::default_tau_grid()` / "
+               "`DEFAULT_PLATEAU_TOL` 取**（禁止在本脚本或计划里另抄一份数字）",
+               "目标函数 `100·w_t·Acc_t(τ)`（官方 drop 口径）—— 调 `select_tau_per_target` 时 "
+               "**不传 `score_fn`**（默认即 `official_score_fns()`，直接包装 `src/score.py` 的 "
+               "`acc_relative`/`acc_perm`）；**禁止**自写 0/1 容差准确率冒充官方目标（R4-M4）",
                "记录**最宽平台**（连续满足 `score ≥ max−ε` 的区间）并取其中点，而不是 argmax 尖峰",
                "报告：`τ_t` vs inner-OOF Total 曲线、平台区间、逐目标 atomic precision/recall/F1/acc、"
                "连续切片 Acc、误判代价分解（有效判 atom vs atom 判连续）",
@@ -1105,7 +1110,7 @@ P["E6"] = [
         params=[("τ 搜索范围", "[0.05, 0.95]，步长 0.01", "冻结", "逐目标独立"),
                 ("目标函数", "`100·w_t·Acc_t(τ)`（官方总分）", "冻结", "**不是 F1/准确率**"),
                 ("平台选择", "最宽平台中点（`max−ε`）", "ε=1e-3", "避免 argmax 尖峰过拟合 inner"),
-                ("硬切换", "q ≥ τ → 输出精确常量", "冻结", "禁止插值"),
+                ("硬切换", "q > τ → 输出精确常量（严格大于）", "冻结", "禁止插值；符号与 atomic_gate.py 一致"),
                 ("`joint_guard`", "**关闭（默认）**", "开/关", "仅当 inner-OOF Total 提升且 CI 下界 > 0 才开"),
                 ("`τ_joint_high`", "—", "inner 搜索", "仅 joint_guard 启用时使用"),
                 ("稳定性判据", "不同 inner 折最优 τ 的极差 ≤ 0.2", "冻结", "超限则用更保守 τ")],

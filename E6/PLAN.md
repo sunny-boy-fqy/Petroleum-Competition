@@ -24,7 +24,7 @@
 
 ## 4. 产物
 
-- `src/models/state_head.py`（`q_joint + q_por/q_perm/q_sw`）、`src/inference/atomic_gate.py`
+- `src/models/row_mlp.py`（`RowMLP` 的 `q_joint + q_por/q_perm/q_sw` 五个头）、`src/inference/atomic_gate.py`
 - `models/E6/pd1_*.pt`、`experiments/E6/P2/pd1/{result.json,result.zip,cv.json}`
 - `reports/E6_gate.json`、`reports/E6_atomic_report.json`
 

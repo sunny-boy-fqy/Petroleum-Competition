@@ -22,9 +22,17 @@
         由训练折有效 SW 统计写入。SW 头 bias 初始化为 **0**，使初始输出 ≈ `sw_mu`（≈82.8），
         而**不是** 0；SW 是单一标签尺度（百分数），绝不做 [0,1] 归一化输出。
 
-`forward` 返回 dict：
-    `por`(B,) `perm_z`(B,) `sw`(B,) `q_atom`(B,3，列序 POR/PERM/SW) `q_joint`(B,)
-    `ph_logit`(B,) —— = `q_joint` 的别名，保留以兼容旧调用点。
+`forward` 返回 dict（R4-B2：**logit 与 probability 显式分键**，绝不混用）：
+    `por`(B,) `perm_z`(B,) `sw`(B,)
+    `q_atom`(B,3)      —— **概率** `sigmoid(q_atom_logit)`，列序 POR/PERM/SW，**门控专用**
+    `q_joint`(B,)      —— **概率** `sigmoid(q_joint_logit)`，**门控专用**
+    `q_atom_logit`(B,3)/`q_joint_logit`(B,) —— **logits**，**损失专用**（BCEWithLogits）
+    `ph_logit`(B,)     —— = `q_joint_logit`（旧键别名，保留以兼容旧调用点）
+
+为什么必须分键（四审 R4-B2）：`per_target_hard_switch` / `joint_guard` /
+`select_tau_per_target` 全部按**概率**解释输入，阈值网格是 `[0.05, 0.95]`；若把 logits
+直接喂进去，等价于只在 `sigmoid([0.05,0.95]) ≈ [0.512,0.721]` 上搜阈值，系统性错位。
+反过来把概率喂给 `BCEWithLogits` 也是错的。分键后两条链路各自拿到正确量纲。
 
 设计取舍
 --------
@@ -99,8 +107,8 @@ if HAS_TORCH:
             perm_z = self.perm_log_abs * torch.tanh(self.cont_perm(h).squeeze(-1))
             # SW：仿射反归一化到标签尺度；bias=0 时初值即 sw_mu
             sw = self.sw_mu + self.sw_sigma * self.cont_sw(h).squeeze(-1)
-            q_joint = self.q_joint(h).squeeze(-1)
-            q_atom = torch.stack(
+            q_joint_logit = self.q_joint(h).squeeze(-1)
+            q_atom_logit = torch.stack(
                 [self.q_por(h).squeeze(-1),
                  self.q_perm(h).squeeze(-1),
                  self.q_sw(h).squeeze(-1)],
@@ -110,9 +118,13 @@ if HAS_TORCH:
                 "por": por,
                 "perm_z": perm_z,
                 "sw": sw,
-                "q_atom": q_atom,
-                "q_joint": q_joint,
-                "ph_logit": q_joint,   # 旧键别名（兼容既有调用点）
+                # 门控用**概率**（硬切换 / joint_guard / τ 搜索都按概率解释输入）
+                "q_atom": torch.sigmoid(q_atom_logit),
+                "q_joint": torch.sigmoid(q_joint_logit),
+                # 损失用 **logits**（BCEWithLogits 的输入语义；概率喂进去会静默错训）
+                "q_atom_logit": q_atom_logit,
+                "q_joint_logit": q_joint_logit,
+                "ph_logit": q_joint_logit,   # 旧键别名（= 联合 logit，语义与旧版一致）
             }
 
         @torch.no_grad()
@@ -151,20 +163,35 @@ if HAS_TORCH:
                 head.bias.fill_(_logit(rate))
 
 
+# R4-M1：`init_from_stats` 接受的键的**唯一清单**。`build_model` 只转发这些键，
+# 因此 `build_model(init_stats=features.basic.fit_target_scalers(...))` 可以直接用
+# （该 dict 额外带 `s_por`/`s_sw` 两个 L_aux 归一化尺度，不属于输出头标尺）。
+INIT_STATS_KEYS: tuple[str, ...] = (
+    "por_median", "por_max", "sw_mu", "sw_sigma",
+    "perm_z_median", "joint_atom_rate", "atom_rates",
+)
+
+
 def build_model(n_features: int, hidden: int = 256, layers: int = 2,
                 dropout: float = 0.1, seed: int | None = None,
                 init_stats: dict | None = None):
     """工厂函数（也供 predict.py / manifest 引用）。
 
-    `init_stats`：可选 dict，非空时转发给 `RowMLP.init_from_stats(**init_stats)`
-    （例如 `{"por_max": sc["por_max"], "sw_mu": sc["sw_mu"], "sw_sigma": sc["sw_sigma"]}`）。
+    `init_stats`：可选 dict，非空时把**签名内的键**转发给
+    `RowMLP.init_from_stats(**payload)`。未知键（例如 `fit_target_scalers` 额外返回的
+    `s_por`/`s_sw`）不会被静默丢弃，而是记录到 `model.init_stats_ignored` 供
+    manifest / 日志审计 —— 既让 `init_stats=fit_target_scalers(...)` 直接可用
+    （R4-M1），又不掩盖键名拼错的问题。
     """
     require("torch")
     if seed is not None:
         torch.manual_seed(seed)
     model = RowMLP(n_features, hidden=hidden, layers=layers, dropout=dropout)
     if init_stats:
-        model.init_from_stats(**init_stats)
+        payload = {k: v for k, v in init_stats.items() if k in INIT_STATS_KEYS}
+        ignored = sorted(k for k in init_stats if k not in INIT_STATS_KEYS)
+        model.init_from_stats(**payload)
+        model.init_stats_ignored = tuple(ignored)
     return model
 
 

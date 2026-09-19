@@ -84,12 +84,19 @@ def main() -> int:
         f"{gate_txt}（云端 Gate 待 P0 实机）；"
         f"计划全部完成（{payload['total_plan_files']} 份 / {payload['total_lines']:,} 行，"
         f"由 tools/plan_stats.py 实测）；"
-        f"三审 R3-C1..C3/H1..H5/M1..M5 已修复并回归验证；"
+        f"三审 R3-C1..C3/H1..H5/M1..M5 与四审 R4-B1..B3/H1..H3/M1..M6 已修复并回归验证；"
         f"改进 proposal 已落进 PLAN.md / E6 与 src/"
     )
     d["project"]["phase"] = "E0"          # R3-H4：云端 Gate 通过前不得指向 E1
     sp.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
     print("updated versions/status.json（summary + project.phase=E0）")
+
+    # R4-H2：证据 JSON 由**同一次实测**直接落盘，杜绝"手工副本过期"
+    ep = V4 / "reports" / "E0_plan_stats.json"
+    ep.parent.mkdir(parents=True, exist_ok=True)
+    ep.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"updated reports/E0_plan_stats.json（{payload['total_plan_files']} 份 / "
+          f"{payload['total_lines']:,} 行，与 measure() 同源）")
 
     print(f"RESULT: {'OK' if rc == 0 else 'FAIL'}（{payload['total_plan_files']} 份 / "
           f"{payload['total_lines']:,} 行）")

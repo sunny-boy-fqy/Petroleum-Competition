@@ -147,6 +147,10 @@ run_e0() {
   python3 "$HERE/E0/code/run_all.py" --train-dir "$DATA_ROOT/v4/data/train" \
     --test-dir "$DATA_ROOT/v4/data/test" --cache-root "$CACHE_ROOT" --with-cache \
     --out "$REPORTS_DIR/E0_data_card.json" 2>&1 | tee -a "$LOG"
+  # R4-H2：计划行数证据 JSON 也在云端重生成（纯标准库，不需要 torch），
+  # 使 $REPORTS_DIR 的 E0_*.json 集合自洽，而不是只在开发机上存在。
+  python3 "$HERE/tools/plan_stats.py" --json "$REPORTS_DIR/E0_plan_stats.json" \
+    2>&1 | tee -a "$LOG" || log "!! [e0] plan_stats 生成失败（不阻塞口径复算）"
   # 证据权威性：$REPORTS_DIR（云端 /data/v4/reports，云盘持久）= 权威来源，供 Gate / 复算引用；
   # repo 内 reports/ = 仅供 review / git diff 的快照，必须整体同步以免 data card 与
   # score-check / prereg 等互相矛盾（R3 修复：此前只 copy 3 个文件）。

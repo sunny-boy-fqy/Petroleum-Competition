@@ -8,8 +8,8 @@
 | 组件 | 版本 | 说明 |
 |---|---|---|
 | Python | **3.11** | 不使用 3.12+ 语法 |
-| PyTorch | **2.4.0 + cu124** | 匹配 CUDA 12.6 驱动；**禁止 `pip install torch`** |
-| CUDA | **12.6** | 不得另装 CUDA / 替换驱动 |
+| PyTorch | **2.4.0 + cu124** | wheel 的 `torch.version.cuda` = **12.4**（编译期 runtime）。`check_env.py` 的 `cuda_runtime_version` 硬校验这个值；**禁止 `pip install torch`** |
+| CUDA | **12.6（驱动能力，非 runtime）** | 指 `nvidia-smi` 头部的 `CUDA Version: 12.6`；不得另装 CUDA / 替换驱动。R4-B1：**不要**拿 `torch.version.cuda` 去比 12.6，那会让云端 `--mode env` 必然失败 |
 | GPU | 1× A100 80GB (sm_80) | bf16 可用 |
 | 系统内存 | 16 GiB | 真正瓶颈 → `num_workers=4` |
 | 磁盘 | 30 GB | checkpoint 滚动淘汰 + `assert_disk_headroom` |

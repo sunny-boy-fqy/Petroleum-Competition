@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "stage": "E0",
-  "created_at": "2026-09-19T13:33:23.732302+00:00",
+  "created_at": "2026-09-19T14:09:14.575143+00:00",
   "constants": {
     "columns": [
       "DEPTH",
@@ -235,7 +235,7 @@
   },
   "shard_cache": {
     "built": true,
-    "cache_root": "$V4_CACHE_ROOT",
+    "cache_root": ".v4cache",
     "cache_root_abs": "/home/fangqiyu/projects/Petroleum-Competition/v4/.v4cache",
     "cache_root_portable": true,
     "counts": {
@@ -251,6 +251,10 @@
     "manifest_portable": ".v4cache/manifest.json",
     "mb": 32.39,
     "input_cols_ok": true,
+    "input_cols_checked": {
+      "train": 80,
+      "test": 10
+    },
     "violations": []
   },
   "folds": {

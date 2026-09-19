@@ -38,7 +38,12 @@ def echo(msg: str) -> None:
 
 
 def contract_selftest(v4: Path) -> dict:
-    """正/负样例契约自检（不需要 torch）。"""
+    """正/负样例契约自检（不需要 torch）。
+
+    R4-B3：正样例里的 SW 必须是**真实标签尺度**（≥ SW_VALID_MIN=8.305）。
+    旧正样例用了 `SW=0.4`，在"SW 单一百分数尺度、实测有效最小 8.305、SW<1 行数=0"
+    的事实下本身就不该通过——它会同时训练读者的错误直觉并掩盖低值守卫。
+    """
     good = {
         "modelId": "",
         "modelName": "t",
@@ -47,13 +52,33 @@ def contract_selftest(v4: Path) -> dict:
             "logId": "w1",
             "predictions": [
                 {"depth": 1.0, "POR": 0.1, "PERM": 0.01, "SW": 99.9},
-                {"depth": 1.1, "POR": 0.12, "PERM": 1.5, "SW": 0.4},
+                {"depth": 1.1, "POR": 0.12, "PERM": 1.5, "SW": 80.0},
             ],
         }],
     }
     cases: dict[str, dict] = {}
     r = CT.validate_payload(good, expected_rows=2, strict_keys=True)
     cases["good_minimal"] = {"ok": r.ok, "errors": r.errors}
+
+    # R4-B3 反例：7/10 原子行把中位数拉到 99.9，掩盖 3 行被归一化到 [0,1] 的连续分支
+    bad = json.loads(json.dumps(good))
+    preds = ([{"depth": 1.0 + 0.1 * i, "POR": 0.1, "PERM": 0.01, "SW": 99.9}
+              for i in range(7)]
+             + [{"depth": 2.0 + 0.1 * i, "POR": 12.0, "PERM": 1.5, "SW": 0.8}
+                for i in range(3)])
+    bad["resultData"][0]["predictions"] = preds
+    cases["bad_sw_atom_majority_hides_unit_error"] = {
+        "ok": CT.validate_payload(bad, expected_rows=10).ok,
+        "sw_median": 99.9,
+        "expected_reason": "低值计数守卫（中位数守卫会被 7/10 原子行绕过）",
+    }
+
+    bad = json.loads(json.dumps(good))
+    bad["resultData"][0]["predictions"] = [
+        {"depth": 1.0, "POR": 0.1, "PERM": 0.01, "SW": 0.4},
+        {"depth": 1.1, "POR": 0.12, "PERM": 1.5, "SW": 0.62},
+    ]
+    cases["bad_sw_all_normalized"] = {"ok": CT.validate_payload(bad, expected_rows=2).ok}
 
     bad = json.loads(json.dumps(good))
     bad["resultData"][0]["predictions"][1]["PERM"] = 0.0
@@ -81,7 +106,17 @@ def contract_selftest(v4: Path) -> dict:
     passed = cases["good_minimal"]["ok"] and all(
         not v["ok"] for k, v in cases.items() if k.startswith("bad_")
     )
-    out = {"passed": passed, "cases": cases}
+    neg = sorted(k for k in cases if k.startswith("bad_"))
+    rejected = sorted(k for k in neg if not cases[k]["ok"])
+    out = {
+        "passed": passed,
+        "n_cases": len(cases),
+        "n_negative": len(neg),
+        "n_rejected": len(rejected),
+        "negative_cases": neg,
+        "unrejected": sorted(set(neg) - set(rejected)),
+        "cases": cases,
+    }
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     (REPORTS_DIR / "E0_contract_tests.json").write_text(
         json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -412,12 +447,17 @@ def main() -> int:
         echo(f"构建分片缓存 -> {cache_root}")
         man = DS.build_cache(train_dir if not args.limit else train_dir,
                              test_dir, cache_root, limit=args.limit, verbose=False)
-        # 校验：输入列数、目标不进入输入
+        # 校验：输入列数（R4-M6：**两个 split 都查**，此前只查 train 的 80 个 shard）、
+        # 目标不进入输入
         viol = []
-        for w in DS.iter_wells(cache_root, "train"):
-            sh = DS.read_well_shard(cache_root, w, "train")
-            if sh["inputs"].shape[1] != C.N_INPUT:
-                viol.append({"well": w, "reason": f"n_inputs={sh['inputs'].shape[1]}"})
+        checked = {"train": 0, "test": 0}
+        for split_ in ("train", "test"):
+            for w in DS.iter_wells(cache_root, split_):
+                sh = DS.read_well_shard(cache_root, w, split_)
+                checked[split_] += 1
+                if sh["inputs"].shape[1] != C.N_INPUT:
+                    viol.append({"split": split_, "well": w,
+                                 "reason": f"n_inputs={sh['inputs'].shape[1]}"})
         manifest_path = cache_root / "manifest.json"
         cache_info = {
             "built": True,
@@ -431,6 +471,7 @@ def main() -> int:
             "manifest_portable": portable_path(manifest_path)[0],
             "mb": round(DS.shard_bytes(cache_root) / 1e6, 2),
             "input_cols_ok": not viol,
+            "input_cols_checked": checked,
             "violations": viol,
         }
         echo(f"缓存完成：{man['counts']['train_wells']}训练/{man['counts']['test_wells']}测试井，"
@@ -548,6 +589,14 @@ def main() -> int:
     # R2-B3：E0 local Gate 必须包含缓存两项（E1/P0 依赖它）
     mandatory["shard_cache_built"] = bool(cache_info.get("built"))
     mandatory["shard_cache_input_cols_ok"] = bool(cache_info.get("input_cols_ok"))
+    # R4-H1：把 prereg 里声明的 `contract_ok` 作为 `contract_selftest` 的**显式别名**
+    # 写进 report。此前 prereg 有 13 项、report 只有 12 项，用同一个 `aggregate_gate`
+    # 复算会 `mandatory_failures=['contract_ok']` → 预注册与实物报告对不上。
+    mandatory["contract_ok"] = ct["passed"]
+    # R4-H1：absolute 门槛 `abs_tolerance` 需要一个**可复算**的偏差指标。
+    # 这里给两个都客观、可重算的数：常数基线锚点偏差 与 总分恒等式偏差。
+    abs_diff = abs(float(sc_drop["total"]) - float(anchor))
+    score_total_abs_diff = abs(float(total_check) - float(sc_drop["total"]))
     gate = {
         "gate_id": "E0_local_contract_gate",
         "stage": "E0",
@@ -559,14 +608,12 @@ def main() -> int:
                               "anchor": anchor, "hit_mode": mode},
         "state_counts": card["train"]["state_counts"],
         "folds": {k: fold_man.get(k) for k in ("source_sha256", "n_wells", "n_folds")},
+        # 供 aggregate_gate 复算的指标字段（R4-H1）
+        "abs_diff": abs_diff,
+        "score_total_abs_diff": score_total_abs_diff,
     }
-    (REPORTS_DIR / "E0_local_contract_gate.json").write_text(
-        json.dumps(gate, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    # 兼容旧引用（E0_gate.json 保留为本地契约 Gate 的别名，内容相同）
-    (REPORTS_DIR / "E0_gate.json").write_text(
-        json.dumps(gate, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    # 注意：gate JSON 的落盘推迟到 prereg 之后 —— 先把 `aggregate_gate(prereg, gate)`
+    # 的复算结论写进同一份报告，避免"预注册与实物报告对不上"再次发生（R4-H1）。
 
     # ---------------- 云端 Gate（B4：与本地契约 Gate 分离）
     env_json = None
@@ -660,6 +707,34 @@ def main() -> int:
         json.dumps(prereg, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
+    # ---------------- R4-H1：prereg × report 必须能用同一个校验器复算通过
+    from src.validation.gates import aggregate_gate  # noqa: PLC0415
+
+    gate_result = {
+        "checks": dict(mandatory),
+        "abs_diff": abs_diff,
+        "score_total_abs_diff": score_total_abs_diff,
+    }
+    # report 里也提供 `checks` 键，使任何只给 report 的调用方都能直接复算
+    gate["checks"] = dict(mandatory)
+    recompute = aggregate_gate(prereg, gate_result)
+    gate["prereg_recompute"] = recompute
+    if not recompute["passed"]:
+        echo("!! [FATAL] E0_gate_prereg × E0_local_contract_gate 复算未通过："
+             f"prereg_errors={recompute['prereg_errors']} "
+             f"mandatory_failures={recompute['mandatory_failures']} "
+             f"absolute={recompute['details'].get('absolute_checks')}")
+    # gate JSON 落盘（含复算结论）；E0_gate.json 保留为同一内容的旧别名
+    for _name in ("E0_local_contract_gate.json", "E0_gate.json"):
+        (REPORTS_DIR / _name).write_text(
+            json.dumps(gate, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    (REPORTS_DIR / "E0_gate_result.json").write_text(
+        json.dumps({"gate_result_input": gate_result,
+                    "aggregate_gate": recompute}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
     print(json.dumps({
         "train_wells": card_train["n_wells"],
         "train_rows": card_train["n_rows"],
@@ -684,12 +759,14 @@ def main() -> int:
                          "violations": cache_info.get("violations", [])}
                         if args.with_cache else {"built": False}),
         "gate_passed": gate["passed"],
+        "prereg_recompute_passed": bool(recompute["passed"]),
+        "prereg_recompute_abs_checks": recompute["details"].get("absolute_checks"),
         "cloud_gate_passed": cloud_gate["passed"],
         "cloud_gate_status": cloud_gate["status"],
         "out": str(out),
     }, ensure_ascii=False, indent=2))
     print(f"elapsed: {(datetime.now(timezone.utc) - t0).total_seconds():.1f}s")
-    return 0 if (hit and ct["passed"] and gate["passed"]) else 1
+    return 0 if (hit and ct["passed"] and gate["passed"] and recompute["passed"]) else 1
 
 
 if __name__ == "__main__":

@@ -10,17 +10,22 @@ from pathlib import Path
 V4 = Path(__file__).resolve().parents[2]
 
 E0_STATUS = """> **执行状态（2026-09-19）：本地契约层已完成；阶段整体 `in_progress`（云端 Gate 待 P0）。**
-> **E0 本地契约 Gate：12/12 mandatory PASS（含 `shard_cache_built` / `shard_cache_input_cols_ok`）**
+> **E0 本地契约 Gate：13/13 mandatory PASS（含 `contract_ok` 与 cache 两项）**
 > （`reports/E0_local_contract_gate.json`；项数由 `tools/plan_stats.py` 从报告实测，禁止手写）；
+> 与 `reports/E0_gate_prereg.json` 可用同一个 `aggregate_gate` 复算通过（结论见 `reports/E0_gate_result.json`）；
 > **E0 云端 Gate：`blocked_pending_cloud_run`**（`reports/E0_cloud_gate.json`，需 A100 任务跑 `run_train.sh --mode env`）。
 > 已复算并冻结的事实：
 > - 训练 **80 井 / 730,268 行**；测试 **10 井 / 95,948 行**（= 契约值）
 > - 标签状态：缺测 **6,700** / 联合常量占位 **487,225（66.719%）** / 有效 **236,343**
 > - 常数基线 **70.490735**（`drop` 口径）命中公开锚点 70.4907 ±1e-4；`mask` 口径为 69.843218
 > - 折指纹 `f7c2c58bd035294f0e0d80a9103c366877836249fcd6db42269269c85d94b87e`（80 井 / 5 折，每折 16 井）
-> - 提交契约自检：6 个负样例全部被拒绝；`CONST` 端到端 10 井 / 95,948 行 / 1.4 s（单核 CPU）
-> - 分片缓存 **32.39 MB**，90 井输入列校验通过；`cache_root` 记为**可复现形式**（本地 repo 相对、云端 `$V4_CACHE_ROOT`），不再是 `/tmp` 临时路径
-> - **SW 为单一标签尺度**（百分数，实测有效 8.305–99.9，小于 1 的行数为 **0**）——「双尺度 / 有效值归一化到小数区间」的假设已被实测证伪（R3-C1 统一口径）
+> - 提交契约自检：**全部负样例均被正确拒绝**，正样例通过；`CONST` 端到端 10 井 / 95,948 行 / 1.4 s（单核 CPU）
+>   项数以 `reports/E0_contract_tests.json::n_negative / n_rejected` 为准，本文件不手写数字
+> - 分片缓存 **32.39 MB**，90 井输入列校验通过（train+test 两个 split 都查）；`cache_root` 记为**可复现形式**（本地 repo 相对、云端 `$V4_CACHE_ROOT`），不再是 `/tmp` 临时路径
+> - **SW 为单一标签尺度**（百分数，实测有效 8.305–99.9，小于 1 的行数为 **0**）——「双尺度 / 有效值归一化到小数区间」的假设已被实测证伪（R3-C1 统一口径）；
+>   提交契约对 SW 采用**三重守卫**（低值计数 + 非原子行 p05 + 全体中位数），不再只看中位数（R4-B3）
+> - **CUDA 语义**：hard 校验 `torch.version.cuda` = **12.4**（torch 2.4.0+cu124 的 runtime），
+>   驱动能力 12.6 由 `nvidia-smi` 以 warn 提示；两者不可混用（R4-B1）
 > - **两个硬发现**：①3 口训练井 schema 非规范（20/21/16 列，27,080 行，3.71%），必须按表头名解析；
 >   ②评分分母口径为「逐目标排除缺测」（`drop`），选错会系统性低 0.65 分
 >

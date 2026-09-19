@@ -113,8 +113,49 @@ class TestSyncSharesTheCheckPatterns(unittest.TestCase):
         paths = {c.path for c in PS._claims()}
         self.assertEqual(
             paths, {"PLAN.md", "README.md", "docs/PROJECT_FILES.md",
-                    "E0/docs/data_card.md"},
+                    "E0/docs/data_card.md", "E0/PLAN.md"},
             "行数/Gate 计数声明只应出现在这些文档里；新增一处必须同步登记声明正则")
+
+
+class TestPlanStatsEvidenceJson(unittest.TestCase):
+    """R4-H2：`reports/E0_plan_stats.json` 是证据副本，必须与 `measure()` 逐字段相等。
+
+    四审发现它停在旧值（730/708/4988/6426），而 PLAN/README/status 都已同步到 6781；
+    两个检查器都不查它，于是它成了"已提交但过期"的手写副本。
+    """
+
+    def test_evidence_matches_measurement(self):
+        p = PS.measure(); p["gate"] = PS._local_gate_counts()
+        self.assertEqual(PS.check_evidence(p), [])
+
+    def test_evidence_file_exists(self):
+        self.assertTrue(V4.joinpath(*PS.EVIDENCE_JSON_RELPATH).is_file())
+
+    def test_stale_evidence_is_detected(self):
+        import json
+        p = PS.measure(); p["gate"] = PS._local_gate_counts()
+        orig = V4.joinpath(*PS.EVIDENCE_JSON_RELPATH)
+        backup = orig.read_text(encoding="utf-8")
+        try:
+            d = json.loads(backup)
+            d["total_lines"] = 1                       # 模拟四审看到的过期副本
+            d["stage"]["lines"] = 708
+            orig.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+            errs = PS.check_evidence(p)
+            self.assertTrue(any("total_lines" in e for e in errs), errs)
+            self.assertTrue(any("stage.lines" in e for e in errs), errs)
+        finally:
+            orig.write_text(backup, encoding="utf-8")
+        self.assertEqual(PS.check_evidence(p), [])
+
+    def test_sync_writes_the_evidence_json(self):
+        """同步工具必须**同时**刷新证据 JSON，否则它会再次过期。"""
+        src = (V4 / "tools" / "sync_plan_stats.py").read_text(encoding="utf-8")
+        self.assertIn("E0_plan_stats.json", src)
+
+    def test_check_status_validates_evidence(self):
+        src = (V4 / "tools" / "check_status.py").read_text(encoding="utf-8")
+        self.assertIn("check_evidence", src)
 
 
 if __name__ == "__main__":

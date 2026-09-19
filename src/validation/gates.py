@@ -381,20 +381,35 @@ def aggregate_gate(prereg: dict[str, Any], result: dict[str, Any]) -> dict[str, 
         metric_pass = True
         details["note"] = "boolean Gate 不要求 delta/CI，但仍强制绝对门槛与 mandatory_checks"
     elif gtype == "absolute":
+        # R4-M3：此前永远读 `result["score"]`，即使 primary_threshold_key 是
+        # min_auc / max_minutes 这类应映射到 auc / minutes 的键 —— 会取错指标（或
+        # 取不到值而静默判失败）。现在统一走 `resolve_metric_value`。
         key = prereg["primary_threshold_key"]
-        if key not in th or score is None:
+        if key not in th:
             metric_pass = False
-            details["error"] = f"absolute Gate 需要 score 与 thresholds[{key!r}]"
+            details["error"] = (f"absolute Gate 的 primary_threshold_key {key!r} 不在 "
+                                f"thresholds 中")
         else:
             want = float(th[key])
+            raw, field = resolve_metric_value(key, result)
+            if raw is None and key not in METRIC_RESULT_FIELDS and score is not None:
+                # 兼容旧口径：未登记映射的键（如 "score"）且 result 提供 score
+                raw, field = score, "score"
             try:
                 direction = absolute_direction(key)
             except KeyError:
                 direction = "min"
-            metric_pass = (score >= want) if direction == "min" else (score <= want)
-            details["required"] = want
-            details["score"] = score
-            details["direction"] = direction
+            have = None if raw is None else float(raw)
+            if have is None:
+                metric_pass = False
+                candidates = METRIC_RESULT_FIELDS.get(key, (key,))
+                details["error"] = (f"absolute Gate 声明 thresholds[{key!r}]={want}，但 result "
+                                    f"缺少 {list(candidates)} 中任一字段（宁严勿松：拿不到 "
+                                    "指标等价于未验证）")
+            else:
+                metric_pass = (have >= want) if direction == "min" else (have <= want)
+            details.update({"primary_threshold_key": key, "required": want,
+                            "have": have, "field": field, "direction": direction})
     elif gtype == "non_inferior":
         margin = float(th["non_inferiority_margin"])
         metric_pass = (delta > -margin) and (ci_low is not None and ci_low > -margin)

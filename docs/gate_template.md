@@ -107,7 +107,10 @@ passed = (delta >= effective_threshold)
 （只允许 `[0,100]` 软裁剪）；在 inner-OOF 之外选 τ/超参/解码参数；把同源平均或 CI 含 0 的差异当作"增益"；
 删除占位行；在验证折/测试井上 fit scaler。
 
-> E0 本地契约 Gate 现为 **12/12（含 cache）** mandatory：原 10 项 + `shard_cache_built` + `shard_cache_input_cols_ok`；
+> E0 本地契约 Gate 的 mandatory 项数与通过数由 `tools/plan_stats.py` 从
+> `reports/E0_local_contract_gate.json` **实测**（本文件不写死数字）：原 10 项 + `contract_ok`
+> （`contract_selftest` 的显式别名，R4-H1）+ `shard_cache_built` + `shard_cache_input_cols_ok`；
+> 并与 `reports/E0_gate_prereg.json` 用同一个 `aggregate_gate` **复算通过**（`reports/E0_gate_result.json`）；
 > 其 `disk_budget_ok` 读取 **DATA-ROOT（`$V4_DATA_ROOT` = `/data`）** 级别。
 
 ## 5. Gate 目录约定

@@ -74,6 +74,16 @@ SW_MIN_OBSERVED: float = SW_VALID_MIN                # 兼容旧名（= SW_VALID
 SW_SMALL_BRANCH: bool = False                        # 遗留对照开关，永久 False
 SW_SMALL_BRANCH_SCALE: float = 100.0                  # 仅当 SW_SMALL_BRANCH=True 时用于换算
 
+# R4-B3：提交契约的 SW **低值守卫**判据（"中位数守卫"可被 66.7% 原子行绕过）。
+#   实测事实：训练标签里 SW < 1 的行数为 **0**，有效最小 = 8.305。
+#   契约不能只看全体中位数：当 2/3 行是原子 99.9 时，中位数被拉到 99.9，
+#   剩余连续分支即使被错误归一化到 [0,1] 也照样"通过"。
+SW_LOW_GUARD_ABS: float = 1.0            # 低于此值的单行预测即视为**明确**量纲错误
+SW_LOW_GUARD_FRAC_MAX: float = 1e-3      # 允许的极少数离群比例（95,948 行 ≈ 95 行）
+SW_SUSPECT_FRAC_MAX: float = 0.01        # 低于 SW_VALID_MIN 的行数占比上限（允许 <1% 边界外推）
+SW_LOW_GUARD_NONATOM_P05_MIN: float = SW_VALID_MIN   # 非原子行 p05 不得低于有效最小值
+SW_LOW_GUARD_MIN_NONATOM: int = 20       # 非原子行少于此数时跳过 p05 守卫（小样例过度敏感）
+
 
 def sw_to_norm(sw: float, mu: float = SW_VALID_MEDIAN, sigma: float = 20.0) -> float:
     """训练折仿射归一化：`z = (sw − mu) / sigma`（纯 python）。

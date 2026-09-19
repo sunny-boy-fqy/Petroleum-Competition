@@ -1,4 +1,4 @@
-"""F1 行级特征：`F_raw(14) + F_miss(14+1) + F_depth(3)` = 32 维。
+"""F1 行级特征：13 条曲线 + DEPTH 原始值 + 14 个缺失位 + 4 个行内深度编码 = 32 维。
 
 设计依据
 --------
@@ -10,12 +10,17 @@
 
 特征列定义（顺序固定，写入 `FEATURE_NAMES`）
 ------------------------------------------------
-0-13   : 14 条原始曲线（保留 NaN 语义）
-14-27  : 14 条逐曲线缺失指示（0/1）
-28     : 该行输入缺失比例（0..1）
+0-12   : 13 条原始曲线（`C.INPUT_COLUMNS = GR..CASE`，**不含 DEPTH**，保留 NaN 语义）
+13     : DEPTH 原始值（深度是独立通道，不是曲线）
+14-26  : 13 条曲线的逐曲线缺失指示（0/1）
+27     : DEPTH 缺失指示（0/1）
+28     : 该行输入缺失比例（0..1，13 条曲线 + DEPTH 共 14 位）
 29     : 井内相对深度 (depth - depth_min) / (depth_max - depth_min)，缺省 0
 30     : 相邻采样间隔（m，0.1 量级），首行用中位间隔
 31     : 井内累计深度序号归一化 index/(n-1)
+
+`inputs`/`missing` 的宽度是 **13**（E0-R2 修正：`arr[:, 1:15]` 曾把 POR 标签当第 14 个输入，
+80 口井全部泄漏，且测试井只有 13 列会崩溃）；DEPTH 单独作为 `depth` 传入。
 
 **必须用中心窗口/井级统计时属于 E2**；E1 只允许逐行可计算的量，
 其中 29–31 是"行内可知"的深度编码（不跨行泄漏，因为只用该井自身的深度序列，
@@ -48,8 +53,8 @@ def build_row_features(inputs: np.ndarray, missing: np.ndarray,
                        depth: np.ndarray) -> np.ndarray:
     """由分片数据构造 (n, 32) float32 行级特征。
 
-    inputs : (n, 14) float32，已把哨兵转成 NaN
-    missing: (n, 14) int8，1 表示该曲线在此行缺测
+    inputs : (n, 13) float32，已把哨兵转成 NaN（**13 条曲线，不含 DEPTH**）
+    missing: (n, 13) int8，1 表示该曲线在此行缺测
     depth  : (n,) float32
     """
     n = inputs.shape[0]
@@ -168,6 +173,12 @@ def build_labels(targets: np.ndarray, target_missing: np.ndarray,
 
 
 # ---------------------------------------------------------------- 训练折目标尺度
+# R4-M1：原子先验的**回落默认值**（E0 实测），仅当 `fit_target_scalers` 拿不到 `y_perm`
+# 时使用；正常路径必须由训练折统计覆盖。列序 POR/PERM/SW。
+DEFAULT_ATOM_RATES: tuple[float, float, float] = (0.6674, 0.6773, 0.7097)
+DEFAULT_JOINT_ATOM_RATE: float = 0.667
+
+
 def _robust_scale(v: np.ndarray) -> float:
     """稳健尺度 `IQR/1.349`；IQR 为 0 时退化为标准差。"""
     if v.size < 2:
@@ -180,17 +191,26 @@ def _robust_scale(v: np.ndarray) -> float:
 
 
 def fit_target_scalers(y_por: np.ndarray, y_sw: np.ndarray, mask: np.ndarray,
-                       z_perm: np.ndarray | None = None) -> dict:
+                       z_perm: np.ndarray | None = None,
+                       y_perm: np.ndarray | None = None) -> dict:
     """**只用训练折**观测样本拟合目标尺度（纯 numpy，返回可 JSON 序列化的 dict）。
 
-    返回键（全部为 python float）::
+    返回键（全部为 python float / tuple）::
 
         por_median, por_max (=1.2·max(valid POR)), sw_mu (=median(valid SW)),
-        sw_sigma (=IQR(valid SW)/1.349), perm_z_median, s_por, s_sw
+        sw_sigma (=IQR(valid SW)/1.349), perm_z_median, s_por, s_sw,
+        atom_rates (POR/PERM/SW 原子率), joint_atom_rate
 
     `s_por`/`s_sw` 是 `aux_loss` 的稳健归一化尺度（IQR/1.349，退化时用 std），
     必须与 `sw_mu`/`sw_sigma` 一起写入 checkpoint manifest / scaler JSON。
     `z_perm` 可选：给出时用有效行的中位数填 `perm_z_median`，否则用默认 −0.08。
+
+    **R4-M1**：返回的 dict 可直接喂给 `models.row_mlp.build_model(init_stats=...)`——
+    后者只转发 `RowMLP.init_from_stats` 签名内的键，并把 `s_por/s_sw` 记进
+    `model.init_stats_ignored`（供 manifest 审计），因此不会再抛
+    `TypeError: init_from_stats() got an unexpected keyword argument 's_por'`。
+    `y_perm` 可选：给出时用它算 PERM 原子率与联合原子率；缺失时回落到 E0 实测先验
+    （**PERM 原子率必须来自训练折**，绝不允许用验证折）。
 
     无任何有效行时抛 `ValueError`（绝不允许在空切片上静默产出 NaN 尺度）。
     """
@@ -217,6 +237,9 @@ def fit_target_scalers(y_por: np.ndarray, y_sw: np.ndarray, mask: np.ndarray,
         "perm_z_median": -0.08,
         "s_por": float(s_por),
         "s_sw": float(s_sw),
+        # R4-M1：原子先验也要**折内**统计（默认值只是 y_perm 缺失时的回落）
+        "atom_rates": tuple(float(x) for x in DEFAULT_ATOM_RATES),
+        "joint_atom_rate": float(DEFAULT_JOINT_ATOM_RATE),
     }
     if z_perm is not None:
         z = np.asarray(z_perm, dtype="float64").reshape(-1)
@@ -225,6 +248,25 @@ def fit_target_scalers(y_por: np.ndarray, y_sw: np.ndarray, mask: np.ndarray,
         vz = z[m[:, 1] & np.isfinite(z)]
         if vz.size:
             scaler["perm_z_median"] = float(np.median(vz))
+    if y_perm is not None:
+        yp = np.asarray(y_perm, dtype="float64").reshape(-1)
+        if yp.size != por.size:
+            raise ValueError("y_perm must have the same length as y_por")
+        av = np.asarray([C.ATOM_VALUES[t] for t in C.TARGETS], dtype="float64")
+        tol = _atom_tolerances()[None, :]
+        obs = m
+        hit = np.zeros((por.size, 3), dtype=bool)
+        hit[:, 0] = (np.abs(por - av[0]) <= float(tol[0, 0])) & obs[:, 0]
+        hit[:, 1] = (np.abs(yp - av[1]) <= float(tol[0, 1])) & obs[:, 1] & np.isfinite(yp)
+        hit[:, 2] = (np.abs(sw - av[2]) <= float(tol[0, 2])) & obs[:, 2]
+        rates = []
+        for t in range(3):
+            o = obs[:, t]
+            rates.append(float(hit[o, t].mean()) if o.any() else float(DEFAULT_ATOM_RATES[t]))
+        all_obs = obs.all(axis=1)
+        scaler["atom_rates"] = tuple(rates)
+        scaler["joint_atom_rate"] = (float(hit[all_obs].all(axis=1).mean())
+                                     if all_obs.any() else float(DEFAULT_JOINT_ATOM_RATE))
     return scaler
 
 
@@ -241,6 +283,18 @@ def invert_sw_scaler(z: np.ndarray, scaler: dict) -> np.ndarray:
     return np.asarray(z, dtype="float64") * float(scaler["sw_sigma"]) + float(scaler["sw_mu"])
 
 
+def _to_probability(x):
+    """把 `RowMLP.forward` 的 logit 或已是概率的数组规范成**概率**（R4-B2）。
+
+    规则（显式、可测）：
+      - `RowMLP.forward` 返回的 `q_atom`/`q_joint` 已是 `sigmoid` 后的概率，原样使用；
+      - 若调用方只拿到 `q_atom_logit`/`q_joint_logit`（例如自己拆过 dict），这里统一
+        做一次 `sigmoid`，绝不让 logits 流进按概率解释的 `atomic_gate`。
+    """
+    a = np.asarray(x, dtype="float64")
+    return 1.0 / (1.0 + np.exp(-a))
+
+
 def decode_predictions(por, perm_z=None, sw=None,
                        q_ph: np.ndarray | None = None, tau: float | None = None,
                        q_atom: np.ndarray | None = None,
@@ -253,6 +307,11 @@ def decode_predictions(por, perm_z=None, sw=None,
       1. 旧式位置参数 `decode_predictions(por, perm_z, sw, q_ph, tau)`；
       2. 新式 dict：`decode_predictions(out)`，`out` 含 `por/perm_z/sw/q_atom/q_joint`
          （`ph_logit` 作为 `q_joint` 的别名）。
+
+    **logit/probability 契约（R4-B2）**：门控入口只接受**概率**。dict 里优先取
+    `q_atom`/`q_joint`（`RowMLP` 已做 sigmoid）；若只有 `q_atom_logit`/`q_joint_logit`
+    （或旧键 `ph_logit`），这里显式做一次 `sigmoid` 再送给 `atomic_gate`，
+    避免把 logits 当成概率与 `[0.05,0.95]` 阈值比较。
 
     解码规则：
       - POR 直出标签尺度；`PERM = 10**clip(z, -6, 6)`（严格 > 0）；
@@ -269,8 +328,15 @@ def decode_predictions(por, perm_z=None, sw=None,
         por = out.get("por")
         perm_z = out.get("perm_z")
         sw = out.get("sw")
-        q_atom = out.get("q_atom", q_atom)
-        q_joint = out.get("q_joint", out.get("ph_logit", q_joint))
+        # 概率优先；只有 logits 时显式 sigmoid（绝不把 logits 当概率）
+        if out.get("q_atom", q_atom) is not None:
+            q_atom = out.get("q_atom", q_atom)
+        elif out.get("q_atom_logit") is not None:
+            q_atom = _to_probability(out["q_atom_logit"])
+        if out.get("q_joint", q_joint) is not None:
+            q_joint = out.get("q_joint", q_joint)
+        elif out.get("q_joint_logit", out.get("ph_logit")) is not None:
+            q_joint = _to_probability(out.get("q_joint_logit", out.get("ph_logit")))
     if por is None or perm_z is None or sw is None:
         raise ValueError("decode_predictions needs por, perm_z and sw")
 

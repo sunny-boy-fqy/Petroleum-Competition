@@ -35,12 +35,13 @@
 
 ## 5. 执行步骤
 
-1. 对每个目标 t，在 inner-OOF 上网格搜索 τ∈[0.05,0.95]（步长 0.01），目标函数 `100·w_t·Acc_t(τ)`（官方 drop 口径）
-2. 记录**最宽平台**（连续满足 `score ≥ max−ε` 的区间）并取其中点，而不是 argmax 尖峰
-3. 报告：`τ_t` vs inner-OOF Total 曲线、平台区间、逐目标 atomic precision/recall/F1/acc、连续切片 Acc、误判代价分解（有效判 atom vs atom 判连续）
-4. 评估可选 `joint_guard`：仅当 `q_joint > τ_joint_high` 时三目标全输出 atom；默认关闭，只有它在 inner-OOF 上提升 Total 且 CI 下界 > 0 才启用，并把决定写入 manifest
-5. 验证 τ 稳定性：不同 inner 折选出的 τ 是否接近（方差过大则取更保守值并说明）
-6. 在三目标上分别确定 τ 并记录到候选注册表；**断言原子/连续之间无任何插值**
+1. 对每个目标 t，在 inner-OOF 上网格搜索 τ∈[0.05,0.95]（步长 0.01），网格与容差**只从 `src/inference/atomic_gate.py::default_tau_grid()` / `DEFAULT_PLATEAU_TOL` 取**（禁止在本脚本或计划里另抄一份数字）
+2. 目标函数 `100·w_t·Acc_t(τ)`（官方 drop 口径）—— 调 `select_tau_per_target` 时 **不传 `score_fn`**（默认即 `official_score_fns()`，直接包装 `src/score.py` 的 `acc_relative`/`acc_perm`）；**禁止**自写 0/1 容差准确率冒充官方目标（R4-M4）
+3. 记录**最宽平台**（连续满足 `score ≥ max−ε` 的区间）并取其中点，而不是 argmax 尖峰
+4. 报告：`τ_t` vs inner-OOF Total 曲线、平台区间、逐目标 atomic precision/recall/F1/acc、连续切片 Acc、误判代价分解（有效判 atom vs atom 判连续）
+5. 评估可选 `joint_guard`：仅当 `q_joint > τ_joint_high` 时三目标全输出 atom；默认关闭，只有它在 inner-OOF 上提升 Total 且 CI 下界 > 0 才启用，并把决定写入 manifest
+6. 验证 τ 稳定性：不同 inner 折选出的 τ 是否接近（方差过大则取更保守值并说明）
+7. 在三目标上分别确定 τ 并记录到候选注册表；**断言原子/连续之间无任何插值**
 
 ## 6. 参数与配置
 
@@ -49,7 +50,7 @@
 | τ 搜索范围 | [0.05, 0.95]，步长 0.01 | 冻结 | 逐目标独立 |
 | 目标函数 | `100·w_t·Acc_t(τ)`（官方总分） | 冻结 | **不是 F1/准确率** |
 | 平台选择 | 最宽平台中点（`max−ε`） | ε=1e-3 | 避免 argmax 尖峰过拟合 inner |
-| 硬切换 | q ≥ τ → 输出精确常量 | 冻结 | 禁止插值 |
+| 硬切换 | q > τ → 输出精确常量（严格大于） | 冻结 | 禁止插值；符号与 atomic_gate.py 一致 |
 | `joint_guard` | **关闭（默认）** | 开/关 | 仅当 inner-OOF Total 提升且 CI 下界 > 0 才开 |
 | `τ_joint_high` | — | inner 搜索 | 仅 joint_guard 启用时使用 |
 | 稳定性判据 | 不同 inner 折最优 τ 的极差 ≤ 0.2 | 冻结 | 超限则用更保守 τ |

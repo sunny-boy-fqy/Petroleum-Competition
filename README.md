@@ -128,11 +128,11 @@ python3 v4/predict.py --use-version CONST --data_dir ../data --output /tmp/r.jso
 
 ## 当前状态
 
-- [x] **计划全部完成**：总计划 808 行 + 12 个阶段计划（754 行）+ 33 个 P 级详细计划（5,219 行），**合计 6,781 行**（由 `tools/plan_stats.py` 实测）
+- [x] **计划全部完成**：总计划 851 行 + 12 个阶段计划（756 行）+ 33 个 P 级详细计划（5,220 行），**合计 6,827 行**（由 `tools/plan_stats.py` 实测）
 - [x] 状态台账 `versions/status.json`、候选注册表 `versions/candidates.json`、目录总览 `docs/PROJECT_FILES.md`
 - [x] 环境/磁盘自检脚本（`E0/code/check_env.py`、`src/data/disk_guard.py`、`E0/code/setup_deps.sh`）
 - [x] 锁文件与 Gate/引用模板
-- [x] **E0 口径层已实现并通过本地契约 Gate 12/12**（`reports/E0_local_contract_gate.json`）：按表头名对齐解析器（13 曲线输入 + 无泄漏回归）、三状态标签判据与目标分布统计、官方评分器（drop 口径 70.490735 + 恒等式校验）、按井 5 折导出与指纹、分片缓存（32.4 MB）、提交契约校验、`predict.py` 端到端冒烟（10 井 / 95,948 行 / 1.4 s CPU）
+- [x] **E0 口径层已实现并通过本地契约 Gate 13/13**（`reports/E0_local_contract_gate.json`）：按表头名对齐解析器（13 曲线输入 + 无泄漏回归）、三状态标签判据与目标分布统计、官方评分器（drop 口径 70.490735 + 恒等式校验）、按井 5 折导出与指纹、分片缓存（32.4 MB）、提交契约校验、`predict.py` 端到端冒烟（10 井 / 95,948 行 / 1.4 s CPU）
 - [ ] E0 云端 Gate（`env_hard_checks_passed` + `disk_budget_ok`）—— 需在平台 A100 任务运行 `run_train.sh --mode env`
 - [ ] E1–E10 模型与训练代码（E1/P0 行级管线与 E1/P1 训练器待写）
 - [x] **改进 proposal 已落进计划与代码**：`PLAN.md` §5.1/§5.2.1/§5.3/§5.4/§6.4/§8.2/§10 与 E1/E3–E8 的 P 级计划；
@@ -142,7 +142,7 @@ python3 v4/predict.py --use-version CONST --data_dir ../data --output /tmp/r.jso
 - [x] **口径层与 Gate 语义修复（三审）**：`min_*`/`max_*` 方向分离 + 指标字段映射；`disk_guard --data-root`；
       E0 证据 `cache_root` 改为可复现形式；`plan_stats --check` 逐条断言阶段/P 分项
 
-## E0 已经查出的两个硬事实（详见 [`E0/docs/data_card.md`](E0/docs/data_card.md)）
+## E0 已经查出的六个硬事实（详见 [`E0/docs/data_card.md`](E0/docs/data_card.md)）
 
 1. **3 口训练井（27,080 行，3.71%）的表头不是官方 17 列**：`42f2870b`（20 列，多 K/U/CGR，**含 CASE**）、`b7eb1274`（21 列，多 TH/K/U/CGR，**含 CASE**）、`c7611b01`（16 列，**唯一缺 CASE**）。
    → **必须按表头名对齐解析**，禁止按列位置（即 17,426 行"多列" + 9,654 行"缺 CASE"）。

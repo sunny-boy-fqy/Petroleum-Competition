@@ -48,7 +48,7 @@ OPTIONAL_CURVES: tuple[str, ...] = ("K", "U", "TH", "CGR", "KLOG", "SPT")
 class WellRecord:
     well_id: str
     depth: Any                    # (n,)
-    inputs: Any                   # (n, 14) 规范顺序，缺列为 NaN
+    inputs: Any                   # (n, 13) 规范曲线顺序，缺列为 NaN（DEPTH 走 depth，见 R4-M5）
     targets: Any | None           # (n, 3) 或 None
     units: tuple[str, ...] = ()
     header: tuple[str, ...] = ()

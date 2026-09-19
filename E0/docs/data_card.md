@@ -151,7 +151,7 @@ python3 /code/workspace/v4/E0/code/run_all.py --with-cache \
 
 ## 5. 提交契约（已单测）
 
-`src/inference/contract.py::validate_payload` 的 6 项负样例全部被正确拒绝
+`src/inference/contract.py::validate_payload` 的全部负样例被正确拒绝（项数见 `E0_contract_tests.json`）
 （`reports/E0_contract_tests.json`）：PERM≤0 / 缺顶层键 / 行数不符 / depth 乱序 /
 大写 `DEPTH` / 含 NaN。端到端冒烟：
 
@@ -167,7 +167,7 @@ python3 predict.py --use-version CONST --data_dir ../data --output /tmp/r.json
 
 | Gate | 范围 | 报告 | 当前状态 |
 |---|---|---|---|
-| `E0_local_contract_gate` | 本机可复算的口径层 | `reports/E0_local_contract_gate.json` | ✅ passed（mandatory 12/12） |
+| `E0_local_contract_gate` | 本机可复算的口径层 | `reports/E0_local_contract_gate.json` | ✅ passed（mandatory 13/13） |
 | `E0_cloud_gate` | 云端环境与磁盘 | `reports/E0_cloud_gate.json` | ⏸ `blocked_pending_cloud_run` |
 
 `E0_cloud_gate` 的 mandatory：`env_hard_checks_passed`、`disk_budget_ok`。
@@ -239,7 +239,7 @@ python3 predict.py --use-version CONST --data_dir ../data --output /tmp/r.json
 
 分片缓存：built=True，32.39 MB，input_cols_ok=True，wells=—。
 
-- cache root（可复现形式）：`$V4_CACHE_ROOT`（绝对路径 `/home/fangqiyu/projects/Petroleum-Competition/v4/.v4cache`，portable=True）
+- cache root（可复现形式）：`.v4cache`（绝对路径 `/home/fangqiyu/projects/Petroleum-Competition/v4/.v4cache`，portable=True）
 - cache manifest（可复现形式）：`.v4cache/manifest.json`（绝对路径 `/home/fangqiyu/projects/Petroleum-Competition/v4/.v4cache/manifest.json`）——云端对应 `$V4_CACHE_ROOT/manifest.json`；status.json 中 E0/P1 的 evidence 指向它
 
 <!-- END:AUTO_STATS -->

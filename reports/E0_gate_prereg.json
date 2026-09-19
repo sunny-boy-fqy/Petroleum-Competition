@@ -3,7 +3,7 @@
   "stage": "E0",
   "p_stage": "P0-P3",
   "gate_type": "boolean",
-  "created_at": "2026-09-19T13:33:44.557935+00:00",
+  "created_at": "2026-09-19T14:09:32.082602+00:00",
   "supersede_note": "E0 是口径层而非模型实验，其判定阈值不是可调超参（数据计数、评分锚点、折指纹、契约自检都是客观等式），因此本文件在实现完成后补记。若未来 E0 需要修订判定项，必须新建 E0_gate_r2 预注册，不得原地修改本文件。",
   "primary_metric": "data_card_recomputable",
   "primary_threshold_key": "abs_tolerance",

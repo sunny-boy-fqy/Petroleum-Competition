@@ -20,6 +20,15 @@ POR=0.1 / PERM=0.01 / SW=99.9 的"原子哨兵行"占了 2/3 以上（联合占�
 加权总分贡献（**不是** F1、也不是原子分类准确率）。为避免把 τ 过拟合到单点尖峰，
 采用**平台中点规则**：把落在"最优值 `tol` 相对邻域"内的 τ 视为平台，取最长连续平台的
 **中点**。这是对"内层 OOF τ 过拟合"的显式防护（写入实验报告的固定口径）。
+
+**口径唯一化（R4-M2）**：默认网格固定为 `[0.05, 0.95]` 步长 `0.01`（**91 点**），
+平台相对容差 `tol=1e-3` —— 与 `E6/P1/PLAN.md` 的声明逐字一致
+（旧默认是 19 点 / 1e-4，计划与代码分辨率不同会直接改变选出的 `τ_t`）。
+
+**目标函数唯一化（R4-M4）**：`score_fn=None`（默认）时自动使用 `official_score_fns()`，
+即**直接包装 `src/score.py` 的官方 Acc_POR/Acc_PERM/Acc_SW**（drop 口径、soft score
+`max(0, 1−err)`）。四审指出单测里曾用 0/1 容差准确率冒充"官方目标"，两者对 τ 的排序
+不一定一致；现在生产默认路径不可能拿错口径。
 """
 from __future__ import annotations
 
@@ -28,6 +37,52 @@ from ..portability import HAS_NUMPY, require
 
 if HAS_NUMPY:
     import numpy as np
+
+# R4-M2：与 E6/P1/PLAN.md 声明一致的唯一口径
+DEFAULT_TAU_GRID_LO: float = 0.05
+DEFAULT_TAU_GRID_HI: float = 0.95
+DEFAULT_TAU_GRID_STEP: float = 0.01
+DEFAULT_PLATEAU_TOL: float = 1e-3
+
+
+def default_tau_grid() -> "np.ndarray":
+    """`[0.05, 0.95]` 步长 `0.01` → 91 个格点（与计划同源，勿另抄一份）。"""
+    require("numpy")
+    n = int(round((DEFAULT_TAU_GRID_HI - DEFAULT_TAU_GRID_LO) / DEFAULT_TAU_GRID_STEP)) + 1
+    return np.linspace(DEFAULT_TAU_GRID_LO, DEFAULT_TAU_GRID_HI, n)
+
+
+# ---------------------------------------------------------------- 官方目标函数
+def make_official_score_fn(target: str, missing_mode: str = "drop"):
+    """返回**官方**逐目标分数函数 `f(y_t, pred_t, mask_t) -> float ∈ [0,1]`。
+
+    直接包装 `src/score.py`（`acc_relative` / `acc_perm`），因此与提交评分**同源**，
+    不存在"单测用一个口径、生产用另一个口径"的漂移（R4-M4）。
+    `mask_t > 0` 表示该行参与监督；`drop` 口径下只对观测行求均值。
+    """
+    require("numpy")
+    from ..score import acc_perm, acc_relative  # 延迟导入：保持本模块 numpy-only
+
+    t = str(target).upper()
+
+    def _fn(y, pred, mask=None) -> float:
+        miss = None if mask is None else (np.asarray(mask, dtype="float64") <= 0)
+        if t == "POR":
+            return float(acc_relative(y, pred, C.DELTA_POR, missing_mask=miss,
+                                      missing_mode=missing_mode))
+        if t == "SW":
+            return float(acc_relative(y, pred, C.DELTA_SW, missing_mask=miss,
+                                      missing_mode=missing_mode))
+        if t == "PERM":
+            return float(acc_perm(y, pred, missing_mask=miss, missing_mode=missing_mode))
+        raise ValueError(f"unknown target {target!r}; expected one of {C.TARGETS}")
+
+    return _fn
+
+
+def official_score_fns(missing_mode: str = "drop") -> dict:
+    """`{target: 官方逐目标分数函数}`（列序 POR/PERM/SW）。"""
+    return {t: make_official_score_fn(t, missing_mode) for t in C.TARGETS}
 
 
 # ---------------------------------------------------------------- 内部工具
@@ -155,28 +210,40 @@ def _longest_plateau_midpoint(taus: np.ndarray, objs: np.ndarray, tol: float) ->
     return 0.5 * (lo + hi), (lo, hi)
 
 
-def select_tau_per_target(score_fn, cont, q_atom, y, mask, grid=None,
-                          tol: float = 1e-4) -> dict:
+def select_tau_per_target(score_fn=None, cont=None, q_atom=None, y=None, mask=None,
+                          grid=None, tol: float = DEFAULT_PLATEAU_TOL) -> dict:
     """逐目标独立搜索硬切换阈值 τ（目标 = 官方加权总分贡献）。
 
     score_fn(y_t, pred_t, mask_t) -> float
         由调用方提供的**官方逐目标准确率**包装（[0,1]）；本模块不依赖 `score.py`。
         可传单个 callable，或长度 3 的 tuple/list、`{target: callable}` dict
         （POR/PERM/SW 口径不同，见 `_resolve_score_fn`）。
+        **`None`（推荐默认）** 时自动使用 `official_score_fns()` —— 即直接包装
+        `src/score.py` 的 Acc_POR/Acc_PERM/Acc_SW（drop 口径），从机制上杜绝
+        "用 F1 / 0-1 准确率冒充官方目标"（R4-M4）。
 
-    tol : 平台判定的**相对**容差（默认 1e-4），见模块 docstring 的"平台中点规则"。
+    grid : 默认 `[0.05, 0.95]` 步长 `0.01`（91 点），与 `E6/P1/PLAN.md` 一致（R4-M2）。
+    tol  : 平台判定的**相对**容差（默认 1e-3），见模块 docstring 的"平台中点规则"。
 
     返回::
 
         {
-          "tau": (3,) float64,                 # 选中阈值（平台中点）
+          "tau": (3,) float64,                 # 选中阈值（平台内格点）
           "grid": (G,) 使用的候选网格,
           "curve": {target: [(tau, acc), ...]},
           "objective": float,                  # Σ w_t · acc_t(选中 τ)
           "plateau": {target: [lo, hi]},
+          "score_fn": "official(src.score)" | "caller",
         }
     """
     require("numpy")
+    if cont is None or q_atom is None or y is None or mask is None:
+        raise TypeError("select_tau_per_target 需要 cont/q_atom/y/mask（score_fn 可省略）")
+    if score_fn is None:
+        score_fn = official_score_fns()
+        score_fn_src = "official(src.score)"
+    else:
+        score_fn_src = "caller"
     c = np.asarray(cont, dtype="float64")
     q = np.asarray(q_atom, dtype="float64")
     yy = np.asarray(y, dtype="float64")
@@ -186,7 +253,7 @@ def select_tau_per_target(score_fn, cont, q_atom, y, mask, grid=None,
             f"cont/q_atom/y/mask must all be (N,3): {tuple(c.shape)} {tuple(q.shape)} "
             f"{tuple(yy.shape)} {tuple(m.shape)}")
     if grid is None:
-        grid = np.linspace(0.05, 0.95, 19)
+        grid = default_tau_grid()
     grid = np.asarray(grid, dtype="float64").reshape(-1)
     if grid.size == 0:
         raise ValueError("grid must be non-empty")
@@ -226,12 +293,13 @@ def select_tau_per_target(score_fn, cont, q_atom, y, mask, grid=None,
         "curve": curve,
         "objective": float(np.sum(np.asarray(C.TARGET_WEIGHTS, dtype="float64") * accs)),
         "plateau": plateau,
+        "score_fn": score_fn_src,
     }
 
 
 # ---------------------------------------------------------------- 误判代价分解
-def misclassification_cost_report(score_fn, cont, q_atom, y, mask, tau,
-                                  atom_values: dict | None = None) -> dict:
+def misclassification_cost_report(score_fn=None, cont=None, q_atom=None, y=None,
+                                  mask=None, tau=None, atom_values: dict | None = None) -> dict:
     """误判代价分解（"误判代价分解"报告口径）。
 
     逐目标报告：
@@ -239,10 +307,15 @@ def misclassification_cost_report(score_fn, cont, q_atom, y, mask, tau,
       (b) `n_missed_atom` : **原子行**被留给连续头的行数；
       以及连续口径 / 切换口径的官方准确率与**分数增量** `delta = acc_switch − acc_cont`。
 
-    `score_fn(y_t, pred_t, mask_t)` 语义同 `select_tau_per_target`。
+    `score_fn(y_t, pred_t, mask_t)` 语义同 `select_tau_per_target`；**`None` 时自动用
+    `official_score_fns()`**（R4-M4：避免生产路径抄到 0/1 准确率的错误目标函数）。
     返回 `{target: {...}, "total": {..., "delta": 加权总分增量}}`。
     """
     require("numpy")
+    if cont is None or q_atom is None or y is None or mask is None or tau is None:
+        raise TypeError("misclassification_cost_report 需要 cont/q_atom/y/mask/tau")
+    if score_fn is None:
+        score_fn = official_score_fns()
     av = _atom_vector(atom_values)
     c = np.asarray(cont, dtype="float64")
     q = np.asarray(q_atom, dtype="float64")

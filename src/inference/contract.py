@@ -10,7 +10,9 @@
   4. predictions 行数与输入逐行一致（默认 95,948 行 / 10 井）；
   5. 每行键恰为 depth / POR / PERM / SW，depth 单调递增且与输入深度对齐；
   6. POR/SW 有限；PERM 有限且 > 0；
-  7. 不做任何范围裁剪（SW 必须保持训练标签尺度，禁止压到 [0,1]）。
+  7. 不做任何范围裁剪（SW 必须保持训练标签尺度，禁止压到 [0,1]）；
+  8. **SW 尺度四重守卫（R4-B3）**：`SW<1.0` 占比、`SW<SW_VALID_MIN` 占比、非原子行 p05、全体中位数
+     —— 任一越界即拒绝，防止"原子行占多数"把中位数拉高从而掩盖连续分支被错误归一化到 [0,1]。
 """
 from __future__ import annotations
 
@@ -44,6 +46,20 @@ def _is_finite(x: Any) -> bool:
         return math.isfinite(float(x))
     except (TypeError, ValueError):
         return False
+
+
+def _percentile_sorted(sorted_vals: list[float], q: float) -> float | None:
+    """线性插值分位数（与 numpy 默认 `linear` 口径一致，纯标准库）。"""
+    n = len(sorted_vals)
+    if n == 0:
+        return None
+    if n == 1:
+        return float(sorted_vals[0])
+    pos = (q / 100.0) * (n - 1)
+    lo = int(math.floor(pos))
+    hi = min(lo + 1, n - 1)
+    frac = pos - lo
+    return float(sorted_vals[lo] * (1.0 - frac) + sorted_vals[hi] * frac)
 
 
 def _input_rows(test_dir: str | Path, well_id: str) -> int | None:
@@ -201,7 +217,17 @@ def validate_payload(payload: dict[str, Any], test_dir: str | Path | None = None
             res.ok = False
             res.errors.append(f"payload has {n_wells} wells, expected {want_wells}")
 
-    # R2-B6：SW 标签尺度守卫（防止误用 [0,1] 归一化后直接提交）
+    # R2-B6 + R4-B3：SW 标签尺度守卫。
+    # 旧实现只用**全体中位数**，可被"原子行占多数"绕过：7 行 SW=99.9（原子）+ 3 行
+    # SW=0.8（被错误归一化到 [0,1] 的连续分支）→ median=99.9 > 8.305 → 契约 passed，
+    # 而连续分支的量纲错误被完全掩盖。这正是 PD1 架构最可能出事的情形。
+    # 现在改为**四重判据**（任一触发即拒绝提交）：
+    #   (a) 明确量纲错误：n(SW < SW_LOW_GUARD_ABS=1.0)/n_obs > 1e-3
+    #       —— 训练标签里 SW<1 的行数为 0，任何成规模的低值都只能是量纲错误；
+    #   (b) 低于有效最小值的量成规模：n(SW < SW_VALID_MIN)/n_obs > 1%
+    #       —— 容忍个别边界外推（真值最小 8.305），但整片低于下界必然是尺度错；
+    #   (c) 非原子行 p05 < SW_VALID_MIN（非原子行 ≥ 20 时判定）—— 直接盯连续分支的低分位；
+    #   (d) 全体中位数 < SW_VALID_MIN —— 保留旧守卫，兜住"全部被归一化"的退化情形。
     scales = row_scales or {"SW": (C.SW_MIN_OBSERVED, 100.0),
                             "POR": (0.0, 60.0), "PERM": (0.0, 1e6)}
     if "SW" in scales:
@@ -209,16 +235,54 @@ def validate_payload(payload: dict[str, Any], test_dir: str | Path | None = None
                if isinstance(p, dict)]
         if med:
             import statistics as _st
-            m = _st.median(med)
             lo, hi = scales["SW"]
-            # 训练集有效 SW 中位数 ≈ 82.8；若整份预测中位数 < lo，几乎必然是量纲错误
-            res.stats["sw_median"] = m
+            n_obs = len(med)
+            m = _st.median(med)
+            n_low_abs = sum(1 for v in med if v < C.SW_LOW_GUARD_ABS)
+            n_low_min = sum(1 for v in med if v < C.SW_LOW_GUARD_NONATOM_P05_MIN)
+            # 非原子行 = 预测值不在原子值附近的那些行（连续分支的"领地"）
+            atom_hi = C.SW_PLACEHOLDER - max(C.PLACEHOLDER_ABS_TOL, 1e-6)
+            non_atom = sorted(v for v in med if v < atom_hi)
+            p05 = _percentile_sorted(non_atom, 5.0)
+            res.stats.update({
+                "sw_median": m, "sw_n": n_obs,
+                "sw_n_lt_guard": n_low_abs,
+                "sw_lt_guard_frac": n_low_abs / n_obs,
+                "sw_low_guard_abs": C.SW_LOW_GUARD_ABS,
+                "sw_n_lt_valid_min": n_low_min,
+                "sw_lt_valid_min_frac": n_low_min / n_obs,
+                "sw_valid_min": C.SW_LOW_GUARD_NONATOM_P05_MIN,
+                "sw_non_atom_n": len(non_atom),
+                "sw_non_atom_p05": p05,
+            })
+            if n_low_abs / n_obs > C.SW_LOW_GUARD_FRAC_MAX:
+                res.ok = False
+                res.errors.append(
+                    f"SW 低值计数 {n_low_abs}/{n_obs} = {n_low_abs / n_obs:.5f} > "
+                    f"{C.SW_LOW_GUARD_FRAC_MAX}（阈值 SW<{C.SW_LOW_GUARD_ABS}）—— "
+                    "疑似把 SW 归一化到 [0,1] 后直接输出"
+                    "（训练标签 SW<1 的行数实测为 0，有效值 8.305–99.9）")
+            if n_low_min / n_obs > C.SW_SUSPECT_FRAC_MAX:
+                res.ok = False
+                res.errors.append(
+                    f"SW 低于有效最小值 {C.SW_LOW_GUARD_NONATOM_P05_MIN} 的行数 "
+                    f"{n_low_min}/{n_obs} = {n_low_min / n_obs:.5f} > "
+                    f"{C.SW_SUSPECT_FRAC_MAX} —— 连续分支疑似被整体缩小（量纲错误）")
+            # p05 只在非原子行足够多时才判定：真实提交有 ~32k 连续行，p05 稳定；
+            # 几个行的小样例上 p05 ≈ min，容易把"单点外推"误判成量纲错误。
+            if (p05 is not None and len(non_atom) >= C.SW_LOW_GUARD_MIN_NONATOM
+                    and p05 < C.SW_LOW_GUARD_NONATOM_P05_MIN):
+                res.ok = False
+                res.errors.append(
+                    f"SW 非原子行 p05 = {p05:.4f} < {C.SW_LOW_GUARD_NONATOM_P05_MIN}"
+                    f"（非原子行 {len(non_atom)} 条）—— 连续分支疑似被归一化到 [0,1]")
             if m < lo:
                 res.ok = False
                 res.errors.append(
                     f"SW median {m:.4f} < {lo} —— 疑似把 SW 归一化到 [0,1] 后直接输出"
                     "（训练标签 SW 有效值实测 8.3–99.9）")
 
+    # 非原子行 p05 需要分位数：契约只依赖标准库 + 可选 numpy
     exp_rows = expected_rows if expected_rows is not None else C.EXPECTED_N_TEST_ROWS
     res.stats["n_wells"] = n_wells
     res.stats["n_rows"] = n_rows_total

@@ -204,6 +204,44 @@ def cleanup(verbose: bool = False) -> list[str]:
     return removed
 
 
+def _escalate(st: DiskState, capacity_hook: Callable[[], None] | None,
+              verbose: bool) -> None:
+    """`save_and_exit` 的统一出口：**先回调保存**，再抛 `DiskBudgetError`。
+
+    R4-H3：旧实现只在**初次**测得 `save_and_exit` 时调 hook；如果初次是 `cleanup`、
+    cleanup 之后才降到 `save_and_exit`，就走另一条分支只抛错不调 hook，
+    违背模块 docstring 的"free < 5 GB → 先回调 capacity_hook 保存 last.pt，再抛错"。
+    现在所有路径都经过这里。
+    """
+    if capacity_hook is not None:
+        if verbose:
+            print(f"[disk_guard] free={st.free_gb:.2f} GB -> save_and_exit (calling hook)")
+        try:
+            capacity_hook()
+        except Exception as exc:  # hook 失败不掩盖磁盘问题
+            print(f"[disk_guard] capacity_hook failed: {exc!r}")
+    raise DiskBudgetError(
+        f"disk free={st.free_gb:.2f} GB on {st.path} (level={st.level}); "
+        f"cleanup removed {len(st.actions)} path(s). "
+        "请清理 cache/ 与旧 checkpoint 后使用 --resume 继续。"
+    )
+
+
+def _abort(st: DiskState, verbose: bool) -> None:
+    """`abort`（free < 3 GB）的统一出口：**绝不回调 hook、绝不被 allow_soft 软接受**。
+
+    R4-H3：`allow_soft` 的语义是"cleanup 后仍低于 8 GB 硬门禁但**高于** 5 GB 安全线时
+    显式接受风险"。把 `abort` 也软接受会让机器在 < 3 GB 时继续写盘直至彻底打爆，
+    所以这里显式隔绝。
+    """
+    if verbose:
+        print(f"[disk_guard] free={st.free_gb:.2f} GB -> ABORT (no hook, no soft accept)")
+    raise DiskBudgetError(
+        f"disk free={st.free_gb:.2f} GB on {st.path} (level=abort) —— 低于 abort 阈值，"
+        "绝不继续写盘。请清理 cache/ 与旧 checkpoint 后使用 --resume 继续。"
+    )
+
+
 def assert_disk_headroom(
     min_gb: float = 8.0,
     path: Path | str = "/",
@@ -213,48 +251,50 @@ def assert_disk_headroom(
 ) -> DiskState:
     """在训练循环的关键位置调用。
 
-    - free < min_gb : 执行 cleanup，然后重新测量；若仍 < cleanup 阈值则继续降级
-    - free < 5 GB   : 先调用 capacity_hook() 保存状态，再抛 DiskBudgetError
-    - free < 3 GB   : 不调用 hook，直接抛 DiskBudgetError（避免写盘把机器彻底打爆）
+    分级动作（R4-H3 统一出口，五种路径都有单测）：
+
+      - free >= min_gb            -> 直接返回 `ok`；
+      - cleanup <= free < min_gb  -> 执行 cleanup 后**重新测量**，再按新 level 分派：
+          * `ok`            -> 返回；
+          * `save_and_exit` -> 调 `capacity_hook()` 保存后抛错；
+          * `abort`         -> **不调 hook、不受 allow_soft 影响**，立即抛错；
+          * `cleanup`       -> 仍低于硬门禁：`allow_soft=True` 时记 `risk_accepted` 并返回，
+                               否则抛错；
+      - save_and_exit <= free < cleanup_gb（5 GB）-> 调 `capacity_hook()` 保存后抛错；
+      - free < abort_gb（3 GB）   -> 不调 hook，直接抛错（避免写盘把机器彻底打爆）。
     """
     st = disk_state(path, min_gb=min_gb)
     if st.level == "ok":
         return st
+    if st.level == "abort":
+        _abort(st, verbose)
+    if st.level == "save_and_exit":
+        _escalate(st, capacity_hook, verbose)
 
-    if st.level == "cleanup":
+    # 到这里 st.level == "cleanup"
+    if verbose:
+        print(f"[disk_guard] free={st.free_gb:.2f} GB < {min_gb} GB -> cleanup")
+    removed = cleanup(verbose=verbose)
+    st = disk_state(path, min_gb=min_gb)
+    st.actions = list(removed) + list(st.actions)
+    if st.level == "ok":
+        return st
+    if st.level == "abort":
+        _abort(st, verbose)                  # 不调 hook、不软接受
+    if st.level == "save_and_exit":
+        _escalate(st, capacity_hook, verbose)   # 必须调 hook（R4-H3 修复点）
+    if allow_soft:
+        # 显式接受风险：cleanup 后仍低于 min_gb，但**高于** save_and_exit 安全线
+        st.actions.append("risk_accepted: still below min_gb after cleanup")
         if verbose:
-            print(f"[disk_guard] free={st.free_gb:.2f} GB < {min_gb} GB -> cleanup")
-        st.actions = cleanup(verbose=verbose)
-        st = disk_state(path, min_gb=min_gb)
-        if st.level == "ok":
-            return st
-        if allow_soft:
-            # 显式接受风险：cleanup 后仍低于 min_gb，但高于 save_and_exit 阈值
-            st.actions.append("risk_accepted: still below min_gb after cleanup")
-            if verbose:
-                print(f"[disk_guard] WARNING: free={st.free_gb:.2f} GB still < {min_gb} GB "
-                      f"(risk_accepted=True)")
-            return st
-        raise DiskBudgetError(
-            f"disk free={st.free_gb:.2f} GB on {st.path} 仍低于硬门禁 {min_gb} GB "
-            f"（cleanup 已删除 {len(st.actions)} 项）。请清理 cache/ 与旧 checkpoint 后重试；"
-            "如确需继续，请显式传 allow_soft=True 并在 Gate 中记录 risk_accepted。"
-        )
-
-    if st.level in ("save_and_exit", "abort"):
-        if st.level == "save_and_exit" and capacity_hook is not None:
-            if verbose:
-                print(f"[disk_guard] free={st.free_gb:.2f} GB -> save_and_exit (calling hook)")
-            try:
-                capacity_hook()
-            except Exception as exc:  # hook 失败不掩盖磁盘问题
-                print(f"[disk_guard] capacity_hook failed: {exc!r}")
-        raise DiskBudgetError(
-            f"disk free={st.free_gb:.2f} GB on {st.path} (level={st.level}); "
-            f"cleanup removed {len(st.actions)} path(s). "
-            "请清理 cache/ 与旧 checkpoint 后使用 --resume 继续。"
-        )
-    return st
+            print(f"[disk_guard] WARNING: free={st.free_gb:.2f} GB still < {min_gb} GB "
+                  f"(risk_accepted=True)")
+        return st
+    raise DiskBudgetError(
+        f"disk free={st.free_gb:.2f} GB on {st.path} 仍低于硬门禁 {min_gb} GB "
+        f"（cleanup 已删除 {len(removed)} 项）。请清理 cache/ 与旧 checkpoint 后重试；"
+        "如确需继续，请显式传 allow_soft=True 并在 Gate 中记录 risk_accepted。"
+    )
 
 
 def disk_report(path: Path | str = "/") -> dict:

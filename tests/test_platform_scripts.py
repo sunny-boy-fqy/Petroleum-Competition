@@ -128,6 +128,94 @@ class TestCommittedE0CacheEvidence(unittest.TestCase):
         self.assertGreater(sw["valid_rows_only"]["min"], 1.0)
 
 
+class TestCheckEnvCudaSemantics(unittest.TestCase):
+    """R4-B1：`torch.version.cuda` 是 **runtime**（12.4），不是驱动能力（12.6）。
+
+    旧实现硬断言 `torch.version.cuda == 12.6`，云端 `--mode env` 会必然 `exit 11`，
+    于是 `E0_env.json` / `E0_disk_budget.json` 永远产不出来、`E0_cloud_gate` 永远 blocked。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "v4_check_env", str(V4 / "E0" / "code" / "check_env.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        cls.mod = mod
+
+    def test_runtime_expectation_is_124_not_126(self):
+        self.assertEqual(tuple(self.mod.EXPECTED_CUDA_RUNTIME), (12, 4))
+        self.assertEqual(tuple(self.mod.MIN_CUDA_DRIVER), (12, 6))
+
+    def test_old_wrong_constant_is_gone(self):
+        src = _read("E0/code/check_env.py")
+        self.assertNotIn("EXPECTED_CUDA_MAJOR_MINOR", src)
+        self.assertNotIn('rep.add("cuda_version"', src)
+
+    def test_parse_cuda_driver_from_smi(self):
+        f = self.mod.parse_cuda_driver_from_smi
+        self.assertEqual(
+            f("| NVIDIA-SMI 550.54.15  Driver Version: 550.54.15  CUDA Version: 12.6  |"),
+            "12.6")
+        self.assertEqual(f("CUDA Version: 12.4"), "12.4")
+        self.assertIsNone(f("no cuda version here"))
+        self.assertIsNone(f(""))
+
+    def test_expected_json_block_splits_runtime_and_driver(self):
+        src = _read("E0/code/check_env.py")
+        self.assertIn('"cuda_runtime"', src)
+        self.assertIn('"cuda_driver_min"', src)
+        # 旧的单一 "cuda" 键会让读者再次把 runtime 当驱动
+        self.assertNotIn('"cuda": f"', src)
+
+    def test_both_checks_are_registered(self):
+        src = _read("E0/code/check_env.py")
+        self.assertIn('"cuda_runtime_version"', src)
+        self.assertIn('"cuda_driver_version"', src)
+        # 驱动能力必须是 advisory（warn），不能 hard fail
+        m = re.search(r'rep\.add\("cuda_driver_version",[^)]*?"(hard|warn)"', src, re.S)
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1), "warn")
+
+
+class TestRunE0PlanStatsEvidence(unittest.TestCase):
+    """R4-H2：`run_e0` 必须同时产出计划行数证据 JSON（否则云端 E0_*.json 集合不自洽）。"""
+
+    def setUp(self):
+        src = _read("run_train.sh")
+        self.e0_body = src[src.index("run_e0()"):]
+        self.e0_body = self.e0_body[: self.e0_body.index("\nrun_smoke()")]
+
+    def test_run_e0_writes_plan_stats_json(self):
+        self.assertIn("plan_stats.py", self.e0_body)
+        self.assertIn("E0_plan_stats.json", self.e0_body)
+
+    def test_run_e0_still_copies_glob(self):
+        self.assertIn("E0_*.json", self.e0_body)
+
+
+class TestCommittedE0GateRecompute(unittest.TestCase):
+    """R4-H1：提交里的 prereg 与 report 必须能被同一个校验器复算通过。"""
+
+    def test_prereg_recompute_passed_is_recorded(self):
+        from src.validation import gates as G
+        pr = json.loads((V4 / "reports" / "E0_gate_prereg.json").read_text(encoding="utf-8"))
+        rep = json.loads((V4 / "reports" / "E0_local_contract_gate.json")
+                         .read_text(encoding="utf-8"))
+        checks = rep.get("mandatory_checks") or rep.get("checks")
+        result = {"checks": checks, "abs_diff": rep.get("abs_diff")}
+        out = G.aggregate_gate(pr, result)
+        self.assertTrue(out["passed"], json.dumps(out, ensure_ascii=False)[:800])
+
+    def test_report_carries_contract_ok_alias(self):
+        rep = json.loads((V4 / "reports" / "E0_local_contract_gate.json")
+                         .read_text(encoding="utf-8"))
+        checks = rep["mandatory_checks"]
+        self.assertIn("contract_ok", checks)
+        self.assertEqual(checks["contract_ok"], checks["contract_selftest"])
+
+
 def _in_git_worktree() -> bool:
     """非 git 工作树（例如 `git archive` 解出的目录）里 `git check-ignore` 无法用。"""
     return (V4 / ".git").exists() and shutil.which("git") is not None

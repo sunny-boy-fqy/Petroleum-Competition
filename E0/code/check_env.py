@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
-"""E0 环境自检：PyTorch 2.4.0 / CUDA 12.6 / Python 3.11 / A100 / 30 GB 磁盘。
+"""E0 环境自检：PyTorch 2.4.0+cu124 / CUDA 12.6 驱动 / Python 3.11 / A100 / 30 GB 磁盘。
+
+CUDA 语义（R4-B1 修复，务必读）
+------------------------------
+「CUDA 12.6」在本项目里指的是**平台驱动的 CUDA 能力**（`nvidia-smi` 头部
+`CUDA Version: 12.6`），**不是** PyTorch 的运行时版本。平台镜像锁死
+`torch==2.4.0+cu124`（见 `versions/locks/cloud.txt`），该 wheel 编译期的
+`torch.version.cuda` 恒为 **12.4**。
+
+旧实现把 `torch.version.cuda` 硬比 `12.6`，于是云端 `run_train.sh --mode env`
+必然 `[FAIL] cuda_version`→`exit 11`，`E0_env.json`/`E0_disk_budget.json` 永远产不出来，
+`E0_cloud_gate` 永远 blocked。现在拆成两个检查：
+
+  - `cuda_runtime_version`（**hard**）：`torch.version.cuda` 必须 = 12.4；
+  - `cuda_driver_version`（**warn/advisory**）：`nvidia-smi` 报的驱动 CUDA 能力 >= 12.6，
+    取不到只提示、不阻塞（驱动能力由平台保证，程序无法也不应修改）。
+
 
 设计原则
 --------
@@ -29,14 +45,19 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 EXPECTED_PY = (3, 11)
 EXPECTED_TORCH = "2.4.0"
-EXPECTED_CUDA_MAJOR_MINOR = (12, 6)
+# R4-B1：`torch.version.cuda`（编译期 runtime）≠ 平台驱动的 CUDA 能力。
+# torch 2.4.0+cu124 的 runtime 是 12.4；镜像声明的 "CUDA 12.6" 是驱动能力。
+EXPECTED_CUDA_RUNTIME = (12, 4)      # hard：torch.version.cuda
+MIN_CUDA_DRIVER = (12, 6)            # advisory：nvidia-smi 的 "CUDA Version"
 MIN_FREE_GB_DEFAULT = 8.0
 DISK_BUDGET_GB = 30.0
 
@@ -113,6 +134,41 @@ def check_python(rep: Report) -> None:
     )
 
 
+def _mm(text) -> str:
+    """把版本串规范成 `major.minor`（用于比较与展示）。"""
+    return ".".join(str(text).split(".")[:2])
+
+
+def _mm_tuple(text) -> tuple[int, int]:
+    parts = str(text).split(".")
+    try:
+        return int(parts[0]), int(parts[1])
+    except (IndexError, ValueError):
+        return (-1, -1)
+
+
+def parse_cuda_driver_from_smi(text: str) -> str | None:
+    """从 `nvidia-smi` 输出里解析**驱动 CUDA 能力**（头部 `CUDA Version: 12.6`）。
+
+    纯函数（可单测）：给不定格式的 smi 文本，返回 `"12.6"` 或 `None`。
+    """
+    m = re.search(r"CUDA\s+Version\s*:\s*(\d+\.\d+)", text or "")
+    return m.group(1) if m else None
+
+
+def query_cuda_driver(timeout: float = 10.0) -> str | None:
+    """调用 `nvidia-smi` 查询驱动 CUDA 能力；任何失败都返回 None（advisory）。"""
+    exe = shutil.which("nvidia-smi")
+    if not exe:
+        return None
+    try:
+        proc = subprocess.run(                 # noqa: S603 - 固定可执行名，无 shell
+            [exe], capture_output=True, text=True, timeout=timeout, check=False)
+    except Exception:                          # pragma: no cover - 依赖环境
+        return None
+    return parse_cuda_driver_from_smi(proc.stdout or "")
+
+
 def check_torch(rep: Report, allow_non_a100: bool) -> dict:
     info: dict = {"torch_available": False}
     level = "warn" if allow_non_a100 else "hard"
@@ -134,14 +190,29 @@ def check_torch(rep: Report, allow_non_a100: bool) -> dict:
         f"torch {torch.__version__} (expected {EXPECTED_TORCH})",
     )
 
+    # R4-B1：hard 检查的是 **runtime**（torch.version.cuda == 12.4），不是驱动能力。
     cuda_ver = getattr(torch.version, "cuda", None)
-    want_cuda = ".".join(str(x) for x in EXPECTED_CUDA_MAJOR_MINOR)
+    want_cuda = _mm("%d.%d" % EXPECTED_CUDA_RUNTIME)
     if cuda_ver:
-        got_mm = ".".join(str(cuda_ver).split(".")[:2])
-        rep.add("cuda_version", got_mm == want_cuda, level,
-                f"torch.version.cuda={cuda_ver} (expected {want_cuda} driver)")
+        got_mm = _mm(cuda_ver)
+        rep.add("cuda_runtime_version", got_mm == want_cuda, level,
+                f"torch.version.cuda={cuda_ver} (expected {want_cuda} = torch "
+                f"{EXPECTED_TORCH}+cu124 runtime; 平台驱动能力见 cuda_driver_version)")
     else:
-        rep.add("cuda_version", False, level, "torch.version.cuda is None (CPU-only wheel?)")
+        rep.add("cuda_runtime_version", False, level,
+                "torch.version.cuda is None (CPU-only wheel?)")
+
+    # R4-B1：驱动能力只做 advisory（warn），缺失/偏低都不阻塞训练。
+    drv = query_cuda_driver()
+    info["cuda_driver_version"] = drv
+    want_drv = _mm("%d.%d" % MIN_CUDA_DRIVER)
+    if drv:
+        rep.add("cuda_driver_version", _mm_tuple(drv) >= MIN_CUDA_DRIVER, "warn",
+                f"nvidia-smi CUDA Version={drv} (平台声明 {want_drv}；"
+                "驱动能力由平台保证，advisory 不阻塞)")
+    else:
+        rep.add("cuda_driver_version", False, "warn",
+                "nvidia-smi 不可用或未报 CUDA Version（advisory，不影响 hard 判定）")
 
     cuda_avail = torch.cuda.is_available()
     info["cuda_available"] = cuda_avail
@@ -336,7 +407,9 @@ def main() -> int:
             "expected": {
                 "python": f"{EXPECTED_PY[0]}.{EXPECTED_PY[1]}",
                 "torch": EXPECTED_TORCH,
-                "cuda": f"{EXPECTED_CUDA_MAJOR_MINOR[0]}.{EXPECTED_CUDA_MAJOR_MINOR[1]}",
+                # R4-B1：明确区分 runtime 与 driver，避免再次拿 torch.version.cuda 比驱动
+                "cuda_runtime": _mm("%d.%d" % EXPECTED_CUDA_RUNTIME),
+                "cuda_driver_min": _mm("%d.%d" % MIN_CUDA_DRIVER),
                 "disk_budget_gb": DISK_BUDGET_GB,
             },
             "allow_non_a100": args.allow_non_a100,

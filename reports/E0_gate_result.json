@@ -1,0 +1,45 @@
+{
+  "gate_result_input": {
+    "checks": {
+      "data_card_recomputable": true,
+      "row_counts_match": true,
+      "constant_baseline_anchor_hit": true,
+      "folds_fingerprint_present": true,
+      "contract_selftest": true,
+      "no_torch_required": true,
+      "missing_mode_is_drop": true,
+      "score_total_consistent": true,
+      "input_no_label_leak": true,
+      "target_scale_reported": true,
+      "shard_cache_built": true,
+      "shard_cache_input_cols_ok": true,
+      "contract_ok": true
+    },
+    "abs_diff": 3.500477092188703e-05,
+    "score_total_abs_diff": 0.0
+  },
+  "aggregate_gate": {
+    "gate_id": "E0_local_contract_gate",
+    "gate_type": "boolean",
+    "passed": true,
+    "prereg_errors": [],
+    "mandatory_failures": [],
+    "effective_threshold": null,
+    "delta": null,
+    "paired_ci_low": null,
+    "metric_pass": true,
+    "details": {
+      "gate_type": "boolean",
+      "note": "boolean Gate 不要求 delta/CI，但仍强制绝对门槛与 mandatory_checks",
+      "absolute_checks": {
+        "abs_tolerance": {
+          "required": 0.0001,
+          "have": 3.500477092188703e-05,
+          "ok": true,
+          "direction": "max",
+          "field": "abs_diff"
+        }
+      }
+    }
+  }
+}
