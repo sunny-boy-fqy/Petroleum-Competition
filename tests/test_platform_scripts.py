@@ -10,7 +10,9 @@
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -866,6 +868,111 @@ class TestOnnxWordingMatchesDependencyPolicy(unittest.TestCase):
         self.assertIn("best-effort", gen)
 
 
+class TestFrozenPins(unittest.TestCase):
+    """版本策略：默认不钉版本 -> 实机 `pip freeze` 回填 -> 需要时用 `--from-frozen` 精确复现。
+
+    这是"你不指定安装的版本吗"的代码答案：钉版本的位置是 `cloud_frozen.txt`（实测事实），
+    而不是我在开发机上猜出来的小版本号。
+    """
+
+    SYNTHETIC = "\n".join([
+        "# synthetic pip freeze",
+        "torch==2.7.1+cu128",
+        "nvidia-cuda-runtime-cu12==12.6.77",
+        "nvidia-cudnn-cu12==9.5.1.17",
+        "triton==3.3.1",
+        "cuda-python==12.6.0",
+        "numpy==2.1.3",
+        "pandas==2.2.3",
+        "scipy==1.14.1",
+        "scikit_learn==1.5.2",          # 下划线写法必须归一到 scikit-learn
+        "einops==0.8.0",
+        "tensorboard==2.18.0",
+        "setuptools==75.1.0",
+        "pip==24.2",
+        "protobuf==5.28.2",
+        "-e git+https://example.com/x.git#egg=y",
+        "",
+    ])
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "v4_frozen_pins", str(V4 / "E0" / "code" / "frozen_pins.py"))
+        cls.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.mod)
+
+    def test_picks_exact_versions_for_direct_deps_only(self):
+        pins = self.mod.parse_freezes(self.SYNTHETIC)
+        self.assertEqual(pins["numpy"], "numpy==2.1.3")
+        self.assertEqual(pins["pandas"], "pandas==2.2.3")
+        self.assertEqual(pins["scipy"], "scipy==1.14.1")
+        self.assertEqual(pins["scikit-learn"], "scikit-learn==1.5.2")
+        self.assertEqual(pins["einops"], "einops==0.8.0")
+        self.assertEqual(pins["tensorboard"], "tensorboard==2.18.0")
+        # 传递依赖 / 打包工具不得出现
+        for junk in ("setuptools", "pip", "protobuf"):
+            self.assertNotIn(junk, pins)
+
+    def test_never_contains_forbidden_series(self):
+        """白名单式构造：结果集与 torch/nvidia/cuda/triton **无交集**（含 `-e` 行也不受影响）。"""
+        pins = self.mod.parse_freezes(self.SYNTHETIC)
+        for name in pins:
+            for bad in self.mod.FORBIDDEN:
+                self.assertFalse(name.startswith(bad),
+                                 f"frozen 结果不得包含 {bad}* （实际 {name}）")
+        # 再来一个只有禁装系列的 freeze：必须得到空结果
+        only_bad = "torch==2.7.1\nnvidia-cudnn-cu12==9.5\ntriton==3.3.1\ncuda-python==1.0\n"
+        self.assertEqual(self.mod.parse_freezes(only_bad), {})
+
+    def test_name_normalization_follows_pep503(self):
+        text = "Scikit.Learn==1.5.2\nEIN0OPS==1.0\n"
+        self.assertIn("scikit-learn", self.mod.parse_freezes(text))
+        self.assertEqual(self.mod.parse_freezes("Scikit_Learn==1.5.2")["scikit-learn"],
+                         "scikit-learn==1.5.2")
+
+    def test_missing_and_empty_files_return_nonzero(self):
+        with tempfile.TemporaryDirectory() as td, \
+                contextlib.redirect_stderr(io.StringIO()):
+            missing = Path(td) / "nope.txt"
+            self.assertEqual(self.mod.main(["--frozen", str(missing)]), 2)
+            empty = Path(td) / "empty.txt"
+            empty.write_text("# nothing here\n", encoding="utf-8")
+            self.assertEqual(self.mod.main(["--frozen", str(empty)]), 1)
+
+    def test_setup_deps_wires_from_frozen(self):
+        """静态兜底：`--from-frozen` 必须真的走 frozen_pins.py，而不是被忽略。"""
+        src = _read("E0/code/setup_deps.sh")
+        self.assertIn("--from-frozen) FROM_FROZEN=1", src)
+        self.assertIn("frozen_pins.py", src)
+        self.assertIn("cloud_frozen.txt", src)
+        # frozen 路径下不得把 white-list 之外的包塞进 pip
+        self.assertIn("V4_FROZEN_LOCK", src)
+
+    def test_setup_deps_from_frozen_dry_run(self):
+        """端到端（需 >= 8 GiB 空闲，否则脚本按 PLAN §3.4.1 直接 exit 2）。"""
+        free_gb = shutil.disk_usage(str(V4)).free / 1024 ** 3
+        if free_gb < 8.0:
+            self.skipTest(f"代码所在磁盘只有 {free_gb:.1f} GiB 空闲")
+        with tempfile.TemporaryDirectory() as td:
+            frozen = Path(td) / "frozen.txt"
+            frozen.write_text(self.SYNTHETIC, encoding="utf-8")
+            env = dict(os.environ)
+            env.update({"V4_REPORTS_DIR": str(Path(td) / "reports"),
+                        "V4_DATA_ROOT": str(V4),
+                        "V4_CACHE_ROOT": str(Path(td) / "cache"),
+                        "V4_FROZEN_LOCK": str(frozen)})
+            r = subprocess.run(["bash", str(V4 / "E0/code/setup_deps.sh"),
+                                "--from-frozen", "--dry-run"],
+                               capture_output=True, text=True, env=env)
+            out = r.stdout + r.stderr
+            self.assertEqual(r.returncode, 0, out)
+            self.assertIn("numpy==2.1.3", out)
+            self.assertIn("scikit-learn==1.5.2", out)
+            self.assertNotIn("torch", out.split("would run:")[-1])
+            self.assertNotIn("nvidia", out.split("would run:")[-1])
+
+
 def _in_git_worktree() -> bool:
     """非 git 工作树（例如 `git archive` 解出的目录）里 `git check-ignore` 无法用。"""
     return (V4 / ".git").exists() and shutil.which("git") is not None
@@ -914,7 +1021,7 @@ class TestGitignoreDoesNotShadowSources(unittest.TestCase):
         真正的不变量是「源码不被忽略」，因此这里逐个路径做 `git check-ignore` 穷举。
         """
         ignored: list[str] = []
-        for root in ("src", "tests", "tools", "docs", "versions"):
+        for root in ("src", "tests", "tools", "docs", "versions", "E0", "configs"):
             base = V4 / root
             if not base.is_dir():
                 continue

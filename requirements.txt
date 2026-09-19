@@ -20,9 +20,13 @@
 #
 # 版本**不钉死**：torch 的 wheel 不依赖 numpy（torch 2.7.1 Requires-Dist 里没有 numpy），
 # 基础镜像通常自带、但不保证，所以 numpy 也由 pip 补装（已装时只会打印 already satisfied）；
-# 其余包按 pip 解析出的兼容版本
-# 即可。精确版本一致性由 versions/locks/cloud_frozen.txt（云端 `pip freeze` 回填）
-# 保证，而不是靠这里的猜测定版。
+# 其余包按 pip 解析出的兼容版本即可。
+#
+# 【两阶段版本策略】精确版本不靠这里猜，而靠**实机事实**：
+#   ① bash v4/E0/code/setup_deps.sh               # 只给包名，让 pip 按当前镜像解析
+#   ② 装完自动 pip freeze -> versions/locks/cloud_frozen.txt（进 git，供提交复现）
+#   ③ bash v4/E0/code/setup_deps.sh --from-frozen  # 重建镜像/复现时按①的实测版本精确安装
+#      （白名单挑包，构造上不可能碰 torch/nvidia-*/cuda-*/triton）
 #
 # 安装脚本：v4/E0/code/setup_deps.sh（--no-cache-dir + 装完清缓存 + 拒绝触碰 torch）
 # 训练侧清单：versions/locks/cloud.txt ；推理侧：versions/locks/submit.txt

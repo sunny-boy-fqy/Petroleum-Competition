@@ -1,10 +1,31 @@
 #!/usr/bin/env bash
 # v4 云端一次性依赖安装（30 GB 磁盘纪律版）
-# 用法： bash v4/E0/code/setup_deps.sh [--dry-run]
+#
+# 用法：
+#   bash v4/E0/code/setup_deps.sh                 # 按 versions/locks/cloud.txt（**不钉版本**）
+#   bash v4/E0/code/setup_deps.sh --dry-run       # 只预检并打印将要安装的包
+#   bash v4/E0/code/setup_deps.sh --from-frozen   # 按 cloud_frozen.txt 的**精确版本**安装
+#
+# 为什么默认不钉版本、以及"什么时候才钉"：
+#   py3.11 + 平台镜像下 pip 会解析出哪个小版本，只有实机才知道；猜错会让镜像构建失败。
+#   所以第一次不钉（让 pip 解析），装完立刻 `pip freeze` 写进
+#   `versions/locks/cloud_frozen.txt`（本脚本第 3 步自动做）；需要**重建镜像 / 复现提交**时
+#   用 `--from-frozen` 按那份实测版本精确安装（torch/nvidia/cuda 系列由白名单天然排除）。
 set -euo pipefail
 
 DRY=0
-[[ "${1:-}" == "--dry-run" ]] && DRY=1
+FROM_FROZEN=0
+for _a in "$@"; do
+  case "$_a" in
+    --dry-run)     DRY=1 ;;
+    --from-frozen) FROM_FROZEN=1 ;;
+    *) echo "unknown arg: $_a"; exit 2 ;;
+  esac
+done
+
+cd "$(dirname "$0")/../.."   # -> v4/
+# 可用 `V4_FROZEN_LOCK` 指向别处的 freeze 文件（默认 repo 内那份；相对路径按 v4/ 解析）
+FROZEN="${V4_FROZEN_LOCK:-versions/locks/cloud_frozen.txt}"
 
 cd "$(dirname "$0")/../.."   # -> v4/
 DATA_ROOT="${V4_DATA_ROOT:-/data}"
@@ -62,15 +83,25 @@ fi
 # 1) 安装纪律：绝不触碰 torch / nvidia-* / cuda-*
 export PIP_NO_CACHE_DIR=1
 
-# 优先使用 lock 文件里的**精确版本**（R2-M6：范围约束与 lock 不一定一致）
-# R5-M1/M2：lock 现在只列包名（版本不钉死）；**只排除 torch**（镜像提供，禁止 pip 触碰）。
-#   numpy 不再被排除：torch 的 wheel 并不依赖 numpy（2.7.1 Requires-Dist 无 numpy），
-#   而它同时在 REQUIRED_PY_DEPS / requirements.txt / 用户 pip 清单里。若镜像不带 numpy，
-#   pip 必须能补上（已装时只会打印 "Requirement already satisfied"，不会改动 torch）。
+# 包清单三选一：
+#   a) --from-frozen：`pip freeze` 的**实测精确版本**（重建镜像/复现提交时用；
+#      E0/code/frozen_pins.py 用白名单挑直接依赖，构造上不含 torch/nvidia/cuda/triton）
+#   b) versions/locks/cloud.txt：默认，**只列包名、不钉版本**（让 pip 解析当前镜像的兼容版本）
+#   c) 兜底硬编码列表：与 check_env.py::REQUIRED_PY_DEPS 保持一致（lock 缺失时）
 LOCK="versions/locks/cloud.txt"
-if [[ -f "$LOCK" ]]; then
+if [[ "$FROM_FROZEN" == "1" ]]; then
+  PINS="$(python3 E0/code/frozen_pins.py --frozen "$FROZEN")" || {
+    echo "!! --from-frozen 需要可用的 frozen lock：$FROZEN"
+    echo "   先跑一次不带参数的本脚本（第 3 步会自动写 cloud_frozen.txt），"
+    echo "   或用 V4_FROZEN_LOCK=<path> 指向那份 pip freeze 输出。"
+    exit 2
+  }
+  mapfile -t PKGS <<< "$PINS"
+  echo "使用 frozen lock 的精确版本: ${#PKGS[@]} 个包（$FROZEN）"
+  printf '  %s\n' "${PKGS[@]}"
+elif [[ -f "$LOCK" ]]; then
   mapfile -t PKGS < <(grep -vE '^\s*#|^\s*$|^torch' "$LOCK" | sed -E 's/[[:space:]]*#.*$//' | grep -vE '^\s*$')
-  echo "使用 lock 清单: ${#PKGS[@]} 个包（仅 torch 由镜像提供，跳过）"
+  echo "使用 lock 清单: ${#PKGS[@]} 个包（不钉版本；仅 torch 由镜像提供，跳过）"
 else
   # 与 check_env.py::REQUIRED_PY_DEPS 保持一致（四审 R5-M1：pyarrow 已移出 required）
   PKGS=( "numpy" "pandas" "scipy" "scikit-learn" "einops" )

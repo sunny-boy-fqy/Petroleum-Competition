@@ -33,11 +33,31 @@
 **不需要**：`pyarrow`（分片缓存是 `.npz`，没有任何代码 `import pyarrow`）、
 `onnx` / `onnxruntime`（CPU 推理主路径是 `torch.load(map_location="cpu")`）。
 
-**版本策略**：只查存在性，**不钉死小版本**（`torch` 的 wheel **不**把 numpy 列为依赖
-（`torch 2.7.1` 的 `Requires-Dist` 里没有 numpy，实测从 PyPI 元数据核对），
-基础镜像通常自带，但不作为保证 —— 所以 numpy 在 required 清单里由 `setup_deps.sh` 补装；
-其余包按 pip 解析出的兼容版本即可）。精确版本由
-`versions/locks/cloud_frozen.txt`（云端 `pip freeze` 回填）提供。
+**版本策略**：只查存在性，**不钉死小版本**。`torch` 的 wheel **不**把 numpy 列为依赖
+（`torch 2.7.1` 的 `Requires-Dist` 里没有 numpy —— 已从 PyPI 元数据核对），基础镜像通常
+自带但不保证，所以 numpy 也在 required 清单里由 `setup_deps.sh` 补装；其余包按 pip 解析出的
+兼容版本即可。
+
+## 版本到底在哪里被钉死（两阶段流程）
+
+| 阶段 | 动作 | 谁执行 |
+|---|---|---|
+| ① 首次装 | `bash v4/E0/code/setup_deps.sh`（不带参数）→ 只给**包名**，让 pip 按当前镜像解析 | 用户（云端 `--mode env` 自动调用） |
+| ② 记录事实 | 脚本第 3 步自动 `pip freeze > $V4_REPORTS_DIR/cloud_frozen.txt`，并回拷 `versions/locks/cloud_frozen.txt` | 脚本 |
+| ③ 需要确定性时 | `bash v4/E0/code/setup_deps.sh --from-frozen` → 按 ② 的**精确版本**安装（重建镜像 / 复现提交） | 用户 |
+
+**为什么首次不钉**：`python 3.11 + 平台镜像`组合下 pip 会解析出哪个小版本，只有实机才知道；
+我（agent）无法安装、无法探测，猜错会让镜像构建失败或引入 ABI 冲突 —— 这与四审"把 CUDA
+runtime 小版本钉死导致 Gate 永久 blocked"是同一类错误。
+
+**`--from-frozen` 的安全边界**：`E0/code/frozen_pins.py` 用**白名单**（required 5 个 +
+可选 `tensorboard`）从 freeze 里挑包，因此结果**在构造上不可能**包含 `torch` / `nvidia-*` /
+`cuda-*` / `triton`；`pip` / `setuptools` / `wheel` 与全部传递依赖也会被忽略。
+可用 `V4_FROZEN_LOCK=<path>` 指向另一份 freeze 输出。
+
+**明确不钉的东西**：不钉 `numpy` 的精确版本（除非 frozen 证明镜像里就是那个版本）。
+`numpy` 1.x / 2.x 我们的代码都兼容（已核查无 `np.float_` / `np.NaN` / `np.trapz` 等被移除别名），
+而把一个旧 numpy 强装进已装 numpy 2.x 的镜像，会让 scipy/scikit-learn 的 wheel 与 numpy ABI 打架。
 
 ## 明确不安装
 

@@ -157,17 +157,32 @@ hard failures: 0
 
 ## 五、依赖版本快照（提交与复现用）
 
-镜像构建后，在任务里执行并把输出纳入版本控制：
+**两阶段版本策略**（详见 `docs/dependencies.md`）：
 
-```bash
-python -m pip freeze > /data/v4/reports/cloud_frozen.txt
-# 与 v4/versions/locks/cloud.txt 比对；不一致时更新 lock 文件并提交
-```
+1. **首次装**（`run_train.sh --mode env` 会自动调用 `setup_deps.sh`）：只给**包名**，
+   由 pip 按当前镜像解析兼容版本 —— 我不会猜小版本号，猜错会让镜像构建失败；
+2. **记录事实**：脚本装完立即
+
+   ```bash
+   python -m pip freeze > /data/v4/reports/cloud_frozen.txt
+   # 同时回拷到 v4/versions/locks/cloud_frozen.txt（进 git，供提交复现）
+   ```
+
+3. **需要精确复现时**（重建镜像 / 打包提交）：按实测版本安装
+
+   ```bash
+   bash v4/E0/code/setup_deps.sh --from-frozen
+   ```
+
+   `E0/code/frozen_pins.py` 用白名单（required 5 个 + 可选 `tensorboard`）从 freeze 里挑包，
+   结果**在构造上不可能**含 `torch` / `nvidia-*` / `cuda-*` / `triton`；
+   传递依赖与 `pip`/`setuptools` 一律忽略。
 
 | lock 文件 | 用途 | 内容 |
 |---|---|---|
-| `v4/versions/locks/cloud.txt` | 云端**训练**环境 | torch 2.7.1+cu128（镜像提供）+ 上述 pip 包（版本不钉死） |
+| `v4/versions/locks/cloud.txt` | 云端**训练**环境 | torch 2.7.1+cu128（镜像提供）+ 上述 pip 包（**不钉版本**） |
 | `v4/versions/locks/submit.txt` | **提交推理**环境 | torch 2.7.1+cu128（镜像提供）+ numpy（推理侧不需要训练专属包） |
+| `v4/versions/locks/cloud_frozen.txt` | **精确复现**（`--from-frozen`） | 云端 `pip freeze` 回填的真实版本 |
 
 ---
 
