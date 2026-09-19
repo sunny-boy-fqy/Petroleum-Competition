@@ -33,16 +33,22 @@
 ## 任务 2：`v4-data` — 部署数据集到云盘（必做一次，≈2 min）
 
 **前置**：本机已运行 `python3 v4/tools/pack_dataset.py`，并把 `v4/dist/v4_data.tar.gz`
-上传到云盘（例如 `/v4_data/v4_data.tar.gz`）。若上传到了别处，先把文件移到 `/data` 下任意位置，
-再让脚本从该位置解压（脚本默认找 `v4/dist/v4_data.tar.gz`）。
+（建议连带 `v4_data_manifest.json`）上传到**云盘 `/data/` 根目录**。
+
+> **R5-B1**：`dist/*` 被 `.gitignore` 忽略，云端克隆出来的 repo 里**没有** tarball，
+> 所以脚本会在 `$DATA_ROOT/v4_data.tar.gz`、`$DATA_ROOT/dist/v4_data.tar.gz`、
+> `$V4/dist/v4_data.tar.gz` 依次搜索；上传到别处时用
+> `--tarball <云盘路径>` 或环境变量 `V4_DATA_TARBALL=<云盘路径>` 显式指定。
+> 找不到会打印搜索过的全部位置并 **exit 4**。
 
 | 字段 | 值 |
 |---|---|
 | 启动命令 | `bash /code/workspace/v4/run_train.sh --mode data` |
+| 备选启动命令 | `bash /code/workspace/v4/run_train.sh --mode data --tarball /data/uploads/v4_data.tar.gz` |
 | 运行时长 | 0h30m |
 | 产出（持久） | `/data/v4/data/{train,test}/*.txt`、`/data/v4/data/folds/v1_well_folds.json` |
 | 判据 | 日志出现 `train wells=80 rows=730268`、`test wells=10 rows=95948`、`RESULT: OK` |
-| 幂等 | 可重复执行；每次都会重算 tarball sha256 与行数 |
+| 幂等 | 可重复执行；manifest 存在时重算 tarball sha256，井数与行数**每次都无条件硬校验**（R5-H2） |
 
 > 若把数据做成了平台**数据集**并挂载成功，可改用：
 > `bash /code/workspace/v4/tools/bootstrap_data.sh --from-dir <挂载目录>`

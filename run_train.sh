@@ -12,7 +12,9 @@
 #
 # 常用模式：
 #   --mode env      环境自检 + 安装额外轻量依赖（不碰 torch）
-#   --mode data     把 repo 内 dist/v4_data.tar.gz 部署到 /data/v4/data（只需一次）
+#   --mode data     部署数据集到 /data/v4/data（只需一次）
+#                   自动搜索：--tarball / $V4_DATA_TARBALL -> repo dist/ -> /data/v4_data.tar.gz
+#                   -> /data/dist/v4_data.tar.gz（云端推荐直接把 tarball 传到 /data 根）
 #   --mode e0       E0 口径复算（数据卡 / 评分锚点 / 折指纹 / 契约自检）
 #   --mode data-health  数据健康硬校验（profile=full）
 #   --mode smoke    5 分钟极小规模冒烟（1 折 / 少量 epoch），验证全链路可跑
@@ -37,12 +39,18 @@ REPORTS_DIR="$DATA_ROOT/v4/reports"
 MODE="all"
 STAGE="E1"
 EXTRA_ARGS=()
+# R5-B1：git 仓库里**没有** dist/*.tar.gz（.gitignore 忽略），云端必须能从云盘找到它。
+# 因此 tarball/manifest 是一等参数（不会被塞进 EXTRA_ARGS 污染 smoke/stage 的命令行）。
+DATA_TARBALL="${V4_DATA_TARBALL:-}"
+DATA_MANIFEST="${V4_DATA_MANIFEST:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --mode)   MODE="$2"; shift 2 ;;
-    --stage)  STAGE="$2"; shift 2 ;;
-    *)        EXTRA_ARGS+=("$1"); shift ;;
+    --mode)     MODE="$2"; shift 2 ;;
+    --stage)    STAGE="$2"; shift 2 ;;
+    --tarball)  DATA_TARBALL="$2"; shift 2 ;;
+    --manifest) DATA_MANIFEST="$2"; shift 2 ;;
+    *)          EXTRA_ARGS+=("$1"); shift ;;
   esac
 done
 
@@ -55,6 +63,9 @@ export V4_RUN_ROOT="$RUN_ROOT"
 export V4_CACHE_ROOT="$CACHE_ROOT"
 export V4_REPORTS_DIR="$REPORTS_DIR"
 export V4_REPO_ROOT="$HERE"
+# 让 bootstrap_data.sh 也能看到 tarball 位置（同一份事实，不重复解析参数）
+if [[ -n "$DATA_TARBALL" ]]; then export V4_DATA_TARBALL="$DATA_TARBALL"; fi
+if [[ -n "$DATA_MANIFEST" ]]; then export V4_DATA_MANIFEST="$DATA_MANIFEST"; fi
 # 平台集成 TensorBoard：日志写到 TENSORBOARD_LOGDIR（若有）
 export TENSORBOARD_LOGDIR="${TENSORBOARD_LOGDIR:-$DATA_ROOT/v4/tb}"
 mkdir -p "$TENSORBOARD_LOGDIR"
@@ -130,7 +141,13 @@ run_env() {
 
 run_data() {
   log "--- [data] 部署数据集到 $DATA_ROOT/v4/data"
-  bash "$HERE/tools/bootstrap_data.sh" 2>&1 | tee -a "$LOG"
+  # R5-B1：tarball 可能只在云盘（repo 内的 dist/ 被 .gitignore 忽略），
+  # 所以显式把 --tarball/--manifest 透传给 bootstrap_data.sh，其余参数不进这里。
+  local -a bargs=()
+  if [[ -n "$DATA_TARBALL" ]]; then bargs+=(--tarball "$DATA_TARBALL"); fi
+  if [[ -n "$DATA_MANIFEST" ]]; then bargs+=(--manifest "$DATA_MANIFEST"); fi
+  log "[data] bootstrap_data.sh ${bargs[*]:-（自动搜索 repo dist/ 与 $DATA_ROOT）}"
+  bash "$HERE/tools/bootstrap_data.sh" ${bargs[@]+"${bargs[@]}"} 2>&1 | tee -a "$LOG"
 
   log "--- [data] 数据健康校验（profile=full：数据缺失为 hard）"
   if check_env_profile full; then

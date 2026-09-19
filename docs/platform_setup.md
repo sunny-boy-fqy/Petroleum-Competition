@@ -89,11 +89,33 @@ tensorboard
 
 ### 步骤 2：把数据放到云盘 `/data`
 
-两种方式任选：
+**R5-B1 必读**：`dist/*.tar.gz` 与 `dist/*.json` 被 `.gitignore` 忽略，所以云端从 Git
+克隆出来的 `/code/workspace/v4/dist/` **不可能**有 tarball。你必须把 tarball 放到云盘，
+`bootstrap_data.sh` 会按下面的顺序找它：
 
-- **A. 平台云盘上传**：把 `v4_data.tar.gz` 传到云盘，然后在一个训练任务里执行
+| 优先级 | 位置 | 说明 |
+|---|---|---|
+| 1 | `--tarball <path>` 或 `V4_DATA_TARBALL=<path>` | 显式指定，指向任何位置 |
+| 2 | `$V4/dist/v4_data.tar.gz` | 本机开发（`pack_dataset.py` 的产物） |
+| 3 | **`$DATA_ROOT/v4_data.tar.gz`** | **云端推荐**：直接把 tarball 传到 `/data` 根 |
+| 4 | `$DATA_ROOT/dist/v4_data.tar.gz` | 云端：保留 `dist/` 目录结构上传 |
+
+manifest（`v4_data_manifest.json`，≈23 KB）同法搜索；**建议与 tarball 一起上传**，
+这样会额外校验 tarball 的 sha256。**没有 manifest 也不会放宽**：80/10 井与
+730,268/95,948 行是**无条件**硬校验（R5-H2）。
+
+两种上传方式任选：
+
+- **A. 平台云盘上传**：把 `v4_data.tar.gz`（可选带上 `v4_data_manifest.json`）传到云盘
+  **`/data/` 根目录**，然后在一个训练任务里执行
   `bash /code/workspace/v4/run_train.sh --mode data`；
 - **B. 开发机直传**：在「我的开发机」里把文件放到云盘目录（`/data`）后再执行同一命令。
+
+若文件在别的位置（例如 `/data/uploads/v4_data.tar.gz`），显式传参即可（启动命令仍 ≤500 字符）：
+
+```bash
+bash /code/workspace/v4/run_train.sh --mode data --tarball /data/uploads/v4_data.tar.gz
+```
 
 校验（应输出 `RESULT: OK`，含 80/10 井、730,268/95,948 行、3 口畸形井 `OK`）：
 

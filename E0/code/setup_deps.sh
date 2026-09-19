@@ -27,11 +27,20 @@ echo "== v4 setup_deps =="
 echo "python: $(python3 -V 2>&1)  ($(command -v python3))"
 
 # 0) 环境与磁盘先体检（缺 torch 时 check_env 会以非 0 退出，此处只做信息采集）
-python3 E0/code/check_env.py --profile base --json "$REPORTS_DIR/E0_env.json" || true
-python3 src/data/disk_guard.py --min-free-gb 8 \
-        --data-root "$DATA_ROOT" --path "$DATA_ROOT" --path "$CACHE_ROOT" \
-        --report "$CACHE_ROOT" \
-        --json "$REPORTS_DIR/E0_disk_budget.json" || true
+#    R5 修复：`--dry-run` 是**预检**，不得写任何证据文件 —— 否则在开发机上会把
+#    "本机无 torch / python 3.12" 的结论写进 repo 的 reports/ 快照，污染 review 证据。
+if [[ "$DRY" == "1" ]]; then
+  python3 E0/code/check_env.py --profile base || true
+  python3 src/data/disk_guard.py --min-free-gb 8 \
+          --data-root "$DATA_ROOT" --path "$DATA_ROOT" --path "$CACHE_ROOT" \
+          --report "$CACHE_ROOT" || true
+else
+  python3 E0/code/check_env.py --profile base --json "$REPORTS_DIR/E0_env.json" || true
+  python3 src/data/disk_guard.py --min-free-gb 8 \
+          --data-root "$DATA_ROOT" --path "$DATA_ROOT" --path "$CACHE_ROOT" \
+          --report "$CACHE_ROOT" \
+          --json "$REPORTS_DIR/E0_disk_budget.json" || true
+fi
 
 FREE_GB=$(DATA_ROOT="$DATA_ROOT" python3 - <<'PY'
 import os, shutil
@@ -54,11 +63,14 @@ fi
 export PIP_NO_CACHE_DIR=1
 
 # 优先使用 lock 文件里的**精确版本**（R2-M6：范围约束与 lock 不一定一致）
-# R5-M1：lock 现在只列包名（版本不钉死），torch/numpy 由镜像提供 -> 显式跳过。
+# R5-M1/M2：lock 现在只列包名（版本不钉死）；**只排除 torch**（镜像提供，禁止 pip 触碰）。
+#   numpy 不再被排除：它虽随 torch 提供，但也在 REQUIRED_PY_DEPS / requirements.txt /
+#   用户 pip 清单里。若镜像哪天不带 numpy，pip 必须能补上（存在时 pip 只会打印
+#   "Requirement already satisfied"，不会改动 torch 的 ABI）。
 LOCK="versions/locks/cloud.txt"
 if [[ -f "$LOCK" ]]; then
-  mapfile -t PKGS < <(grep -vE '^\s*#|^\s*$|^torch|^numpy' "$LOCK" | sed -E 's/[[:space:]]*#.*$//' | grep -vE '^\s*$')
-  echo "使用 lock 清单: ${#PKGS[@]} 个包（torch/numpy 由镜像提供，跳过）"
+  mapfile -t PKGS < <(grep -vE '^\s*#|^\s*$|^torch' "$LOCK" | sed -E 's/[[:space:]]*#.*$//' | grep -vE '^\s*$')
+  echo "使用 lock 清单: ${#PKGS[@]} 个包（仅 torch 由镜像提供，跳过）"
 else
   # 与 check_env.py::REQUIRED_PY_DEPS 保持一致（四审 R5-M1：pyarrow 已移出 required）
   PKGS=( "numpy" "pandas" "scipy" "scikit-learn" "einops" )

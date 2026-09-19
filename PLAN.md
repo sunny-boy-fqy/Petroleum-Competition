@@ -51,10 +51,10 @@
 
 | 层级 | 数量 | 篇幅 | 状态 |
 |---|---:|---:|---|
-| 总计划 `PLAN.md` | 1 | **863 行** | ✅ 完成 |
+| 总计划 `PLAN.md` | 1 | **870 行** | ✅ 完成 |
 | 阶段计划 `E*/PLAN.md` | 12 | 平均 63 行（合计 759） | ✅ 完成 |
 | P 级子计划 `E*/P*/PLAN.md` | 33 | **平均 158 行**（合计 5,221） | ✅ 完成（V2 深度：输入/输出契约、执行步骤、参数表、完成判据、禁止事项、风险对策、停止规则、inner-OOF 选择协议、复算命令、Gate 预注册 JSON） |
-| 计划文件合计 | 46 | **6,843 行** | ✅ |
+| 计划文件合计 | 46 | **6,850 行** | ✅ |
 
 > **行数由 `tools/plan_stats.py` 实测、`tools/sync_plan_stats.py` 同步、`plan_stats.py --check` 校验**
 > （审查 R2-H6/R3-C2：此前手写数字两次过期，且旧校验只查总量、漏检阶段/P 分项）。
@@ -160,7 +160,7 @@ E1–E11 全部处于 `pending`，按 §七 的顺序执行；每个 Gate 的阈
 
 0. **环境不可变铁律（最高优先级）**：云端镜像**预装且不可替换**——CUDA 12.8、PyTorch 2.7.1、Python 3.11；**没有 conda**。因此：
    - **禁止** `pip install torch` / 升级 CUDA / 更换 Python 版本 / 用 conda 建环境（会破坏镜像一致性，且 30 GB 磁盘容不下第二份 torch）；
-   - **允许** `pip install` **额外的轻量纯 Python / 纯 wheel 依赖**（numpy、pandas、scipy、scikit-learn、pyarrow、einops 等），但必须 `--no-cache-dir` 且装完 `pip cache purge`；
+   - **允许** `pip install` **额外的轻量纯 Python / 纯 wheel 依赖**（required 只有 `numpy`、`pandas`、`scipy`、`scikit-learn`、`einops`；`pyarrow`/`onnx`/`onnxruntime` **不需要**），但必须 `--no-cache-dir` 且装完 `pip cache purge`；
    - 所有第三方依赖仍**统一走 `portability` 探测层**（§3.3.2）：装了就用，没装就走 numpy/torch 兜底分支，**任何 `import` 失败都不得变成"请用户去装包"**；
    - 提交包里的 `requirements.txt` 是**声明**（`rules.md` §6.2/§8.3 要求列明环境），默认不被执行；评测环境用的是同一套预装镜像。
 1. **代码契约**：`v4/src/data/`、`v4/src/score.py`、`v4/src/inference/contract.py` **只依赖标准库 + numpy/pandas**，不 import torch。这样本机（无 GPU、无 torch）能跑通全部数据与提交侧单测，云端跑训练与推理。
@@ -203,14 +203,19 @@ GPU       : 1× A100 80GB（sm_80），bf16 可用
 
 ```bash
 export PIP_NO_CACHE_DIR=1
-# 基础栈已由镜像提供：torch / numpy；下面只补确实用到的轻量包
-python -m pip install --no-cache-dir \
-    "pandas>=2.0,<3" "pyarrow>=15" "scipy>=1.11" "scikit-learn>=1.4" \
-    "einops>=0.7" "onnx>=1.16" "onnxruntime>=1.17"
+# 基础栈由镜像提供（python 3.11 / torch 2.7.1+cu128 / CUDA 12.8 / numpy），此处**不动**；
+# required 清单（唯一事实源 = check_env.py::REQUIRED_PY_DEPS，与 requirements.txt 同源）
+python -m pip install --no-cache-dir numpy pandas scipy scikit-learn einops
+# 可选：平台任务详情页的"迭代曲线"；缺失时自动降级为 JSONL 标量，不阻塞训练
+python -m pip install --no-cache-dir tensorboard
 python -m pip cache purge          # 30 GB 磁盘，装完立即清
 python -m pip freeze > v4/versions/locks/cloud_frozen.txt
 python v4/E0/code/check_env.py --json v4/reports/E0_env.json
 ```
+> 上面 required 行必须与 `v4/requirements.txt` 的**有效行**、`E0/code/setup_deps.sh`
+> 的兜底 `PKGS`、`reports/E0_env.json::expected` 保持一致（有单测锁定）。
+> **不需要** `pyarrow` / `onnx` / `onnxruntime`：分片缓存是 `.npz`，没有任何代码
+> `import pyarrow`；CPU 推理主路径是 `torch.load(map_location="cpu")`。
 
 **安装纪律（针对 30 GB，R5-M1：依赖由用户 pip 安装，我不自动装）**：
 - **我给出的 pip 清单**（用户执行；格式为一行一个包名）：
@@ -255,7 +260,7 @@ python v4/E0/code/check_env.py --json v4/reports/E0_env.json
 | 列式 OOF 存储 | `pyarrow.parquet` | `np.savez_compressed` + 列名 JSON | 体积略大，无功能损失 |
 | 分位数/标准化 | `numpy.percentile`（自写，训练折内 fit） | — | 无 |
 | 模型导出（跨机兜底） | `torch.onnx.export`（torch 2.7 内置） | 权重存 `.npz`（键名/形状清单） | 评测镜像预装 torch 2.7.1，因此 `torch.load(map_location='cpu')` 是主路径；ONNX 与 `.npz` 只是"torch 出现异常"时的兜底，不实现纯 numpy 前向（ROI 太低） |
-| 进度/日志 | 标准库 `print` + CSV/JSONL | — | 不依赖 tqdm/tensorboard |
+| 进度/日志 | 标准库 `print` + CSV/JSONL | `tensorboard`（可选，装了就写标量，没装只写 JSONL） | 不依赖 tqdm；观测量**不参与**任何阈值/选型决策 |
 | 绘图 | **不做**（不需要） | — | 不依赖 matplotlib |
 
 **规则**：`import` 可选库统一写成 `try: import X; HAS_X=True except ImportError: HAS_X=False`，并把探测结果写进 `reports/E0_env.json`（`{"pyarrow": true/false, "onnx": ..., "sklearn": ...}`），供后续阶段选择路径。**任何模块不得因为可选库缺失而崩溃**；同时**也不得因为可用就强依赖**（对 OOF/缓存这类产出，必须给出兜底格式）。
@@ -276,7 +281,7 @@ python v4/src/data/disk_guard.py --min-free-gb 8 --report /home,/tmp \
 
 | 项目 | 预算 | 控制手段 |
 |---|---:|---|
-| 额外 pip 包（pandas/pyarrow/scipy/sklearn/einops/onnx/onnxruntime，**不含 torch**） | **≤ 0.8 GB** | `--no-cache-dir` + 装完 `pip cache purge`；不装 tensorboard/matplotlib/jupyter/torchvision/timm |
+| 额外 pip 包（**required = numpy/pandas/scipy/sklearn/einops**，不含 torch；`tensorboard` 可选） | **≤ 0.8 GB** | `--no-cache-dir` + 装完 `pip cache purge`；`setup_deps.sh --dry-run` 预检拒绝触碰 torch/nvidia/cuda；不装 matplotlib/jupyter/wandb/torchvision/timm |
 | 数据集（80 训练井 + 10 测试井原始 txt） | **0.05 GB** | 原始文本仅 ~50 MB（730k 行） |
 | 预处理分片缓存（`cache/raw/*.npz`） | **0.06 GB** | float32、按井分片 |
 | 特征缓存（`cache/feat/<F>/*.npz`） | **≤ 2.0 GB** | 只缓存当前实验使用的组；换版本先删旧目录 |
@@ -318,7 +323,9 @@ python v4/src/data/disk_guard.py --min-free-gb 8 --report /home,/tmp \
 > cleanup→save_and_exit / cleanup→abort / cleanup→cleanup(allow_soft) / save_and_exit 直达 /
 > abort 直达` 七条路径，并断言 hook 调用次数与 `risk_accepted` 标记。
 
-> 不安装：`tensorboard`/`matplotlib`/`jupyter`/`wandb`（用 CSV+JSON 日志替代）、`torchvision`/`timm`（不需要图像侧依赖）、任何 CUDA 编译扩展。
+> 不安装：`matplotlib`/`jupyter`/`wandb`（用 CSV+JSON 日志替代）、`torchvision`/`timm`（不需要图像侧依赖）、任何 CUDA 编译扩展。
+> `tensorboard` 是**可选推荐**（仅用于平台任务详情页的"迭代曲线"观测，不参与任何阈值/选型决策）：
+> 装了更好看，不装则 `src/training/tb_logger.py` 自动降级为 JSONL 标量，**不阻塞、不影响 Gate**。
 
 > 每个任务开始时在 `v4/reports/training_time_log.json` 写入 `task/planned_h/started_at/git_rev`，结束时回填 `actual_h`、`best_epoch`、`peak_mem_gb`、`checkpoint_path`。**所有训练脚本必须实现 `--resume`、`--time-budget-h`（到点保存并优雅退出）与每 epoch checkpoint。**
 

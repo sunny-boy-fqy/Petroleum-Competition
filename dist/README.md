@@ -17,20 +17,32 @@ python3 v4/tools/pack_dataset.py
 
 ## 部署到平台云盘 `/data`
 
-1. 把 `v4_data.tar.gz` 上传到云盘（或开发机的 `/data`）；
+> **R5-B1 必读**：本目录不进 git（`dist/*.tar.gz`、`dist/*.json` 全被忽略），
+> 所以云端从 Git 克隆出的 `/code/workspace/v4/dist/` 里**没有** tarball。
+> 必须把 tarball 放到云盘，脚本会按以下顺序搜索：
+> `--tarball` / `$V4_DATA_TARBALL` → `$V4/dist/v4_data.tar.gz` →
+> **`$DATA_ROOT/v4_data.tar.gz`（云端推荐）** → `$DATA_ROOT/dist/v4_data.tar.gz`。
+
+1. 把 `v4_data.tar.gz`（建议连带 `v4_data_manifest.json`）上传到云盘 **`/data/` 根目录**
+   （或开发机的 `/data`）；
 2. 在训练任务里执行：
 
 ```bash
 bash /code/workspace/v4/run_train.sh --mode data
-# 等价于：
+# 等价于（上传到 /data 根时无需任何参数）：
 V4_DATA_ROOT=/data bash /code/workspace/v4/tools/bootstrap_data.sh
+# 上传到别处时显式指定：
+bash /code/workspace/v4/run_train.sh --mode data --tarball /data/uploads/v4_data.tar.gz
 ```
 
-部署后校验（应打印 `RESULT: OK`）：
+找不到 tarball 时会打印**搜索过的全部位置**并以 `exit 4` 退出，而不是静默失败。
+
+部署后校验（应打印 `RESULT: OK`；80/10 井与 730,268/95,948 行是**无条件**硬校验，
+manifest 存在时再加 tarball sha256）：
 
 ```
-train wells=80 rows=730268
-test  wells=10 rows=95948
+train wells=80 rows=730268  (expect 80 / 730268)
+test  wells=10 rows=95948  (expect 10 / 95948)
   odd well 42f2870b: OK
   odd well b7eb1274: OK
   odd well c7611b01: OK

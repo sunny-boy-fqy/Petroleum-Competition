@@ -85,17 +85,15 @@ ENV PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# required 清单与 requirements.txt 的**有效行**逐字一致（有单测锁定）。
+# 刻意**不写版本**：基础镜像升级时 pip 解析出的兼容版本即可；精确版本由
+# 构建后 `pip freeze` 回填 versions/locks/cloud_frozen.txt（见第五节）。
 RUN python -m pip install --no-cache-dir \
-      "numpy" \
-      "pandas" \
-      "scipy" \
-      "scikit-learn" \
-      "einops" \
-      "scipy==1.13.1" \
-      "scikit-learn==1.5.2" \
-      "einops==0.8.0" \
-      "onnx==1.16.2" \
-      "onnxruntime==1.18.1" \
+      numpy pandas scipy scikit-learn einops \
+ && python -m pip cache purge
+
+# 可选：平台"迭代曲线"观测；缺失时训练侧自动降级为 JSONL 标量，不阻塞
+RUN python -m pip install --no-cache-dir tensorboard \
  && python -m pip cache purge
 
 # 自检：版本不对就让镜像构建失败，而不是等到训练时才炸
@@ -106,6 +104,11 @@ assert torch.__version__.split("+")[0] == "2.7.1", torch.__version__
 print("v4 image OK:", sys.version.split()[0], torch.__version__, torch.version.cuda)
 PY
 ```
+
+> **不要**装 `onnx` / `onnxruntime` / `pyarrow`：分片缓存是 `.npz`（numpy），CPU 推理主路径是
+> `torch.load(map_location="cpu")`；二者只在 `src/portability.py` 里作为**可选兜底**被探测，
+> 缺失时走文档化降级路径。把它们装进镜像既浪费磁盘，也会和 `requirements.txt` /
+> `E0/code/setup_deps.sh` 的清单打架。
 
 ---
 
@@ -121,14 +124,20 @@ bash /code/workspace/v4/run_train.sh --mode env
 [OK  ] python_version          python 3.11.x (expected 3.11)
 [OK  ] torch_version           torch 2.7.1+cu128 (expected 2.7.1)
 [OK  ] cuda_runtime_version    torch.version.cuda=12.8 (hard 要求 runtime major==12；声明值 12.8，可接受 ['12.8', '12.6'])
-[WARN] cuda_runtime_declared   torch.version.cuda=12.8 vs 声明 12.8（cu128 镜像；可接受 ['12.8', '12.6'] 内的任意值，小版本漂移不阻塞）
-[WARN] cuda_driver_version     nvidia-smi CUDA Version=12.8 (平台声明 12.8；驱动能力由平台保证，advisory 不阻塞)
+[OK  ] cuda_runtime_declared   torch.version.cuda=12.8 vs 声明 12.8（warn 级；可接受 ['12.8', '12.6'] 内的任意值，小版本漂移不阻塞）
+[OK  ] cuda_driver_version     nvidia-smi CUDA Version=12.8 (平台声明 12.8；warn/advisory 级，驱动能力由平台保证，不阻塞)
 [OK  ] cuda_available          torch.cuda.is_available()=True
 [OK  ] gpu_is_a100             NVIDIA A100-SXM4-80GB sm_80 79.3 GiB
 [OK  ] bf16_supported          torch.cuda.is_bf16_supported()=True
 [OK  ] disk_headroom           ... free=XX GiB (require >= 8 GiB)
 hard failures: 0
 ```
+
+> **状态列怎么读（R5-L1）**：`check_env.py` 的规则是
+> `mark = "OK  " if ok else ("FAIL" if level == "hard" else "WARN")` ——
+> 即 **`[WARN]` 只在 warn 级检查*失败*时出现**。`cuda_runtime_declared` 与
+> `cuda_driver_version` 是 warn 级，值对得上时打印 **`[OK  ]`**，只有漂移时才打印
+> `[WARN]` 且**不阻塞**（`hard failures: 0` 仍然是唯一判据）。
 
 > **CUDA 语义（R4-B1 + R5-B1，务必分清）**：平台镜像是 `torch==2.7.1+cu128`，该 wheel 的
 > `torch.version.cuda` 是 **12.8**；镜像文档里的 **CUDA 12.8** 也指**驱动能力**

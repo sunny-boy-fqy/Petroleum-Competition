@@ -9,9 +9,21 @@
 #     缓存   -> /data/v4/cache/...
 #     运行产物 -> /data/v4/runs/...
 #
+# tarball 在哪里（R5-B1：云端 repo 内**不可能**有 dist/*.tar.gz，它被 .gitignore 忽略）
+# ---------------------------------------------------------------------------
+# 定位顺序（先显式、后约定；找不到就报错并列出全部搜索位置）：
+#   1) `--tarball PATH` 或 `$V4_DATA_TARBALL`（最高优先，指向任何位置）
+#   2) `$V4/dist/v4_data.tar.gz`            本机开发：pack_dataset.py 的产物
+#   3) `$DATA_ROOT/v4_data.tar.gz`          云端推荐：把 tarball 直接传到云盘根
+#   4) `$DATA_ROOT/dist/v4_data.tar.gz`     云端：保持 dist/ 目录结构上传
+# manifest（可选但推荐）同法搜索：`--manifest` / `$V4_DATA_MANIFEST`，然后与
+# tarball 同目录、再上述 dist 位置。manifest **存在**时额外校验 tarball sha256
+# 与逐项计数；**不存在**时仍无条件校验 80/10 井与 730,268/95,948 行（R5-H2）。
+#
 # 用法（在本机或云端均可执行）：
-#   bash v4/tools/bootstrap_data.sh                 # 解压 dist/v4_data.tar.gz 到 /data/v4/data
-#   V4_DATA_ROOT=/somewhere bash v4/tools/bootstrap_data.sh
+#   bash v4/tools/bootstrap_data.sh                      # 自动搜索（含 $DATA_ROOT）
+#   bash v4/tools/bootstrap_data.sh --tarball /data/v4_data.tar.gz
+#   V4_DATA_TARBALL=/data/v4_data.tar.gz bash v4/tools/bootstrap_data.sh
 #   bash v4/tools/bootstrap_data.sh --from-dir /path/to/raw   # 直接从原始目录复制
 #   bash v4/tools/bootstrap_data.sh --verify-only            # 只校验，不写入
 set -euo pipefail
@@ -20,14 +32,17 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V4="$(cd "$HERE/.." && pwd)"
 DATA_ROOT="${V4_DATA_ROOT:-/data}"
 DEST="$DATA_ROOT/v4/data"
-TARBALL="$V4/dist/v4_data.tar.gz"
-MANIFEST="$V4/dist/v4_data_manifest.json"
 FROM_DIR=""
 VERIFY_ONLY=0
+# 显式指定的路径优先（命令行 > 环境变量 > 约定位置）
+TARBALL="${V4_DATA_TARBALL:-}"
+MANIFEST="${V4_DATA_MANIFEST:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --from-dir) FROM_DIR="$2"; shift 2 ;;
+    --tarball) TARBALL="$2"; shift 2 ;;
+    --manifest) MANIFEST="$2"; shift 2 ;;
     --dest) DEST="$2"; shift 2 ;;
     --verify-only) VERIFY_ONLY=1; shift ;;
     *) echo "unknown arg: $1"; exit 2 ;;
@@ -39,6 +54,43 @@ echo "repo       : $V4"
 echo "data root  : $DATA_ROOT"
 echo "dest       : $DEST"
 
+# ---------------- 1) 定位 tarball（R5-B1）
+TARBALL_DIRS=("$V4/dist" "$DATA_ROOT" "$DATA_ROOT/dist")
+if [[ "$VERIFY_ONLY" != "1" && -z "$FROM_DIR" ]]; then
+  if [[ -n "$TARBALL" ]]; then
+    if [[ ! -f "$TARBALL" ]]; then
+      echo "!! --tarball / \$V4_DATA_TARBALL 指向的文件不存在：$TARBALL"
+      exit 4
+    fi
+  else
+    for cand in "${TARBALL_DIRS[@]}"; do
+      if [[ -f "$cand/v4_data.tar.gz" ]]; then TARBALL="$cand/v4_data.tar.gz"; break; fi
+    done
+  fi
+  if [[ -z "$TARBALL" ]]; then
+    echo "!! 找不到数据分发包 v4_data.tar.gz。已搜索以下位置："
+    echo "     --tarball <path> / \$V4_DATA_TARBALL   （未设置）"
+    for cand in "${TARBALL_DIRS[@]}"; do echo "     $cand/v4_data.tar.gz"; done
+    echo "   本机生成： python3 v4/tools/pack_dataset.py"
+    echo "   云端部署： 把 v4_data.tar.gz 上传到 $DATA_ROOT/（或 $DATA_ROOT/dist/），"
+    echo "              或显式传 --tarball <云盘上的路径> / 设 V4_DATA_TARBALL=<路径>"
+    exit 4
+  fi
+  echo "tarball    : $TARBALL"
+fi
+
+# ---------------- 2) 定位 manifest（可选；存在即校验 sha 与精确计数）
+if [[ -z "$MANIFEST" ]]; then
+  MANIFEST_DIRS=()
+  if [[ -n "$TARBALL" ]]; then MANIFEST_DIRS+=("$(dirname "$TARBALL")"); fi
+  MANIFEST_DIRS+=("${TARBALL_DIRS[@]}")
+  for cand in "${MANIFEST_DIRS[@]}"; do
+    if [[ -f "$cand/v4_data_manifest.json" ]]; then
+      MANIFEST="$cand/v4_data_manifest.json"; break
+    fi
+  done
+fi
+
 mkdir -p "$DEST"
 
 if [[ "$VERIFY_ONLY" == "1" ]]; then
@@ -48,8 +100,9 @@ elif [[ -n "$FROM_DIR" ]]; then
   mkdir -p "$DEST/train" "$DEST/test"
   cp -f "$FROM_DIR"/train/*.txt "$DEST/train/" 2>/dev/null || true
   cp -f "$FROM_DIR"/test/*.txt  "$DEST/test/"  2>/dev/null || true
-elif [[ -f "$TARBALL" ]]; then
+else
   if [[ -f "$MANIFEST" ]]; then
+    echo "manifest   : $MANIFEST"
     WANT=$(python3 -c "import json,sys;print(json.load(open('$MANIFEST'))['tarball']['sha256'])" 2>/dev/null || echo "")
     GOT=$(python3 - "$TARBALL" <<'PY' 2>/dev/null || echo ""
 import hashlib,sys
@@ -63,36 +116,65 @@ PY
       echo "!! tarball sha256 mismatch"; echo "   want $WANT"; echo "   got  $GOT"; exit 3
     fi
     echo "tarball sha256 OK"
+  else
+    echo "manifest   : (未找到，跳过 sha256 校验；行数/井数仍会硬校验)"
   fi
-  # 解压到 DATA_ROOT，tar 内路径为 data/train/... 与 data/test/...
+  # 解压到 DATA_ROOT：tar 内路径为 v4/data/train/... 与 v4/data/test/...
+  # （因此目标必须是 $DATA_ROOT，而不是 $DEST —— $DEST = $DATA_ROOT/v4/data）
   tar xzf "$TARBALL" -C "$DATA_ROOT"
-else
-  echo "!! 既没有 --from-dir 也没有 $TARBALL"
-  echo "   请先在本机运行: python3 v4/tools/pack_dataset.py"
-  exit 4
 fi
 
 # 折文件也放进 /data，使运行时完全不依赖 repo 外的路径
 mkdir -p "$DEST/folds"
 cp -f "$V4/versions/reference/v1_well_folds.json" "$DEST/folds/" 2>/dev/null || true
 
-# ---------------- 校验
-python3 - "$DEST" "$MANIFEST" <<'PY'
-import hashlib, json, sys
+# ---------------- 3) 校验（R5-H2：井数 + 行数**无条件**硬校验；manifest 存在时再校 sha 计数）
+python3 - "$DEST" "$MANIFEST" "$V4" <<'PY'
+import json, sys
 from pathlib import Path
-dest = Path(sys.argv[1]); man_path = Path(sys.argv[2])
-n_tr = len(list((dest/"train").glob("*.txt"))) if (dest/"train").is_dir() else 0
-n_te = len(list((dest/"test").glob("*.txt"))) if (dest/"test").is_dir() else 0
-rows_tr = sum(sum(1 for _ in open(f, encoding="utf-8-sig")) - 2 for f in (dest/"train").glob("*.txt"))
-rows_te = sum(sum(1 for _ in open(f, encoding="utf-8-sig")) - 2 for f in (dest/"test").glob("*.txt"))
-print(f"train wells={n_tr} rows={rows_tr}")
-print(f"test  wells={n_te} rows={rows_te}")
-ok = (n_tr == 80 and n_te == 10 and rows_te == 95948)
+dest = Path(sys.argv[1]); man_path = Path(sys.argv[2]); v4 = Path(sys.argv[3])
+sys.path.insert(0, str(v4))
+from src import constants as C            # 唯一事实源（stdlib-only，云端无 numpy 也能导入）
+
+def n_wells(split):
+    d = dest / split
+    return len(list(d.glob("*.txt"))) if d.is_dir() else 0
+
+def n_rows(split):
+    """原始 txt 行数减去 2 行表头（列名行 + 单位行）。"""
+    d = dest / split
+    if not d.is_dir():
+        return 0
+    return sum(sum(1 for _ in open(f, encoding="utf-8-sig")) - 2 for f in d.glob("*.txt"))
+
+n_tr, n_te = n_wells("train"), n_wells("test")
+rows_tr, rows_te = n_rows("train"), n_rows("test")
+print(f"train wells={n_tr} rows={rows_tr}  (expect {C.EXPECTED_N_TRAIN_WELLS} / {C.EXPECTED_N_TRAIN_ROWS})")
+print(f"test  wells={n_te} rows={rows_te}  (expect {C.EXPECTED_N_TEST_WELLS} / {C.EXPECTED_N_TEST_ROWS})")
+
+# 无条件硬校验（R5-H2）：此前只在 manifest 存在时才查 rows_tr，导致截断的 tarball 只要
+# 保住 80/10 个文件与测试行数就能通过。
+ok = (n_tr == C.EXPECTED_N_TRAIN_WELLS and n_te == C.EXPECTED_N_TEST_WELLS
+      and rows_tr == C.EXPECTED_N_TRAIN_ROWS and rows_te == C.EXPECTED_N_TEST_ROWS)
+for label, got, want in (("train wells", n_tr, C.EXPECTED_N_TRAIN_WELLS),
+                         ("test wells", n_te, C.EXPECTED_N_TEST_WELLS),
+                         ("train rows", rows_tr, C.EXPECTED_N_TRAIN_ROWS),
+                         ("test rows", rows_te, C.EXPECTED_N_TEST_ROWS)):
+    if got != want:
+        print(f"  !! {label}: {got} != {want}")
+
 if man_path.is_file():
     man = json.loads(man_path.read_text(encoding="utf-8"))
     c = man["counts"]
-    print("manifest expects:", {k: c[k] for k in ("n_train_wells","n_test_wells","n_train_rows","n_test_rows")})
-    ok = ok and (rows_tr == c["n_train_rows"])
+    keys = ("n_train_wells", "n_test_wells", "n_train_rows", "n_test_rows")
+    print("manifest expects:", {k: c[k] for k in keys})
+    pairs = (("n_train_wells", n_tr), ("n_test_wells", n_te),
+             ("n_train_rows", rows_tr), ("n_test_rows", rows_te))
+    for k, got in pairs:
+        if got != c[k]:
+            print(f"  !! manifest {k}: got {got}, manifest {c[k]}")
+        ok = ok and got == c[k]
+
 # 抽查 3 口畸形井是否解压完整
 for w in ("42f2870b6ea743518d4ff77acca0462a", "b7eb1274305446c499a7b03848fb5bd3",
           "c7611b0148bb4b878c00bc6d1367a136"):

@@ -10,7 +10,7 @@ from __future__ import annotations
 # ---------------------------------------------------------------- 数据列
 COLUMNS: tuple[str, ...] = (
     "DEPTH", "GR", "PE", "SP", "CAL", "AC", "DEN", "CNL", "RXO", "RT",
-    "DEVI", "AZIM", "BIT", "CASE",          # 14 输入曲线（DEPTH 为深度基准）
+    "DEVI", "AZIM", "BIT", "CASE",          # 14 个输入字段 = DEPTH + 13 条曲线
     "POR", "PERM", "SW",                     # 3 目标
 )
 # E0-R2 修正：DEPTH 是深度基准、单独使用；**13 条曲线**才是模型输入通道。
@@ -103,6 +103,11 @@ def sw_from_norm(z: float, mu: float = SW_VALID_MEDIAN, sigma: float = 20.0) -> 
 # ---------------------------------------------------------------- 提交契约
 EXPECTED_N_TEST_WELLS: int = 10
 EXPECTED_N_TEST_ROWS: int = 95_948
+# 训练集契约值（E0/P1 复算：`wc -l data/train/*.txt` = 730,428 − 80×2 行表头）。
+# 由 `tools/bootstrap_data.sh`（数据部署硬校验）与 `tools/check_data_leak.py`
+# （泄漏回归的覆盖性断言）共同引用 —— 二者都**不得**再硬编码字面量。
+EXPECTED_N_TRAIN_WELLS: int = 80
+EXPECTED_N_TRAIN_ROWS: int = 730_268
 RESULT_TOP_KEYS: tuple[str, ...] = ("modelId", "modelName", "version", "resultData")
 PREDICTION_KEYS: tuple[str, ...] = ("depth", "POR", "PERM", "SW")
 DEPTH_DECIMALS: int = 1

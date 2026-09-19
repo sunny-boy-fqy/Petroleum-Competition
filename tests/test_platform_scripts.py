@@ -10,20 +10,59 @@
 """
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 import unittest
 from pathlib import Path
 
 V4 = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(V4))
 
+DATA = V4.parent / "data"
+REAL_TARBALL = V4 / "dist" / "v4_data.tar.gz"
+
 
 def _read(rel: str) -> str:
     return (V4 / rel).read_text(encoding="utf-8")
+
+
+def _load_check_env():
+    """按文件加载 `E0/code/check_env.py`（`E0` 不是合法包名，不能 `import`）。"""
+    spec = importlib.util.spec_from_file_location(
+        "v4_check_env", str(V4 / "E0" / "code" / "check_env.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _synth_well_text(n_rows: int = 30) -> str:
+    """生成一口**列名对齐**的最小合法井（17 列 = DEPTH + 13 曲线 + 3 目标）。"""
+    from src import constants as C
+    header = ",".join(C.COLUMNS)
+    units = ",".join(["m"] + ["u"] * (len(C.COLUMNS) - 1))
+    rows = []
+    for i in range(n_rows):
+        vals = []
+        for j, name in enumerate(C.COLUMNS):
+            if name == "DEPTH":
+                vals.append(f"{100.0 + 0.1 * i:.1f}")
+            elif name == "POR":
+                vals.append(f"{0.05 + 0.001 * i:.4f}")
+            elif name == "PERM":
+                vals.append(f"{1.0 + i:.4f}")
+            elif name == "SW":
+                vals.append(f"{60.0 + 0.1 * i:.4f}")
+            else:
+                vals.append(f"{10.0 + j + i:.4f}")
+        rows.append(",".join(vals))
+    return "\n".join([header, units, *rows]) + "\n"
 
 
 class TestRunTrainOrdering(unittest.TestCase):
@@ -146,12 +185,7 @@ class TestCheckEnvCudaSemantics(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "v4_check_env", str(V4 / "E0" / "code" / "check_env.py"))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        cls.mod = mod
+        cls.mod = _load_check_env()
 
     def test_declared_stack_is_torch271_cu128(self):
         self.assertEqual(self.mod.EXPECTED_TORCH, "2.7.1")
@@ -300,6 +334,403 @@ class TestCommittedE0GateRecompute(unittest.TestCase):
         checks = rep["mandatory_checks"]
         self.assertIn("contract_ok", checks)
         self.assertEqual(checks["contract_ok"], checks["contract_selftest"])
+
+
+class TestBootstrapDataTarballResolution(unittest.TestCase):
+    """R5-B1：`dist/*.tar.gz` 被 .gitignore 忽略，云端 repo 内**不可能**有分发包。
+
+    五审复现：文档让用户把 tarball 传到云盘 `/data`，而 `bootstrap_data.sh` 只在
+    `$V4/dist/` 里找 → `run_train.sh --mode data` 直接 exit 4，`env → data → e0`
+    的推荐流程在第二步就断掉。这里用**隔离的假仓库**（无 dist tarball）逐条锁死
+    定位与搜索语义，并用小 tarball 证明"从任意路径解压"确实生效。
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        # 假仓库：tools/bootstrap_data.sh + src/（校验块要 import src.constants）+ 空 dist/
+        self.fake = self.tmp / "v4"
+        (self.fake / "tools").mkdir(parents=True)
+        shutil.copy2(V4 / "tools" / "bootstrap_data.sh", self.fake / "tools" / "bootstrap_data.sh")
+        shutil.copytree(V4 / "src", self.fake / "src",
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        (self.fake / "dist").mkdir()
+        (self.fake / "versions" / "reference").mkdir(parents=True)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run(self, *args, data_root, extra_env=None):
+        env = dict(os.environ)
+        env["V4_DATA_ROOT"] = str(data_root)
+        env.pop("V4_DATA_TARBALL", None)
+        env.pop("V4_DATA_MANIFEST", None)
+        if extra_env:
+            env.update(extra_env)
+        return subprocess.run(
+            ["bash", str(self.fake / "tools" / "bootstrap_data.sh"), *args],
+            capture_output=True, text=True, env=env)
+
+    def _tiny_tarball(self, path: Path) -> Path:
+        """只含 1 口 1 行井的假分发包：足以证明"解压发生了"，又必然触发计数 FAIL。"""
+        src = self.tmp / "inner" / "well_a.txt"
+        src.parent.mkdir(parents=True, exist_ok=True)
+        src.write_text("DEPTH,POR\nm,frac\n1.0,0.1\n", encoding="utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(path, "w:gz") as tf:
+            tf.add(src, arcname="v4/data/train/well_a.txt")
+        return path
+
+    def test_no_tarball_anywhere_exits_4_and_lists_cloud_path(self):
+        data_root = self.tmp / "data"
+        r = self._run(data_root=data_root)
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 4, out)
+        self.assertIn("找不到数据分发包", out)
+        self.assertIn(f"{data_root}/v4_data.tar.gz", out)      # 云盘根是推荐位置
+        self.assertIn(f"{self.fake}/dist/v4_data.tar.gz", out)
+
+    def test_explicit_tarball_is_used_from_arbitrary_path(self):
+        tb = self._tiny_tarball(self.tmp / "cloud" / "v4_data.tar.gz")
+        r = self._run("--tarball", str(tb), data_root=self.tmp / "data")
+        out = r.stdout + r.stderr
+        self.assertNotIn("找不到数据分发包", out)
+        self.assertIn(f"tarball    : {tb}", out)
+        self.assertIn("train wells=1", out)        # 解压真的发生了
+        self.assertEqual(r.returncode, 1, out)     # 计数不符 -> 硬校验 FAIL
+
+    def test_env_var_tarball_is_honored(self):
+        tb = self._tiny_tarball(self.tmp / "cloud2" / "v4_data.tar.gz")
+        r = self._run(data_root=self.tmp / "data",
+                      extra_env={"V4_DATA_TARBALL": str(tb)})
+        out = r.stdout + r.stderr
+        self.assertIn(f"tarball    : {tb}", out)
+        self.assertIn("train wells=1", out)
+
+    def test_missing_explicit_tarball_exits_4(self):
+        r = self._run("--tarball", str(self.tmp / "nope.tar.gz"), data_root=self.tmp / "data")
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 4, out)
+        self.assertIn("指向的文件不存在", out)
+
+    def test_cloud_root_is_auto_searched(self):
+        data_root = self.tmp / "data"
+        tb = self._tiny_tarball(data_root / "v4_data.tar.gz")
+        r = self._run(data_root=data_root)
+        out = r.stdout + r.stderr
+        self.assertIn(f"tarball    : {tb}", out)
+        self.assertIn("train wells=1", out)
+
+    def test_cloud_dist_with_manifest_checks_sha(self):
+        data_root = self.tmp / "data"
+        tb = self._tiny_tarball(data_root / "dist" / "v4_data.tar.gz")
+        (data_root / "dist" / "v4_data_manifest.json").write_text(
+            json.dumps({"tarball": {"sha256": "0" * 64},
+                        "counts": {"n_train_wells": 1, "n_test_wells": 0,
+                                   "n_train_rows": 1, "n_test_rows": 0}}),
+            encoding="utf-8")
+        r = self._run(data_root=data_root)
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 3, out)     # sha256 不符必须中止
+        self.assertIn("sha256 mismatch", out)
+
+    def test_counts_are_unconditional_and_sourced_from_constants(self):
+        """R5-H2 + 单一事实源：井数/行数硬校验不得依赖 manifest，也不得硬编码字面量。"""
+        src = _read("tools/bootstrap_data.sh")
+        self.assertIn("C.EXPECTED_N_TRAIN_WELLS", src)
+        self.assertIn("C.EXPECTED_N_TRAIN_ROWS", src)
+        self.assertIn("C.EXPECTED_N_TEST_WELLS", src)
+        self.assertIn("C.EXPECTED_N_TEST_ROWS", src)
+        for literal in ("730268", "730_268", "95948", "95_948"):
+            self.assertNotIn(literal, src, f"bootstrap_data.sh 不得硬编码 {literal}")
+        m = re.search(r"ok = \((.*?)\)\n", src, re.S)
+        self.assertIsNotNone(m, "找不到 bootstrap_data.sh 的 ok 判定")
+        for expr in ("rows_tr == C.EXPECTED_N_TRAIN_ROWS", "rows_te == C.EXPECTED_N_TEST_ROWS",
+                     "n_tr == C.EXPECTED_N_TRAIN_WELLS", "n_te == C.EXPECTED_N_TEST_WELLS"):
+            self.assertIn(expr, m.group(1), "硬校验必须是**无条件**的")
+
+
+class TestRunTrainDataModeFindsCloudTarball(unittest.TestCase):
+    """R5-B1 端到端：tarball 只在"云盘"（repo 内无 dist/）时 `--mode data` 必须能部署。
+
+    注：本机开发机通常没有 torch / A100 / 8 GiB 空闲盘，`check_env --profile full`
+    可能以 exit 13 结束 —— 那不是本测试的对象。这里断言的是**部署阶段**：
+    `RESULT: OK` + 80/10 口井真的落到 `$DATA_ROOT/v4/data`，且失败原因与数据无关。
+    """
+
+    @unittest.skipUnless(REAL_TARBALL.is_file(),
+                         "需要 dist/v4_data.tar.gz（本机 `tools/pack_dataset.py` 产物）")
+    def test_data_mode_deploys_from_cloud_only_layout(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            cloud = tmp / "cloud"
+            cloud.mkdir()
+            shutil.copy2(REAL_TARBALL, cloud / "v4_data.tar.gz")
+            man = V4 / "dist" / "v4_data_manifest.json"
+            if man.is_file():
+                shutil.copy2(man, cloud / "v4_data_manifest.json")
+            data_root = tmp / "data"
+            env = dict(os.environ)
+            env.update({
+                "V4_DATA_ROOT": str(data_root),
+                "V4_LOG_DIR": str(tmp / "logs"),
+                "V4_RUN_ROOT": str(tmp / "runs"),
+                "V4_CACHE_ROOT": str(tmp / "cache"),
+                # 只把 tarball 放在"云盘"，repo 的 dist/ 完全不参与（文档推荐布局）
+                "V4_DATA_TARBALL": str(cloud / "v4_data.tar.gz"),
+            })
+            env.pop("V4_DATA_MANIFEST", None)
+            r = subprocess.run(["bash", str(V4 / "run_train.sh"), "--mode", "data"],
+                               capture_output=True, text=True, env=env, cwd=str(tmp))
+            out = r.stdout + r.stderr
+            self.assertIn("RESULT: OK", out)
+            self.assertIn("train wells=80 rows=730268", out)
+            self.assertNotIn("找不到数据分发包", out)
+            self.assertNotEqual(r.returncode, 4, out[-2000:])
+            self.assertEqual(len(list((data_root / "v4" / "data" / "train").glob("*.txt"))), 80)
+            self.assertEqual(len(list((data_root / "v4" / "data" / "test").glob("*.txt"))), 10)
+            if r.returncode == 0:
+                self.assertIn("[data] 数据健康校验通过", out)
+            else:
+                self.assertEqual(r.returncode, 13, out[-2000:])
+                # 失败必须来自本机环境（无 torch / 无 A100 / 磁盘小），而不是数据
+                self.assertIn("[OK  ] data_train_80", out)
+                self.assertIn("[OK  ] data_test_10", out)
+
+    def test_run_data_forwards_tarball_as_first_class_flag(self):
+        """静态兜底：`--tarball`/`V4_DATA_TARBALL` 必须是一等参数。
+
+        不能把它塞进 `EXTRA_ARGS` —— 那会把 `--mode all --epochs 5` 的参数误传给
+        `bootstrap_data.sh`（unknown arg -> exit 2）。
+        """
+        src = _read("run_train.sh")
+        self.assertIn('--tarball)  DATA_TARBALL="$2"', src)
+        self.assertIn('--manifest) DATA_MANIFEST="$2"', src)
+        self.assertIn('bargs+=(--tarball "$DATA_TARBALL")', src)
+        self.assertIn('bargs+=(--manifest "$DATA_MANIFEST")', src)
+        data_body = src[src.index("run_data()"):]
+        data_body = data_body[: data_body.index("\nrun_e0()")]
+        self.assertNotIn("EXTRA_ARGS", data_body,
+                         "run_data 不得把 EXTRA_ARGS 透传给 bootstrap_data.sh")
+
+
+class TestCheckDataLeakRequiresData(unittest.TestCase):
+    """R5-H1：0 口井时输出 `RESULT: OK` 是**假绿**（数据路径写错/空目录时回归空转）。"""
+
+    def _run(self, *args):
+        return subprocess.run(
+            [sys.executable, str(V4 / "tools" / "check_data_leak.py"), *args],
+            capture_output=True, text=True, cwd=str(V4))
+
+    def test_script_asserts_coverage(self):
+        src = _read("tools/check_data_leak.py")
+        self.assertIn("EXPECTED_N_TRAIN_WELLS", src)
+        self.assertIn("EXPECTED_N_TEST_WELLS", src)
+        self.assertIn("--expect-train", src)
+        self.assertIn("coverage[", src)
+
+    def test_empty_data_dir_fails(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._run("--data", td)
+            out = r.stdout + r.stderr
+            self.assertNotEqual(r.returncode, 0, out)
+            self.assertIn("RESULT: FAIL", out)
+            self.assertIn("coverage[train]", out)
+
+    def test_missing_data_dir_fails(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._run("--data", str(Path(td) / "does_not_exist"))
+            out = r.stdout + r.stderr
+            self.assertNotEqual(r.returncode, 0, out)
+            self.assertIn("RESULT: FAIL", out)
+
+    def test_expect_flags_are_enforced(self):
+        """只检查到 1 口井却声明期望 2 口 -> FAIL（覆盖性断言真的在起作用）。"""
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "train"
+            src.mkdir()
+            (src / "well_synth.txt").write_text(_synth_well_text(), encoding="utf-8")
+            r = self._run("--data", td, "--expect-test", "0", "--expect-train", "2")
+            out = r.stdout + r.stderr
+            self.assertNotEqual(r.returncode, 0, out)
+            self.assertIn("coverage[train]", out)
+            self.assertIn("train=2", out)
+
+    @unittest.skipUnless((DATA / "train").is_dir() and (DATA / "test").is_dir(),
+                         "需要 ../data/{train,test}")
+    def test_real_data_passes_with_exactly_90_wells(self):
+        r = self._run()
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 0, out)
+        self.assertIn("RESULT: OK", out)
+        self.assertIn("80+10=90", out)
+
+
+class TestSetupDepsDryRunIsSideEffectFree(unittest.TestCase):
+    """`--dry-run` 是预检：不得写任何证据文件，也不得留下本机环境的假结论。"""
+
+    def test_dry_run_writes_no_evidence(self):
+        free_gb = shutil.disk_usage(str(V4)).free / 1024 ** 3
+        if free_gb < 8.0:
+            self.skipTest(f"代码所在磁盘只有 {free_gb:.1f} GiB 空闲（setup_deps 会在 <8 GiB 时 exit 2）")
+        with tempfile.TemporaryDirectory() as td:
+            reports = Path(td) / "reports"
+            env = dict(os.environ)
+            env["V4_REPORTS_DIR"] = str(reports)
+            # 必须指向**空闲 >= 8 GiB** 的目录，否则脚本按 PLAN §3.4.1 直接 exit 2
+            env["V4_DATA_ROOT"] = str(V4)
+            env["V4_CACHE_ROOT"] = str(Path(td) / "cache")
+            r = subprocess.run(["bash", str(V4 / "E0/code/setup_deps.sh"), "--dry-run"],
+                               capture_output=True, text=True, env=env)
+            out = r.stdout + r.stderr
+            self.assertEqual(r.returncode, 0, out)
+            self.assertIn("would run:", out)
+            self.assertFalse((reports / "E0_env.json").exists(),
+                             "--dry-run 不得写 E0_env.json（会污染 repo 快照）")
+            self.assertFalse((reports / "E0_disk_budget.json").exists(),
+                             "--dry-run 不得写 E0_disk_budget.json")
+            stray = list((V4 / "reports").glob("E0_env.json")) + \
+                list((V4 / "reports").glob("E0_disk_budget.json"))
+            self.assertEqual(stray, [], f"--dry-run 在 repo 里留下了证据文件：{stray}")
+
+
+class TestDependencyFactsAreSingleSourced(unittest.TestCase):
+    """R5-M1/M2：PLAN / image_requirements / requirements.txt / setup_deps / lock 五处口径必须一致。
+
+    五审发现 PLAN.md §3.3.1 仍在装 `pyarrow`/`onnx`/`onnxruntime`、预算表仍写
+    "不装 tensorboard"，`image_requirements.md` 的 Dockerfile 又重复钉死版本并装 onnx，
+    与 `requirements.txt` / `setup_deps.sh` 直接打架。
+    """
+
+    IMPORT_NAME = {"scikit-learn": "sklearn"}
+    # 允许出现在 pip 安装命令里的包（required + 可选推荐）
+    ALLOWED = {"numpy", "pandas", "scipy", "scikit-learn", "einops", "tensorboard"}
+    FORBIDDEN = {"pyarrow", "onnx", "onnxruntime", "torch", "torchvision", "timm"}
+
+    @staticmethod
+    def _fenced_blocks(text: str, lang: str | None = None) -> list[list[str]]:
+        blocks: list[list[str]] = []
+        cur: list[str] = []
+        inside = False
+        open_lang = ""
+        for line in text.splitlines():
+            if line.strip().startswith("```"):
+                if not inside:
+                    inside, open_lang, cur = True, line.strip()[3:].strip(), []
+                else:
+                    if lang is None or open_lang == lang:
+                        blocks.append(cur)
+                    inside = False
+                continue
+            if inside:
+                cur.append(line)
+        return blocks
+
+    def _pip_lines(self, lines) -> list[str]:
+        """从**已取出的代码行**里挑出 pip 安装命令行（忽略注释）。"""
+        out = []
+        for line in lines:
+            code = line.split("#", 1)[0]
+            if re.search(r"(^|\s)(python3?\s+-m\s+)?pip\s+install", code):
+                out.append(code.strip())
+        return out
+
+    @staticmethod
+    def _join_continuations(lines) -> list[str]:
+        """把 `\\` 续行拼成一行，否则 Dockerfile 式多行 pip 命令只会读到开关。"""
+        out: list[str] = []
+        buf = ""
+        for line in lines:
+            s = line.rstrip()
+            if s.endswith("\\"):
+                buf += s[:-1] + " "
+                continue
+            out.append(buf + s)
+            buf = ""
+        if buf:
+            out.append(buf)
+        return out
+
+    def _all_pip_lines(self, rel: str, lang: str | None = None) -> list[str]:
+        blocks = self._fenced_blocks(_read(rel), lang=lang)
+        return self._pip_lines(self._join_continuations([ln for b in blocks for ln in b]))
+
+    @staticmethod
+    def _pkgs_from_pip_line(line: str) -> list[str]:
+        # 去掉 `pip install` 与开关/选项，遇 shell 连接符即停止
+        parts = line.split()
+        try:
+            i = next(k for k, p in enumerate(parts) if p == "install")
+        except StopIteration:  # pragma: no cover - 正则已保证有 install
+            return []
+        pkgs: list[str] = []
+        for p in parts[i + 1:]:
+            if p in ("&&", "||", ";", "|", ">", ">>", "&", "\\"):
+                break
+            if p.startswith("-"):
+                continue
+            pkgs.append(p.strip('"\''))
+        return pkgs
+
+    def test_plan_pip_commands_only_use_the_agreed_list(self):
+        lines = self._all_pip_lines("PLAN.md")
+        self.assertTrue(lines, "PLAN.md 里应保留一份 pip 安装示例")
+        for line in lines:
+            for pkg in self._pkgs_from_pip_line(line):
+                name = pkg.split("==")[0].split(">")[0].split("<")[0].strip()
+                self.assertIn(name, self.ALLOWED,
+                              f"PLAN.md 的 pip 命令出现不该装的包：{pkg!r}（{line}）")
+
+    def test_plan_does_not_claim_tensorboard_is_not_installed(self):
+        src = _read("PLAN.md")
+        for bad in ("不装 tensorboard", "不安装：`tensorboard`", "不安装 `tensorboard`"):
+            self.assertNotIn(bad, src, f"PLAN.md 仍与「tensorboard 可选推荐」矛盾：{bad}")
+
+    def test_image_dockerfile_only_installs_the_agreed_list(self):
+        text = _read("docs/image_requirements.md")
+        blocks = self._fenced_blocks(text, lang="dockerfile")
+        self.assertTrue(blocks, "找不到 image_requirements.md 的 dockerfile 代码块")
+        flat = [ln for b in blocks for ln in b]
+        body = "\n".join(flat)
+        for pkg in ("pyarrow", "onnx", "onnxruntime"):
+            self.assertNotIn(pkg, body,
+                             f"镜像 Dockerfile 不得安装 {pkg}（与 requirements.txt 冲突）")
+        lines = self._pip_lines(self._join_continuations(flat))
+        self.assertTrue(lines, "Dockerfile 应保留 pip 安装行")
+        for line in lines:
+            for pkg in self._pkgs_from_pip_line(line):
+                name = pkg.split("==")[0].strip()
+                self.assertIn(name, self.ALLOWED, f"Dockerfile 出现未列入清单的包：{pkg!r}")
+
+    def test_requirements_lock_and_setup_deps_agree(self):
+        chk = _load_check_env()
+        # 1) requirements.txt 有效行
+        active = []
+        for raw in _read("requirements.txt").splitlines():
+            line = raw.split("#", 1)[0].strip()
+            if line:
+                active.append(line.split("==")[0].split(">")[0].strip())
+        self.assertEqual(sorted(self.IMPORT_NAME.get(p, p) for p in active),
+                         sorted(chk.REQUIRED_PY_DEPS))
+        # 2) setup_deps.sh 的 lock 过滤规则产出的包集合必须恰好等于 REQUIRED_PY_DEPS
+        src = _read("E0/code/setup_deps.sh")
+        m = re.search(r"grep -vE '([^']*)' \"\$LOCK\"", src)
+        self.assertIsNotNone(m, "找不到 setup_deps.sh 的 lock 过滤正则")
+        pattern = m.group(1)
+        self.assertNotIn("numpy", pattern,
+                         "R5-M2：setup_deps.sh 不得把 numpy 排除在安装之外（required 里有它）")
+        self.assertIn("torch", pattern, "torch 必须仍被排除（禁止 pip 触碰镜像 torch）")
+        rx = re.compile(pattern)
+        lock_pkgs = []
+        for raw in _read("versions/locks/cloud.txt").splitlines():
+            if rx.search(raw):
+                continue
+            line = re.sub(r"[ \t]*#.*$", "", raw).strip()
+            if line:
+                lock_pkgs.append(line)
+        self.assertEqual(sorted(self.IMPORT_NAME.get(p, p) for p in lock_pkgs),
+                         sorted(chk.REQUIRED_PY_DEPS),
+                         "versions/locks/cloud.txt 过滤后必须恰好等于 REQUIRED_PY_DEPS")
 
 
 def _in_git_worktree() -> bool:
