@@ -11,7 +11,7 @@
 | 仓库地址 | `<你的 git 仓库地址>` |
 | 分支 | `main` |
 | 资源配置 | **Nvidia A100 × 1**（80 GB 显存 / 4000m vCPU / 16 GiB 内存） |
-| 镜像 | 【我的镜像】→ `v4-train-py311-torch240-cu126`（场景 = **训练任务**）<br>未构建前先用官方 PyTorch 2.4.0 / CUDA 12.6 / Python 3.11 镜像 |
+| 镜像 | 【我的镜像】→ `v4-train-py311-torch271-cu128`（场景 = **训练任务**）<br>未构建前先用官方 PyTorch 2.7.1 / CUDA 12.8 / Python 3.11 镜像 |
 | 训练/验证数据集 | 不挂载（数据走云盘 `/data`） |
 | 超参数 | 不填（全部通过 `run_train.sh` 参数传递） |
 
@@ -27,7 +27,7 @@
 | 启动命令 | `bash /code/workspace/v4/run_train.sh --mode env` |
 | 运行时长 | 0h30m |
 | 产出（持久） | `/data/v4/reports/E0_env.json`、`/data/v4/reports/E0_disk_budget.json`、`/data/v4/logs/*.log` |
-| 判据 | 日志中 `hard failures: 0`；`torch 2.4.0` / `A100 sm_80` / `bf16=True` / `free >= 8 GiB` |
+| 判据 | 日志中 `hard failures: 0`；`torch 2.7.1` / `A100 sm_80` / `bf16=True` / `free >= 8 GiB` |
 | 失败处置 | 若 torch 版本或 GPU 不符 → 检查镜像与资源配置；若磁盘 < 8 GiB → 见 `docs/platform_setup.md` §五 收缩预案 |
 
 ## 任务 2：`v4-data` — 部署数据集到云盘（必做一次，≈2 min）

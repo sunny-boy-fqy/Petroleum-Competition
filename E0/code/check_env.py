@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
-"""E0 环境自检：PyTorch 2.4.0+cu124 / CUDA 12.6 驱动 / Python 3.11 / A100 / 30 GB 磁盘。
+"""E0 环境自检：PyTorch 2.7.1+cu128 / CUDA 12.8 / Python 3.11 / A100 / 30 GB 磁盘。
 
-CUDA 语义（R4-B1 修复，务必读）
-------------------------------
-「CUDA 12.6」在本项目里指的是**平台驱动的 CUDA 能力**（`nvidia-smi` 头部
-`CUDA Version: 12.6`），**不是** PyTorch 的运行时版本。平台镜像锁死
-`torch==2.4.0+cu124`（见 `versions/locks/cloud.txt`），该 wheel 编译期的
-`torch.version.cuda` 恒为 **12.4**。
+CUDA 语义（R4-B1 + R5-B1，务必读）
+---------------------------------
+本项目的 **CUDA 12.8** 指**平台驱动的 CUDA 能力**（`nvidia-smi` 头部
+`CUDA Version: 12.8`），**不是** PyTorch 的运行时版本。平台镜像是
+`torch==2.7.1+cu128`（见 `versions/locks/cloud.txt`），该 wheel 编译期的
+`torch.version.cuda` 是 **12.8**。
 
-旧实现把 `torch.version.cuda` 硬比 `12.6`，于是云端 `run_train.sh --mode env`
-必然 `[FAIL] cuda_version`→`exit 11`，`E0_env.json`/`E0_disk_budget.json` 永远产不出来，
-`E0_cloud_gate` 永远 blocked。现在拆成两个检查：
+历史教训：四审时把版本写死成 torch 2.4.0+cu124，代码便拿 `torch.version.cuda`
+硬比驱动声明值 → 云端 `run_train.sh --mode env` 必然 `[FAIL]`→`exit 11`，
+`E0_env.json`/`E0_disk_budget.json` 永远产不出来、`E0_cloud_gate` 永远 blocked。
+因此现在是**声明值 + 可接受集合 + 硬底线**三层口径，而不是把某个具体小版本钉死：
 
-  - `cuda_runtime_version`（**hard**）：`torch.version.cuda` 必须 = 12.4；
-  - `cuda_driver_version`（**warn/advisory**）：`nvidia-smi` 报的驱动 CUDA 能力 >= 12.6，
-    取不到只提示、不阻塞（驱动能力由平台保证，程序无法也不应修改）。
+  - `cuda_runtime_version`（**hard**）：`torch.version.cuda` 存在且 major == 12
+    （= "CUDA-enabled wheel + 12.x runtime"，这是唯一真正会破坏训练的条件）；
+  - `cuda_runtime_declared`（**warn**）：runtime 是否等于**声明值** 12.8
+    （等价地落在 `ACCEPTED_CUDA_RUNTIMES` 内）。cu126 / cu128 两种官方 wheel 都能跑，
+    因此小版本漂移只提示、不阻塞 —— 这正是上次 Gate 挂掉的根因；
+  - `cuda_driver_version`（**warn/advisory**）：`nvidia-smi` 报的驱动 CUDA 能力 >= 12.8，
+    取不到只提示（驱动由平台保证，程序无法也不应修改）。
 
 
 设计原则
@@ -24,9 +29,9 @@ CUDA 语义（R4-B1 修复，务必读）
 2. 任何一项 hard 检查失败 -> exit code 非 0，训练脚本应在启动时调用它并拒绝继续。
 3. 结果可写成 JSON，供 E0 Gate 的 mandatory_check `env_ok` 读取。
 4. 依赖分两档（R3 修复）：
-   - **required**（训练/推理主路径）：numpy/pandas/scipy/sklearn/pyarrow/einops。
-     `--profile full` 下缺失 = hard。
-   - **optional / degradable**：onnx/onnxruntime 等有文档化降级路径的依赖。
+   - **required**（训练/分析主路径）：numpy/pandas/scipy/sklearn/einops。
+     `--profile full` 下缺失 = hard。**版本不钉死**（见下）。
+   - **optional / degradable**：onnx/onnxruntime/pyarrow 等有文档化降级路径的依赖。
      `--profile full` 下缺失 = warn，并记入 JSON 顶层 `degraded_paths`
      （例如 ONNX 导出不可用时改用原生 torch checkpoint 做推理），**不阻塞训练**。
    注意：本模块 `OPTIONAL_PY_DEPS` 里 optional 依赖的版本号是**参考值（advisory）**，
@@ -53,34 +58,47 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 EXPECTED_PY = (3, 11)
-EXPECTED_TORCH = "2.4.0"
-# R4-B1：`torch.version.cuda`（编译期 runtime）≠ 平台驱动的 CUDA 能力。
-# torch 2.4.0+cu124 的 runtime 是 12.4；镜像声明的 "CUDA 12.6" 是驱动能力。
-EXPECTED_CUDA_RUNTIME = (12, 4)      # hard：torch.version.cuda
-MIN_CUDA_DRIVER = (12, 6)            # advisory：nvidia-smi 的 "CUDA Version"
+EXPECTED_TORCH = "2.7.1"
+# R4-B1 + R5-B1：`torch.version.cuda`（编译期 runtime）≠ 平台驱动的 CUDA 能力。
+#   - 声明值：镜像 `torch==2.7.1+cu128` 的 runtime = 12.8；
+#   - 硬底线：只要是 CUDA-enabled wheel 且 major == 12（12.x runtime 都能跑本项目的算子）；
+#   - 可接受集合：cu128 / cu126 两种官方 wheel 都接受，小版本漂移只 warn（见模块 docstring）。
+EXPECTED_CUDA_RUNTIME = (12, 8)                  # 声明值（warn 判定）
+ACCEPTED_CUDA_RUNTIME_MAJOR = 12                 # hard：runtime major
+ACCEPTED_CUDA_RUNTIMES = ((12, 8), (12, 6))      # cu128 / cu126 官方 wheel
+MIN_CUDA_DRIVER = (12, 8)                        # advisory：nvidia-smi 的 "CUDA Version"
 MIN_FREE_GB_DEFAULT = 8.0
 DISK_BUDGET_GB = 30.0
 
-# 依赖分档（R3 修复）。
-#   REQUIRED_PY_DEPS：训练/推理主路径硬依赖；profile=full 且缺失 -> hard。
+# 依赖分档（R3 修复 + R5-M1）。
+#   REQUIRED_PY_DEPS：训练/分析主路径硬依赖；profile=full 且缺失 -> hard。
 #   OPTIONAL_PY_DEPS：有文档化降级路径；profile=full 且缺失 -> warn + degraded_paths。
-# 版本号为**参考值（advisory）**：只有 major.minor 不一致时给 warn，不阻塞。
-REQUIRED_PY_DEPS = {
-    "numpy": "1.26.4",
-    "pandas": "2.2.3",
-    "scipy": "1.13.1",
-    "sklearn": "1.5.2",
-    "pyarrow": "17.0.0",
-    "einops": "0.8.0",
+# **版本一律不钉死**（值为 None 表示"只查是否存在，不比较版本"）：镜像预装的 torch
+# 2.7.1 自带一份 numpy，用户按需 pip 安装其余包；把某个具体小版本写成硬约束会在
+# 镜像升级时误报。精确版本一致性由 `versions/locks/cloud_frozen.txt`（云端
+# `pip freeze` 回填）保证，本模块只做**存在性**门禁。
+REQUIRED_PY_DEPS: dict[str, str | None] = {
+    "numpy": None,
+    "pandas": None,
+    "scipy": None,
+    "sklearn": None,
+    "einops": None,
 }
-OPTIONAL_PY_DEPS = {
-    "onnx": "1.16.2",
-    "onnxruntime": "1.18.1",
+OPTIONAL_PY_DEPS: dict[str, str | None] = {
+    # 分片缓存是 .npz（numpy），不需要 pyarrow；仅当未来改用 parquet 才需要
+    "pyarrow": None,
+    # CPU 推理的兜底路径；主路径是 torch.load(map_location="cpu")
+    "onnx": None,
+    "onnxruntime": None,
+    # 平台"迭代曲线"观测（只观测，不参与模型选择）
+    "tensorboard": None,
 }
 # 缺失 optional 依赖时启用的降级路径（写进 JSON 的 degraded_paths）
 DEGRADATION_PATHS = {
+    "pyarrow": "parquet-based shards disabled; the .npz shard cache is used instead",
     "onnx": "ONNX export/serving path disabled; use the native torch checkpoint for inference",
     "onnxruntime": "ONNX runtime unavailable; native torch/CPU inference path is used instead",
+    "tensorboard": "TensorBoard curves unavailable; JSONL scalars under $TENSORBOARD_LOGDIR are used",
 }
 
 FOLDS_FALLBACK_RELPATH = ("versions", "reference", "v1_well_folds.json")
@@ -190,17 +208,27 @@ def check_torch(rep: Report, allow_non_a100: bool) -> dict:
         f"torch {torch.__version__} (expected {EXPECTED_TORCH})",
     )
 
-    # R4-B1：hard 检查的是 **runtime**（torch.version.cuda == 12.4），不是驱动能力。
+    # R4-B1 + R5-B1：hard 只要求"CUDA-enabled wheel + 12.x runtime"；
+    # 是否等于声明值（12.8）另行 warn，避免再次把 Gate 钉死在某个 wheel 小版本上。
     cuda_ver = getattr(torch.version, "cuda", None)
-    want_cuda = _mm("%d.%d" % EXPECTED_CUDA_RUNTIME)
+    declared = _mm("%d.%d" % EXPECTED_CUDA_RUNTIME)
+    accepted = tuple("%d.%d" % v for v in ACCEPTED_CUDA_RUNTIMES)
     if cuda_ver:
         got_mm = _mm(cuda_ver)
-        rep.add("cuda_runtime_version", got_mm == want_cuda, level,
-                f"torch.version.cuda={cuda_ver} (expected {want_cuda} = torch "
-                f"{EXPECTED_TORCH}+cu124 runtime; 平台驱动能力见 cuda_driver_version)")
+        ok_hard = _mm_tuple(cuda_ver)[0] == ACCEPTED_CUDA_RUNTIME_MAJOR
+        rep.add("cuda_runtime_version", ok_hard, level,
+                f"torch.version.cuda={cuda_ver} (hard 要求 runtime major=="
+                f"{ACCEPTED_CUDA_RUNTIME_MAJOR}；声明值 {declared}，可接受 {list(accepted)})")
+        info["cuda_runtime_matches_declared"] = got_mm == declared
+        rep.add("cuda_runtime_declared", got_mm == declared, "warn",
+                f"torch.version.cuda={got_mm} vs 声明 {declared}（cu128 镜像；"
+                f"可接受 {list(accepted)} 内的任意值，小版本漂移不阻塞）")
     else:
+        info["cuda_runtime_matches_declared"] = False
         rep.add("cuda_runtime_version", False, level,
                 "torch.version.cuda is None (CPU-only wheel?)")
+        rep.add("cuda_runtime_declared", False, "warn",
+                f"无法判定 runtime 是否为 {declared}（torch.version.cuda 为 None）")
 
     # R4-B1：驱动能力只做 advisory（warn），缺失/偏低都不阻塞训练。
     drv = query_cuda_driver()
@@ -236,17 +264,20 @@ def check_py_deps(rep: Report, allow_non_a100: bool,
                   profile: str = "full") -> tuple[dict, dict]:
     """依赖探测，返回 (已安装版本 info, degraded_paths)。
 
-    分档语义（R3 修复）：
-      - required（numpy/pandas/scipy/sklearn/pyarrow/einops）：
-        profile=full 且缺失 -> **hard**（训练主路径不可用）。
-      - optional/degradable（onnx/onnxruntime）：
-        缺失一律 -> **warn**，并记入 degraded_paths；即使 profile=full 也不阻塞训练，
-        因为 PLAN 有文档化的降级路径（ONNX 导出不可用时改用原生 torch checkpoint 推理）。
+    分档语义（R3 修复 + R5-M1）：
+      - required（numpy/pandas/scipy/sklearn/einops）：
+        profile=full 且缺失 -> **hard**（训练/分析主路径不可用）。
+      - optional/degradable（pyarrow/onnx/onnxruntime/tensorboard）：
+        缺失一律 -> **warn**，并记入 degraded_paths；即使 profile=full 也不阻塞，
+        因为 PLAN 有文档化的降级路径（例如 ONNX 不可用时改用原生 torch checkpoint；
+        pyarrow 不可用时用 `.npz` 分片；tensorboard 不可用时写 JSONL 标量）。
       - profile=base：required 也降为 warn（保持既有行为；首次 --mode env 依赖尚未安装）。
       - `--allow-non-a100` 只影响 GPU/torch 检查，不影响依赖分档。
 
-    版本不匹配始终只给 warn：`expected` 里的 optional 版本号是 advisory，
-    真正的版本一致性由 lock 文件保证。
+    **版本不钉死**（R5-M1）：`REQUIRED_PY_DEPS` 的值是 `None` = 只查存在性。
+    镜像预装的 torch 2.7.1 自带一份 numpy，其余包由用户 pip 安装；把某个具体小版本
+    写成硬约束会在镜像升级时误报。精确版本一致性由 `versions/locks/cloud_frozen.txt`
+    （云端 `pip freeze` 回填）保证。
     """
     required_level = "warn" if profile == "base" else "hard"
     info: dict = {}
@@ -258,6 +289,11 @@ def check_py_deps(rep: Report, allow_non_a100: bool,
             m = __import__(mod)
             got = getattr(m, "__version__", "?")
             info[mod] = got
+            if want is None:                       # 只查存在性（R5-M1）
+                rep.add(f"dep_{mod}", True, "warn",
+                        f"{mod} {got} (存在性检查通过；版本不钉死)"
+                        + ("  [optional/advisory]" if optional else ""))
+                continue
             major_minor = ".".join(got.split(".")[:2])
             want_mm = ".".join(want.split(".")[:2])
             rep.add(
@@ -407,8 +443,10 @@ def main() -> int:
             "expected": {
                 "python": f"{EXPECTED_PY[0]}.{EXPECTED_PY[1]}",
                 "torch": EXPECTED_TORCH,
-                # R4-B1：明确区分 runtime 与 driver，避免再次拿 torch.version.cuda 比驱动
+                # R4-B1/R5-B1：明确区分 runtime 与 driver，避免再次拿 torch.version.cuda 比驱动
                 "cuda_runtime": _mm("%d.%d" % EXPECTED_CUDA_RUNTIME),
+                "cuda_runtime_accepted": [_mm("%d.%d" % v) for v in ACCEPTED_CUDA_RUNTIMES],
+                "cuda_runtime_hard_major": ACCEPTED_CUDA_RUNTIME_MAJOR,
                 "cuda_driver_min": _mm("%d.%d" % MIN_CUDA_DRIVER),
                 "disk_budget_gb": DISK_BUDGET_GB,
             },

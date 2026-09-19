@@ -68,7 +68,7 @@ cd v4 && git add -A && git commit -m "..." && git push
 |---|---|---|
 | 角色 | 写代码、生成数据包、跑口径层单测、组装提交包 | 训练、OOF 推理、集成 |
 | 硬件 | 无 GPU、`v2/.venv` 有 numpy/pandas、**无 torch** | **1× A100 80GB**、4000m vCPU、**16 GiB 系统内存**、**30 GB 磁盘** |
-| 软件 | 系统 Python 3.12（仅用于口径层） | **CUDA 12.6 / PyTorch 2.4.0 / Python 3.11**（平台镜像预装，**无 conda**，不得改 torch 版本；额外轻量包可 `pip install --no-cache-dir`） |
+| 软件 | 系统 Python 3.12（仅用于口径层） | **CUDA 12.8 / PyTorch 2.7.1 / Python 3.11**（平台镜像预装，**无 conda**，不得改 torch 版本；额外轻量包可 `pip install --no-cache-dir`） |
 | 目录 | `../data`、`./reports` | 代码 `/code/workspace/v4`（临时）；数据与产物 `/data/v4/*`（持久） |
 
 **四条铁律**
@@ -104,7 +104,7 @@ E0 契约 → E1 行级基线 → E2 特征 → E3 序列主干 → E4 多尺度
 | 代码来源 | **Git 仓库**（本仓库）；分支 `main` |
 | 启动命令 | `bash /code/workspace/v4/run_train.sh --mode all` |
 | 资源 | Nvidia **A100 × 1**（80 GB 显存） |
-| 镜像 | 见 [`docs/image_requirements.md`](docs/image_requirements.md)（训练任务场景；torch 2.4.0 / CUDA 12.6 / py3.11） |
+| 镜像 | 见 [`docs/image_requirements.md`](docs/image_requirements.md)（训练任务场景；torch 2.7.1 / CUDA 12.8 / py3.11） |
 | 运行时长 | 自检/数据 0h30m；E1 2h；E3 20h；E8 40h（软预算） |
 
 任务序列（每个都可独立成任务，见 [`docs/platform_setup.md`](docs/platform_setup.md) §四）：
@@ -128,7 +128,7 @@ python3 v4/predict.py --use-version CONST --data_dir ../data --output /tmp/r.jso
 
 ## 当前状态
 
-- [x] **计划全部完成**：总计划 851 行 + 12 个阶段计划（756 行）+ 33 个 P 级详细计划（5,220 行），**合计 6,827 行**（由 `tools/plan_stats.py` 实测）
+- [x] **计划全部完成**：总计划 863 行 + 12 个阶段计划（759 行）+ 33 个 P 级详细计划（5,221 行），**合计 6,843 行**（由 `tools/plan_stats.py` 实测）
 - [x] 状态台账 `versions/status.json`、候选注册表 `versions/candidates.json`、目录总览 `docs/PROJECT_FILES.md`
 - [x] 环境/磁盘自检脚本（`E0/code/check_env.py`、`src/data/disk_guard.py`、`E0/code/setup_deps.sh`）
 - [x] 锁文件与 Gate/引用模板

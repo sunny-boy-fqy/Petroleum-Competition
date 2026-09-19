@@ -5,7 +5,7 @@
   "project": {
     "version": "v4",
     "phase": "E0",
-    "summary": "E0 本地契约 Gate 13/13 PASS（云端 Gate 待 P0 实机）；计划全部完成（46 份 / 6,827 行，由 tools/plan_stats.py 实测）；三审 R3-C1..C3/H1..H5/M1..M5 与四审 R4-B1..B3/H1..H3/M1..M6 已修复并回归验证；改进 proposal 已落进 PLAN.md / E6 与 src/",
+    "summary": "E0 本地契约 Gate 13/13 PASS（云端 Gate 待 P0 实机）；计划全部完成（46 份 / 6,843 行，由 tools/plan_stats.py 实测）；三审 R3-C1..C3/H1..H5/M1..M5 与四审 R4-B1..B3/H1..H3/M1..M6 已修复并回归验证；改进 proposal 已落进 PLAN.md / E6 与 src/",
     "last_updated": "2026-09-19T21:10:00+00:00"
   },
   "stages": [
@@ -349,13 +349,24 @@
     },
     "cloud": {
       "python": "3.11",
-      "torch": "2.4.0+cu124",
-      "cuda": "12.6",
+      "torch": "2.7.1+cu128",
+      "cuda": "12.8",
+      "cuda_semantics": "hard = torch.version.cuda major == 12；warn = 是否等于声明值 12.8；advisory = nvidia-smi CUDA Version >= 12.8（R4-B1/R5-B1，禁止把 wheel 小版本写成 hard 断言）",
       "gpu": "A100 80GB x1",
       "ram_gb": 16,
       "disk_gb": 30,
       "verified": false,
-      "note": "待 E0/P0 在云端实机确认"
+      "pip_install_list": [
+        "numpy",
+        "pandas",
+        "scipy",
+        "scikit-learn",
+        "einops"
+      ],
+      "pip_install_optional": [
+        "tensorboard"
+      ],
+      "note": "待 E0/P0 在云端实机确认；依赖由用户 pip 安装（agent 无法自动安装），清单与 check_env.py::REQUIRED_PY_DEPS 一致且有单测锁定"
     }
   },
   "pending_plan_artifacts": [

@@ -11,8 +11,8 @@
 
 | 组件 | 要求 | 说明 |
 |---|---|---|
-| CUDA | **12.6** | 平台镜像自带；**不得另装 CUDA / 替换驱动** |
-| PyTorch | **2.4.0 + cu124** | 平台预装；**不得 `pip install torch` 改版本** |
+| CUDA | **12.8** | 平台镜像自带；**不得另装 CUDA / 替换驱动** |
+| PyTorch | **2.7.1 + cu128** | 平台预装；**不得 `pip install torch` 改版本** |
 | Python | **3.11** | 平台预装；不得换 3.12+ |
 | GPU | 1× **Nvidia A100 80 GB**（sm_80） | 资源规格选择；bf16 可用 |
 | 系统内存 | 16 GiB | **这是真正的瓶颈**，不是显存 → `DataLoader(num_workers=4)` |
@@ -28,25 +28,30 @@
 ### 2.1 选择基础镜像
 
 新建镜像 → 使用场景**训练任务** → 资源配置选 **Nvidia GPU（A100）** → 基础镜像下拉里选
-**PyTorch 2.4.0 / CUDA 12.6 / Python 3.11** 对应的那一项。
+**PyTorch 2.7.1 / CUDA 12.8 / Python 3.11** 对应的那一项。
 
-> 下拉项名称由平台给（例如 `pytorch:2.4.0-cuda12.6-cudnn9-py311` 这类写法），
+> 下拉项名称由平台给（例如 `pytorch:2.7.1-cuda12.8-cudnn9-py311` 这类写法），
 > **请以页面上实际显示的为准**；只要三个版本号对得上即可。
 > 若列表里没有恰好匹配的版本，改用【方案 B：Dockerfile】以显式锁定。
 
 ### 2.2 快捷安装内容
 
-【快捷安装】→ 添加 **pip** 依赖，每行一个（**只填包名与版本，不要写 `pip install`**）：
+【快捷安装】→ 添加 **pip** 依赖，每行一个（**只填包名，不要写 `pip install`、不要写版本**）：
 
 ```
-pandas==2.2.3
-pyarrow==17.0.0
-scipy==1.13.1
-scikit-learn==1.5.2
-einops==0.8.0
-onnx==1.16.2
-onnxruntime==1.18.1
+numpy
+pandas
+scipy
+scikit-learn
+einops
+tensorboard
 ```
+
+> **版本不钉死（R5-M1）**：镜像预装的 `torch==2.7.1+cu128` 自带一份 numpy，
+> 其余包按构建时 pip 解析出的兼容版本即可。精确版本由镜像构建后回填的
+> `versions/locks/cloud_frozen.txt`（`pip freeze`）提供 —— 把具体小版本写进镜像
+> 会在基础镜像升级时构建失败。`tensorboard` 只是为了让平台任务详情页能看到
+> "迭代曲线"；不装也能跑（自动降级为 JSONL 标量）。
 
 **不要安装**（体积 / 兼容 / 无必要）：
 
@@ -54,9 +59,14 @@ onnxruntime==1.18.1
 |---|---|
 | `torch` / `torchvision` / `timm` | 会替换平台预装版本，或引入数 GB 无关依赖 |
 | `nvidia-*` / `cuda-*` | 重复下载 CUDA 运行时，30 GB 磁盘装不下 |
-| `flash-attn` / `xformers` / `apex` / `deepspeed` | 需现场编译 CUDA 扩展，构建易失败；注意力统一用 PyTorch 2.4 原生 `F.scaled_dot_product_attention` |
-| `tensorboard` | 平台已集成（写 `TENSORBOARD_LOGDIR` 即可）；训练日志用 CSV/JSONL |
+| `flash-attn` / `xformers` / `apex` / `deepspeed` | 需现场编译 CUDA 扩展，构建易失败；注意力统一用 PyTorch 2.7 原生 `F.scaled_dot_product_attention` |
+| `pyarrow` | 分片缓存是 `.npz`（numpy），没有任何代码 `import pyarrow` |
+| `onnx` / `onnxruntime` | CPU 推理主路径是 `torch.load(map_location="cpu")`；缺失自动降级 |
 | `matplotlib` / `jupyter` / `wandb` | v4 不做绘图，指标一律落 JSON/CSV |
+
+> **我（agent）无法自动安装任何包**：上面这份清单需要用户在自己的环境里执行 `pip install`。
+> 清单与 `E0/code/check_env.py::REQUIRED_PY_DEPS` 严格一致，并由
+> `tests/test_platform_scripts.py::test_pip_install_list_matches_declared_deps` 锁定。
 
 ### 2.3 可选：apt 依赖
 
@@ -76,8 +86,11 @@ ENV PIP_NO_CACHE_DIR=1 \
     PYTHONUNBUFFERED=1
 
 RUN python -m pip install --no-cache-dir \
-      "pandas==2.2.3" \
-      "pyarrow==17.0.0" \
+      "numpy" \
+      "pandas" \
+      "scipy" \
+      "scikit-learn" \
+      "einops" \
       "scipy==1.13.1" \
       "scikit-learn==1.5.2" \
       "einops==0.8.0" \
@@ -89,7 +102,7 @@ RUN python -m pip install --no-cache-dir \
 RUN python - <<'PY'
 import sys, torch
 assert sys.version_info[:2] == (3, 11), sys.version
-assert torch.__version__.split("+")[0] == "2.4.0", torch.__version__
+assert torch.__version__.split("+")[0] == "2.7.1", torch.__version__
 print("v4 image OK:", sys.version.split()[0], torch.__version__, torch.version.cuda)
 PY
 ```
@@ -106,9 +119,10 @@ bash /code/workspace/v4/run_train.sh --mode env
 
 ```
 [OK  ] python_version          python 3.11.x (expected 3.11)
-[OK  ] torch_version           torch 2.4.0+cu124 (expected 2.4.0)
-[OK  ] cuda_runtime_version    torch.version.cuda=12.4 (expected 12.4 = torch 2.4.0+cu124 runtime; 平台驱动能力见 cuda_driver_version)
-[WARN] cuda_driver_version     nvidia-smi CUDA Version=12.6 (平台声明 12.6；驱动能力由平台保证，advisory 不阻塞)
+[OK  ] torch_version           torch 2.7.1+cu128 (expected 2.7.1)
+[OK  ] cuda_runtime_version    torch.version.cuda=12.8 (hard 要求 runtime major==12；声明值 12.8，可接受 ['12.8', '12.6'])
+[WARN] cuda_runtime_declared   torch.version.cuda=12.8 vs 声明 12.8（cu128 镜像；可接受 ['12.8', '12.6'] 内的任意值，小版本漂移不阻塞）
+[WARN] cuda_driver_version     nvidia-smi CUDA Version=12.8 (平台声明 12.8；驱动能力由平台保证，advisory 不阻塞)
 [OK  ] cuda_available          torch.cuda.is_available()=True
 [OK  ] gpu_is_a100             NVIDIA A100-SXM4-80GB sm_80 79.3 GiB
 [OK  ] bf16_supported          torch.cuda.is_bf16_supported()=True
@@ -116,13 +130,16 @@ bash /code/workspace/v4/run_train.sh --mode env
 hard failures: 0
 ```
 
-> **CUDA 语义（R4-B1，务必分清）**：平台镜像是 `torch==2.4.0+cu124`，该 wheel 的
-> `torch.version.cuda` 恒为 **12.4**；镜像文档里的 **CUDA 12.6** 指的是**驱动能力**
-> （`nvidia-smi` 头部的 `CUDA Version: 12.6`），两者不是同一个数。`check_env.py` 现在
-> 用 `cuda_runtime_version` 硬校验 12.4、用 `cuda_driver_version` 以 **warn** 提示 12.6；
-> 旧版拿 `torch.version.cuda` 硬比 12.6 会让云端 `--mode env` 必然 `exit 11`，
-> 使 `E0_cloud_gate` 永远点不亮。`E0_env.json::expected` 也分别给出
-> `cuda_runtime` 与 `cuda_driver_min` 两个键。
+> **CUDA 语义（R4-B1 + R5-B1，务必分清）**：平台镜像是 `torch==2.7.1+cu128`，该 wheel 的
+> `torch.version.cuda` 是 **12.8**；镜像文档里的 **CUDA 12.8** 也指**驱动能力**
+> （`nvidia-smi` 头部的 `CUDA Version: 12.8`），两者名字相同但来源不同，必须分别读。
+> `check_env.py` 现在是三层口径：**hard** = `torch.version.cuda` 存在且 major == 12；
+> **warn** = 是否等于声明值 12.8（`cuda_runtime_declared`）；**advisory** =
+> `nvidia-smi` 的 `CUDA Version >= 12.8`（`cuda_driver_version`）。
+> 四审的历史教训：硬断言某个具体 runtime（12.4 / 12.6）会让云端 `--mode env` 必然
+> `exit 11`，`E0_cloud_gate` 永远点不亮；因此**不得**再把 wheel 小版本写成 hard 断言。
+> `E0_env.json::expected` 给出 `cuda_runtime`、`cuda_runtime_accepted`、
+> `cuda_runtime_hard_major`、`cuda_driver_min` 四个键。
 
 结果写入 `/data/v4/reports/E0_env.json`；磁盘分布写入 `E0_disk_budget.json`。
 
@@ -139,8 +156,8 @@ python -m pip freeze > /data/v4/reports/cloud_frozen.txt
 
 | lock 文件 | 用途 | 内容 |
 |---|---|---|
-| `v4/versions/locks/cloud.txt` | 云端**训练**环境 | torch 2.4.0+cu124（镜像提供）+ 上述 pip 包 |
-| `v4/versions/locks/submit.txt` | **提交推理**环境 | torch 2.4.0 + numpy + pandas（+ 可选 onnx/onnxruntime） |
+| `v4/versions/locks/cloud.txt` | 云端**训练**环境 | torch 2.7.1+cu128（镜像提供）+ 上述 pip 包（版本不钉死） |
+| `v4/versions/locks/submit.txt` | **提交推理**环境 | torch 2.7.1+cu128（镜像提供）+ numpy（推理侧不需要训练专属包） |
 
 ---
 

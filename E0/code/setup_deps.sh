@@ -54,16 +54,14 @@ fi
 export PIP_NO_CACHE_DIR=1
 
 # 优先使用 lock 文件里的**精确版本**（R2-M6：范围约束与 lock 不一定一致）
+# R5-M1：lock 现在只列包名（版本不钉死），torch/numpy 由镜像提供 -> 显式跳过。
 LOCK="versions/locks/cloud.txt"
 if [[ -f "$LOCK" ]]; then
-  mapfile -t PKGS < <(grep -vE '^\s*#|^\s*$|^torch|^numpy' "$LOCK")
-  echo "使用 lock 精确版本: ${#PKGS[@]} 个包（torch/numpy 由镜像提供，跳过）"
+  mapfile -t PKGS < <(grep -vE '^\s*#|^\s*$|^torch|^numpy' "$LOCK" | sed -E 's/[[:space:]]*#.*$//' | grep -vE '^\s*$')
+  echo "使用 lock 清单: ${#PKGS[@]} 个包（torch/numpy 由镜像提供，跳过）"
 else
-  PKGS=(
-    "pandas==2.2.3" "pyarrow==17.0.0" "scipy==1.13.1"
-    "scikit-learn==1.5.2" "einops==0.8.0"
-    "onnx==1.16.2" "onnxruntime==1.18.1"
-  )
+  # 与 check_env.py::REQUIRED_PY_DEPS 保持一致（四审 R5-M1：pyarrow 已移出 required）
+  PKGS=( "numpy" "pandas" "scipy" "scikit-learn" "einops" )
 fi
 
 if [[ "$DRY" == "1" ]]; then

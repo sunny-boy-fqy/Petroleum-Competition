@@ -68,8 +68,24 @@ python3 v4/tools/pack_dataset.py            # 需要 numpy
 
 ### 步骤 1：构建训练任务镜像（`v4/docs/image_requirements.md`）
 
-只需一次。核心是把 6 个 pip 轻量包烘进镜像，这样每个训练任务都能省掉安装时间。
+只需一次。核心是把 pip 轻量包烘进镜像，这样每个训练任务都能省掉安装时间。
 **不要**在镜像里安装/升级 `torch`（保留平台预装版本）。
+
+需要的 pip 包（**由用户自己安装；agent 无法自动安装任何包**，一行一个；版本不钉死）：
+
+```
+numpy
+pandas
+scipy
+scikit-learn
+einops
+tensorboard
+```
+
+> 前 5 个是 required，与 `v4/E0/code/check_env.py::REQUIRED_PY_DEPS` 严格一致
+> （有单测锁定两者相等）；`tensorboard` 可选，仅用于平台"迭代曲线"观测，缺失自动降级为 JSONL。
+> **不需要** `pyarrow`（分片缓存是 `.npz`）、`onnx`/`onnxruntime`（CPU 推理主路径是
+> `torch.load(map_location="cpu")`）。
 
 ### 步骤 2：把数据放到云盘 `/data`
 
@@ -107,7 +123,7 @@ git push -u origin main
 | 仓库地址 / 分支 | `<你的仓库地址>` / `main` |
 | **启动命令**（≤500 字符） | `bash /code/workspace/v4/run_train.sh --mode all` |
 | 资源配置 | **Nvidia A100 \* 1**（80 GB 显存），4000m vCPU / 16 GiB 内存 |
-| 镜像 | 【我的镜像】→ `v4-train-py311-torch240-cu126`（步骤 1 构建）；未构建则先用官方 PyTorch 2.4.0 / CUDA 12.6 / Python 3.11 镜像 |
+| 镜像 | 【我的镜像】→ `v4-train-py311-torch271-cu128`（步骤 1 构建）；未构建则先用官方 PyTorch 2.7.1 / CUDA 12.8 / Python 3.11 镜像 |
 | 训练数据集 / 验证数据集 | 可不挂载（数据在云盘 `/data`）；若平台数据集功能里有原始井数据，可挂载后在 `run_train.sh` 里加 `--from-dir` |
 | 超参数 | 可不填（v4 全部走 `run_train.sh` 的参数）；如平台要求，填 `mode=all` |
 | 运行时长 | E0 自检/数据部署：0h30m；E1：2h；E3：20h；E8：40h（软预算，见 PLAN §3.2） |
@@ -116,7 +132,7 @@ git push -u origin main
 
 | # | 任务名 | 启动命令 | 预期 |
 |---|---|---|---|
-| 1 | `v4-bootstrap` | `bash /code/workspace/v4/run_train.sh --mode env` | 打印 torch 2.4.0 / A100 sm_80 / bf16 / 磁盘剩余；把 `E0_env.json`、`E0_disk_budget.json` 写入 `/data/v4/reports/` |
+| 1 | `v4-bootstrap` | `bash /code/workspace/v4/run_train.sh --mode env` | 打印 torch 2.7.1 / A100 sm_80 / bf16 / 磁盘剩余；把 `E0_env.json`、`E0_disk_budget.json` 写入 `/data/v4/reports/` |
 | 2 | `v4-data` | `bash /code/workspace/v4/run_train.sh --mode data` | 解压数据到 `/data/v4/data`，`RESULT: OK` |
 | 3 | `v4-e0` | `bash /code/workspace/v4/run_train.sh --mode e0` | 数据卡 + 常数基线 70.490735 + 折指纹 + 契约自检；`E0_gate.json` passed=true |
 | 4 | `v4-smoke` | `bash /code/workspace/v4/run_train.sh --mode smoke` | 1 折 / 2 epoch / 8 井，验证训练链路（需 E1 代码实现后） |

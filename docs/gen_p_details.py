@@ -63,15 +63,15 @@ P["E0"] = [
         status="blocked",
         nature="契约前置：不产出模型，只产出**环境事实**",
         deps=["无（这是全项目第一步）"],
-        goal="在云端实机确认 CUDA 12.6 / PyTorch 2.4.0 / Python 3.11 / A100 sm_80 / bf16 可用，"
+        goal="在云端实机确认 CUDA 12.8 / PyTorch 2.7.1 / Python 3.11 / A100 sm_80 / bf16 可用，"
              "并实测 30 GB 磁盘的可用余量与分布，产出可复算的 `E0_env.json` 与 `E0_disk_budget.json`。",
         why=["未实测的环境假设会在 E3 训练数小时后才暴露（OOM / 版本不兼容 / 磁盘写满），"
              "返工成本是 A100 机时；",
              "30 GB 预算是本项目最硬的资源约束，而 `/code/workspace`（临时）与 `/data`（云盘）"
              "是否同一文件系统必须实测，不能假设；",
-             "`torch 2.4.0` 与 `2.5+` 的 API 差异（`torch.nn.attention`、`torch.export` 新签名）会直接"
-             "导致运行期 AttributeError，必须前置断言。"],
-        inputs=["云端训练任务（Git 仓库代码来源，A100 资源，PyTorch 2.4.0/CUDA 12.6/py3.11 镜像）",
+             "镜像内 torch 小版本漂移（2.7 vs 2.8）、以及 **2.6 起 `torch.load(weights_only=True)` "
+             "的默认值变更**，都会在训练数小时后才暴露成 AttributeError/反序列化错误，必须前置断言。"],
+        inputs=["云端训练任务（Git 仓库代码来源，A100 资源，PyTorch 2.7.1/CUDA 12.8/py3.11 镜像）",
                 "`v4/E0/code/check_env.py`、`v4/E0/code/setup_deps.sh`、`v4/src/data/disk_guard.py`"],
         outputs=["`$V4_REPORTS_DIR/E0_env.json`",
                  "`$V4_REPORTS_DIR/E0_disk_budget.json`（**按挂载点**报告：`paths` + `worst_level` + `primary_path` + `data_root_checked`）",
@@ -100,7 +100,8 @@ P["E0"] = [
         forbid=["`pip install torch` / 升级 CUDA / 用 conda 建环境",
                 "安装 flash-attn / xformers / apex / deepspeed 等需编译 CUDA 扩展的包",
                 "在磁盘余量未知的情况下启动任何训练"],
-        risk=[("镜像里是 torch 2.5+/2.3，不是 2.4.0", "hard failure 直接报错", "改用镜像内实际版本并同步改 `versions/locks/cloud.txt` 与代码中的 2.4-only 断言"),
+        risk=[("镜像里不是 torch 2.7.1（例如 2.8）", "`torch_version` hard failure", "按镜像实际版本同步改 `check_env.py::EXPECTED_TORCH`、`versions/locks/cloud.txt` 与 docs；**不要**pip 降级 torch"),
+              ("CUDA runtime 与声明值不一致（cu126 wheel）", "`cuda_runtime_declared` warn", "只记录事实；hard 底线是 runtime major==12，不因此阻断 Gate（R4-B1 教训）"),
               ("系统内存被镜像/其它进程占用", "`free -g` 显示可用 < 14 GiB", "把 `num_workers` 降到 2，并在 E2 关闭特征缓存"),
               ("`/data` 与 `/code` 同盘且总容量仅 30 GB", "`df` 显示同一 Filesystem", "按总计划 §3.4.1 安全规则收缩：特征缓存 ≤0.5 GB、集成成员 ≤2、模型宽度减半"),
               ("pip 计划替换 torch", "`setup_deps.sh` 预检命中", "脚本自动中止（exit 3）；改为只用镜像自带版本")],

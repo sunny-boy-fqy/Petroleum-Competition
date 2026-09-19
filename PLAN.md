@@ -13,7 +13,7 @@
 | 编号 | 决策项 | 用户选择 | 对计划的影响 |
 |---|---|---|---|
 | D1 | 单任务 wall-clock 上限 | **放宽——忽略 100h，能跑多久跑多久** | 不再设置单任务 100h 硬门禁；改为**软预算 + 强制 checkpoint/可续训**，任何任务被中断都能从最近 checkpoint 恢复。计划中所有“预算”均为软预算。 |
-| D5 | 云端软件栈 | **CUDA 12.6 + PyTorch 2.4.0 + Python 3.11 为镜像预装版本，不得变更/升级/另装 CUDA；无 conda；但 `pip` 可用，可安装额外的轻量纯 Python 依赖** | 允许 `pip install numpy/pandas/scipy/...`；**禁止** `pip install torch`（换版本）与任何需现场编译 CUDA 扩展的包（flash-attn/xformers/apex/deepspeed）。所有第三方依赖仍走「探测 + 降级」层，见 §3.3。 |
+| D5 | 云端软件栈 | **CUDA 12.8 + PyTorch 2.7.1 + Python 3.11 为镜像预装版本，不得变更/升级/另装 CUDA；无 conda；但 `pip` 可用，可安装额外的轻量纯 Python 依赖** | 允许 `pip install numpy/pandas/scipy/...`；**禁止** `pip install torch`（换版本）与任何需现场编译 CUDA 扩展的包（flash-attn/xformers/apex/deepspeed）。所有第三方依赖仍走「探测 + 降级」层，见 §3.3。 |
 | D6 | 云端可用磁盘 | **仅 30 GB（含镜像已占部分）** | pip 只装轻量包并立即清缓存；强制「按需生成特征 + checkpoint 滚动淘汰 + 中间产物即时清理」，并用 `du` 实测。见 §3.4。 |
 | D2 | 架构 | **深度序列主干 + 行级精度头** | 1D U-Net / TCN / Patch-Transformer 做深度上下文主干；行级精度头做逐点精修；再叠学习型原子门。见 §五。 |
 | D3 | 起点与保护 | **从零纯 DL 管线** | 不继承 B0 权重、不做 B0 patch 隔离；**但“逐目标常量占位必须精确命中”由模型内部的 `q_joint` 联合头 + `q_por/q_perm/q_sw` **逐目标原子头**共同承担**（自包含，不依赖 B0）。见 §五.3 与 §六.4。 |
@@ -51,10 +51,10 @@
 
 | 层级 | 数量 | 篇幅 | 状态 |
 |---|---:|---:|---|
-| 总计划 `PLAN.md` | 1 | **851 行** | ✅ 完成 |
-| 阶段计划 `E*/PLAN.md` | 12 | 平均 63 行（合计 756） | ✅ 完成 |
-| P 级子计划 `E*/P*/PLAN.md` | 33 | **平均 158 行**（合计 5,220） | ✅ 完成（V2 深度：输入/输出契约、执行步骤、参数表、完成判据、禁止事项、风险对策、停止规则、inner-OOF 选择协议、复算命令、Gate 预注册 JSON） |
-| 计划文件合计 | 46 | **6,827 行** | ✅ |
+| 总计划 `PLAN.md` | 1 | **863 行** | ✅ 完成 |
+| 阶段计划 `E*/PLAN.md` | 12 | 平均 63 行（合计 759） | ✅ 完成 |
+| P 级子计划 `E*/P*/PLAN.md` | 33 | **平均 158 行**（合计 5,221） | ✅ 完成（V2 深度：输入/输出契约、执行步骤、参数表、完成判据、禁止事项、风险对策、停止规则、inner-OOF 选择协议、复算命令、Gate 预注册 JSON） |
+| 计划文件合计 | 46 | **6,843 行** | ✅ |
 
 > **行数由 `tools/plan_stats.py` 实测、`tools/sync_plan_stats.py` 同步、`plan_stats.py --check` 校验**
 > （审查 R2-H6/R3-C2：此前手写数字两次过期，且旧校验只查总量、漏检阶段/P 分项）。
@@ -158,7 +158,7 @@ E1–E11 全部处于 `pending`，按 §七 的顺序执行；每个 Gate 的阈
 
 **由此派生的四条硬性工程规则**：
 
-0. **环境不可变铁律（最高优先级）**：云端镜像**预装且不可替换**——CUDA 12.6、PyTorch 2.4.0、Python 3.11；**没有 conda**。因此：
+0. **环境不可变铁律（最高优先级）**：云端镜像**预装且不可替换**——CUDA 12.8、PyTorch 2.7.1、Python 3.11；**没有 conda**。因此：
    - **禁止** `pip install torch` / 升级 CUDA / 更换 Python 版本 / 用 conda 建环境（会破坏镜像一致性，且 30 GB 磁盘容不下第二份 torch）；
    - **允许** `pip install` **额外的轻量纯 Python / 纯 wheel 依赖**（numpy、pandas、scipy、scikit-learn、pyarrow、einops 等），但必须 `--no-cache-dir` 且装完 `pip cache purge`；
    - 所有第三方依赖仍**统一走 `portability` 探测层**（§3.3.2）：装了就用，没装就走 numpy/torch 兜底分支，**任何 `import` 失败都不得变成"请用户去装包"**；
@@ -193,7 +193,7 @@ E1–E11 全部处于 `pending`，按 §七 的顺序执行；每个 Gate 的阈
 ```
 OS        : Linux x86_64
 Python    : 3.11（预装，不得更换/不得用 3.12+ 语法）
-PyTorch   : 2.4.0 + cu124（预装，匹配 CUDA 12.6 驱动；不得 pip 改版本）
+PyTorch   : 2.7.1 + cu128（预装，匹配 CUDA 12.8 驱动；不得 pip 改版本）
 GPU       : 1× A100 80GB（sm_80），bf16 可用
 环境管理  : 无 conda；直接用系统 Python；pip 可装额外轻量包
 磁盘      : 30 GB（含镜像本身）
@@ -212,21 +212,33 @@ python -m pip freeze > v4/versions/locks/cloud_frozen.txt
 python v4/E0/code/check_env.py --json v4/reports/E0_env.json
 ```
 
-**安装纪律（针对 30 GB）**：
-- 只装上表所列；**不装** `tensorboard`/`matplotlib`/`jupyter`/`wandb`/`torchvision`/`timm`（用 CSV+JSON 日志替代绘图与可视化）；
-- **不装**任何需要现场编译 CUDA 扩展的包（`flash-attn`/`xformers`/`apex`/`deepspeed`）——注意力统一走 `F.scaled_dot_product_attention`（PyTorch 2.4 原生，自动选择 Flash / Memory-Efficient / Math 后端）；
-- `pip install` **不允许**触碰 `torch`、`nvidia-*`、`cuda-*` 系列（会触发版本替换或重复下载数 GB）；
-- 每次安装后必须 `pip cache purge` 并跑 `check_env.py`；若 `pip` 解析出要动 torch，**立即中止并按已装版本改代码**，不做任何环境变更。
+**安装纪律（针对 30 GB，R5-M1：依赖由用户 pip 安装，我不自动装）**：
+- **我给出的 pip 清单**（用户执行；格式为一行一个包名）：
+  `numpy` / `pandas` / `scipy` / `scikit-learn` / `einops` —— 与
+  `E0/code/check_env.py::REQUIRED_PY_DEPS` 严格一致，并有单测锁定两者相等；
+  推荐 `tensorboard`（平台"迭代曲线"观测，缺失时自动降级为 JSONL）；
+  **不需要** `pyarrow`（分片是 `.npz`）、`onnx`/`onnxruntime`（CPU 推理主路径是
+  `torch.load(map_location="cpu")`）。
+- **版本不钉死**：required 依赖只查**存在性**；镜像预装的 torch 自带一份 numpy，
+  其余包按 pip 解析出的兼容版本即可。精确版本以 `versions/locks/cloud_frozen.txt`
+  （云端 `pip freeze` 回填）为准 —— 把具体小版本写成硬约束会在镜像升级时误报。
+- 只装上述清单；**不装** `matplotlib`/`jupyter`/`wandb`/`torchvision`/`timm`；
+- **不装**任何需要现场编译 CUDA 扩展的包（`flash-attn`/`xformers`/`apex`/`deepspeed`）——注意力统一走 `F.scaled_dot_product_attention`（PyTorch 2.7 原生，自动选择 Flash / Memory-Efficient / Math 后端）；
+- `pip install` **不允许**触碰 `torch`、`nvidia-*`、`cuda-*` 系列（会触发版本替换或重复下载数 GB）；`setup_deps.sh` 在安装前用 `--dry-run` 预检并在命中时中止（exit 3）；
+- 每次安装后必须 `pip cache purge` 并跑 `check_env.py`。
 
-**PyTorch 2.4.0 兼容红线（写进 `E0/code/check_env.py`，不通过则禁止开始训练）**：
+**PyTorch 2.7.1 / CUDA 12.8 兼容红线（写进 `E0/code/check_env.py`，不通过则禁止开始训练）**：
 
 | 项 | 要求 |
 |---|---|
-| `torch.__version__ == "2.4.0"` | 断言；否则报错退出 |
+| `torch.__version__` 主版本 == `2.7.1` | 断言（`+cu128` 后缀允许）；否则报错退出 |
 | `torch.cuda.is_available()` 且 `torch.cuda.get_device_capability() == (8, 0)` | 断言 A100 |
 | `torch.cuda.is_bf16_supported()` | 断言，决定用 bf16 而非 fp16 |
-| 禁用 2.5+ API | `torch.nn.attention`、`torch.export` 新接口、`torch.compile(fullgraph=True)` 的新参数一律不用 |
-| 注意力 | 只用 `F.scaled_dot_product_attention` 的 2.4 已有签名（PyTorch 2.4 内置 Flash / Memory-Efficient / Math 三后端自动选择） |
+| **CUDA runtime 语义** | hard：`torch.version.cuda` 存在且 **major == 12**；warn：是否等于声明值 **12.8**（cu126/cu128 官方 wheel 都可接受）；advisory：`nvidia-smi` 的 `CUDA Version >= 12.8`。**禁止**把 runtime 小版本钉死成 hard 断言（四审 R4-B1 的 Gate 卡死根因） |
+| `torch.load` | torch >= 2.6 起 `weights_only` **默认 True**；本项目 checkpoint 只存张量 + 原生标量，**保持默认**，不放宽为 `weights_only=False`（安全 + 跨版本稳定） |
+| AMP | 用 `torch.amp.autocast("cuda", dtype=torch.bfloat16)` + `torch.amp.GradScaler("cuda")`（`torch.cuda.amp.*` 已弃用，A100 上 bf16 不需要 scaler） |
+| 注意力 | 只用 `F.scaled_dot_product_attention`（PyTorch 2.7 内置 Flash / Memory-Efficient / Math 三后端自动选择） |
+| 禁用未验证 API | `torch.export` 新接口、`torch.compile(fullgraph=True)` 的新参数一律不用 |
 | `torch.compile` | 可选，必须有 `--no-compile` 开关；编译失败不得中断训练 |
 | 优化器/调度器 | 只用原生 `AdamW` + `torch.optim.lr_scheduler` |
 | 数据加载 | `DataLoader(num_workers=4, pin_memory=True, persistent_workers=False, prefetch_factor=2)` |
@@ -242,7 +254,7 @@ python v4/E0/code/check_env.py --json v4/reports/E0_env.json
 | 分片落盘 | `np.savez_compressed`（必须） | — | 无 |
 | 列式 OOF 存储 | `pyarrow.parquet` | `np.savez_compressed` + 列名 JSON | 体积略大，无功能损失 |
 | 分位数/标准化 | `numpy.percentile`（自写，训练折内 fit） | — | 无 |
-| 模型导出（跨机兜底） | `torch.onnx.export`（2.4 内置） | 权重存 `.npz`（键名/形状清单） | 评测镜像预装 torch 2.4.0，因此 `torch.load(map_location='cpu')` 是主路径；ONNX 与 `.npz` 只是"torch 出现异常"时的兜底，不实现纯 numpy 前向（ROI 太低） |
+| 模型导出（跨机兜底） | `torch.onnx.export`（torch 2.7 内置） | 权重存 `.npz`（键名/形状清单） | 评测镜像预装 torch 2.7.1，因此 `torch.load(map_location='cpu')` 是主路径；ONNX 与 `.npz` 只是"torch 出现异常"时的兜底，不实现纯 numpy 前向（ROI 太低） |
 | 进度/日志 | 标准库 `print` + CSV/JSONL | — | 不依赖 tqdm/tensorboard |
 | 绘图 | **不做**（不需要） | — | 不依赖 matplotlib |
 
@@ -729,7 +741,7 @@ submission_code_v4/
 ├── README.md              # 算法名称/方法/环境/两条命令/文件说明（rules §6.3）
 ├── predict.py             # 主入口，官方 --data_dir / --output
 ├── train.py               # 训练入口（可选执行，但必须能跑）
-├── requirements.txt       # 环境声明（预装 torch 2.4.0 + 额外轻量包，见 §3.3.1）
+├── requirements.txt       # 环境声明（预装 torch 2.7.1 + 额外轻量包，见 §3.3.1）
 ├── configs/v4.yaml        # 模型/特征/解码配置
 ├── src/                   # data/ features/ models/ losses/ inference/ validation/
 ├── models/                # 训练好的权重 + scaler/分位数参数（JSON）
@@ -740,7 +752,7 @@ submission_code_v4/
 1. `predict.py` **只读** `--data_dir` 下的文件，不访问网络、不训练、不写除 `--output` 外的路径（除 `--temp` 显式指定）。
 2. 权重是 **CPU 可加载** 的（`map_location='cpu'`），且**优先导出 ONNX** 作为兜底路径（防评测机 torch 版本不匹配）。
 3. 单次运行内存峰值 < 8 GiB（16 GiB 机器的安全余量），时间 < 30 min，且**确定性**（固定 seed + `torch.use_deterministic_algorithms` 或明确的浮点容差声明）。
-4. `requirements.txt` 声明"预装基础栈（python 3.11 / torch 2.4.0+cu124）+ 额外轻量包（pandas/pyarrow/scipy/sklearn/einops/onnx/onnxruntime）"的确切版本；`versions/locks/cloud.txt`（训练侧）与 `submit.txt`（推理侧）分离，后者不含任何训练专属依赖。
+4. `requirements.txt` **不声明 torch**（镜像预装、禁止 pip 替换），只声明额外轻量包（`numpy/pandas/scipy/scikit-learn/einops`，版本不钉死；可选 `tensorboard`）；`versions/locks/cloud.txt`（训练侧）与 `submit.txt`（推理侧）分离，后者不含任何训练专属依赖；精确版本由 `cloud_frozen.txt`（云端 `pip freeze` 回填）提供。
 
 ### 9.3 复现门禁（rules §8，最高优先级）
 

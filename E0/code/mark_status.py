@@ -23,9 +23,12 @@ E0_STATUS = """> **执行状态（2026-09-19）：本地契约层已完成；阶
 >   项数以 `reports/E0_contract_tests.json::n_negative / n_rejected` 为准，本文件不手写数字
 > - 分片缓存 **32.39 MB**，90 井输入列校验通过（train+test 两个 split 都查）；`cache_root` 记为**可复现形式**（本地 repo 相对、云端 `$V4_CACHE_ROOT`），不再是 `/tmp` 临时路径
 > - **SW 为单一标签尺度**（百分数，实测有效 8.305–99.9，小于 1 的行数为 **0**）——「双尺度 / 有效值归一化到小数区间」的假设已被实测证伪（R3-C1 统一口径）；
->   提交契约对 SW 采用**三重守卫**（低值计数 + 非原子行 p05 + 全体中位数），不再只看中位数（R4-B3）
-> - **CUDA 语义**：hard 校验 `torch.version.cuda` = **12.4**（torch 2.4.0+cu124 的 runtime），
->   驱动能力 12.6 由 `nvidia-smi` 以 warn 提示；两者不可混用（R4-B1）
+>   提交契约对 SW 采用**四重守卫**（SW<1 计数 + SW<8.305 占比 + 非原子行 p05 + 全体中位数），不再只看中位数（R4-B3）
+> - **CUDA 语义**：hard 只要求 `torch.version.cuda` 存在且 **major == 12**；声明值
+>   **12.8**（torch 2.7.1+cu128 的 runtime）与 `nvidia-smi` 的驱动能力 12.8 分别以
+>   warn / advisory 记录；**不得**把 wheel 小版本写成 hard 断言（R4-B1/R5-B1 教训）
+> - **依赖**：required 由用户 pip 安装（`numpy/pandas/scipy/scikit-learn/einops`），
+>   **版本不钉死**、只查存在性；`pyarrow/onnx/onnxruntime/tensorboard` 为可降级可选（R5-M1）
 > - **两个硬发现**：①3 口训练井 schema 非规范（20/21/16 列，27,080 行，3.71%），必须按表头名解析；
 >   ②评分分母口径为「逐目标排除缺测」（`drop`），选错会系统性低 0.65 分
 >

@@ -18,9 +18,12 @@
 >   项数以 `reports/E0_contract_tests.json::n_negative / n_rejected` 为准，本文件不手写数字
 > - 分片缓存 **32.39 MB**，90 井输入列校验通过（train+test 两个 split 都查）；`cache_root` 记为**可复现形式**（本地 repo 相对、云端 `$V4_CACHE_ROOT`），不再是 `/tmp` 临时路径
 > - **SW 为单一标签尺度**（百分数，实测有效 8.305–99.9，小于 1 的行数为 **0**）——「双尺度 / 有效值归一化到小数区间」的假设已被实测证伪（R3-C1 统一口径）；
->   提交契约对 SW 采用**三重守卫**（低值计数 + 非原子行 p05 + 全体中位数），不再只看中位数（R4-B3）
-> - **CUDA 语义**：hard 校验 `torch.version.cuda` = **12.4**（torch 2.4.0+cu124 的 runtime），
->   驱动能力 12.6 由 `nvidia-smi` 以 warn 提示；两者不可混用（R4-B1）
+>   提交契约对 SW 采用**四重守卫**（SW<1 计数 + SW<8.305 占比 + 非原子行 p05 + 全体中位数），不再只看中位数（R4-B3）
+> - **CUDA 语义**：hard 只要求 `torch.version.cuda` 存在且 **major == 12**；声明值
+>   **12.8**（torch 2.7.1+cu128 的 runtime）与 `nvidia-smi` 的驱动能力 12.8 分别以
+>   warn / advisory 记录；**不得**把 wheel 小版本写成 hard 断言（R4-B1/R5-B1 教训）
+> - **依赖**：required 由用户 pip 安装（`numpy/pandas/scipy/scikit-learn/einops`），
+>   **版本不钉死**、只查存在性；`pyarrow/onnx/onnxruntime/tensorboard` 为可降级可选（R5-M1）
 > - **两个硬发现**：①3 口训练井 schema 非规范（20/21/16 列，27,080 行，3.71%），必须按表头名解析；
 >   ②评分分母口径为「逐目标排除缺测」（`drop`），选错会系统性低 0.65 分
 >
@@ -37,7 +40,7 @@
 
 1. 评分口径与本地评分器实现若与官方有偏差，所有后续迭代都是在优化错误目标；v1 冻结的全常量基线 OOF = **70.4907** 是校验锚点。
 2. 标签里 66.719% 是联合常量占位；**SW 是单一标签尺度（百分数，实测有效 8.305–99.9，`SW<1` 为 0 行）**——E0-R2 已证伪“99.9 与 [0,1] 双尺度”假设，`SW_SMALL_BRANCH` 作为遗留对照路径**永久关闭**；把 SW 误当小数尺度是最大的静默失分点，必须在写模型之前用单元测试锁死。
-3. 云端是预装镜像（CUDA 12.6 / torch 2.4.0 / py3.11，无 conda）+ 仅 30 GB 磁盘；环境与磁盘必须在训练开始前实测确认。
+3. 云端是预装镜像（CUDA 12.8 / torch 2.7.1 / py3.11，无 conda）+ 仅 30 GB 磁盘；环境与磁盘必须在训练开始前实测确认。
 
 ## 3. 输入
 
@@ -73,7 +76,7 @@
 ## 7. 完成判据（Gate）
 
 - `E0/code/run_all.py` 一条命令复算出：80/10 井、730,268/95,948 行、三状态计数、折指纹、常数基线 70.4907（±1e-4）。
-- `check_env.py` 的 hard 检查全过（torch 2.4.0 / A100 / bf16 / 磁盘可用 ≥ 8 GB），结果写入 `E0_env.json`。
+- `check_env.py` 的 hard 检查全过（torch 2.7.1 / A100 / bf16 / 磁盘可用 ≥ 8 GB），结果写入 `E0_env.json`。
 - 提交契约单测通过：构造的假 `result.json` 能被 `validate_payload` 正确接受/拒绝。
 - **全程不需要 torch**（数据与提交侧只依赖标准库+numpy/pandas）。
 
@@ -85,7 +88,7 @@
 
 ## 9. 通用约束（继承总计划）
 
-- 训练/推理分离：本机（无 GPU）负责代码与契约，云端（1×A100 80GB，CUDA 12.6 / torch 2.4.0 / py3.11，**30 GB 磁盘**）负责训练。
+- 训练/推理分离：本机（无 GPU）负责代码与契约，云端（1×A100 80GB，CUDA 12.8 / torch 2.7.1 / py3.11，**30 GB 磁盘**）负责训练。
 - 禁止 `pip install torch` 或变更镜像基础栈；额外轻量包须 `--no-cache-dir` 并清缓存。
 - 一切阈值/权重/早停只在 **inner-OOF** 上选；outer 折只推理一次。
 - 训练脚本必须支持 `--resume`、`--time-budget-h`、每 epoch checkpoint 与 `assert_disk_headroom(8.0)`。

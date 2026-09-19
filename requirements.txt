@@ -1,17 +1,45 @@
 # v4 依赖（推理 + 训练）
 #
-# 基础栈由平台镜像预装，**不得 pip 替换**：
-#   python==3.11 / torch==2.4.0+cu124 / numpy==1.26.4
+# ============================ 安装纪律（务必先读） ============================
+# 基础栈由平台镜像**预装**，**不得 pip 替换**：
+#     python==3.11 / torch==2.7.1+cu128 / CUDA 12.8（驱动能力）
+# 因此本文件**不再声明 torch**（旧版写了 torch==2.4.0，`pip install -r` 会把
+# 镜像里的 torch 换掉 —— 这是明确禁止的）。
+#
+# 【给用户的 pip 安装清单】只有下面「额外轻量包」里的 required 部分需要安装：
+#     numpy
+#     pandas
+#     scipy
+#     scikit-learn
+#     einops
+# 推荐（平台"迭代曲线"观测；缺失时自动降级为 JSONL，不阻塞）：
+#     tensorboard
+# 不需要（有文档化降级路径，装了也不会更快）：
+#     pyarrow            # 分片缓存是 .npz（numpy），没有代码 import pyarrow
+#     onnx / onnxruntime # CPU 推理主路径是 torch.load(map_location="cpu")
+#
+# 版本**不钉死**：镜像预装的 torch 自带一份 numpy，其余包按 pip 解析出的兼容版本
+# 即可。精确版本一致性由 versions/locks/cloud_frozen.txt（云端 `pip freeze` 回填）
+# 保证，而不是靠这里的猜测定版。
+#
 # 安装脚本：v4/E0/code/setup_deps.sh（--no-cache-dir + 装完清缓存 + 拒绝触碰 torch）
-# 训练侧权威快照：versions/locks/cloud.txt ；推理侧：versions/locks/submit.txt
-# 说明文档：docs/image_requirements.md
+# 训练侧清单：versions/locks/cloud.txt ；推理侧：versions/locks/submit.txt
+# 说明文档：docs/image_requirements.md / docs/dependencies.md
+# ============================================================================
 
-torch==2.4.0
-numpy==1.26.4
-pandas==2.2.3
-pyarrow==17.0.0
-scipy==1.13.1
-scikit-learn==1.5.2
-einops==0.8.0
-onnx==1.16.2
-onnxruntime==1.18.1
+# ---- 基础栈（镜像预装，**禁止在此声明**，否则 pip 会替换） ----
+# torch==2.7.1+cu128        # 镜像提供；禁止 pip install torch
+# numpy                     # 镜像随 torch 提供；缺失时才安装
+
+# ---- 额外轻量包（required：训练/分析主路径） ----
+numpy
+pandas
+scipy
+scikit-learn
+einops
+
+# ---- 可选（缺失时自动降级，见 src/portability.py） ----
+# tensorboard             # 平台迭代曲线（观测用，不参与模型选择）
+# pyarrow                 # 仅当改用 parquet 分片时才需要
+# onnx
+# onnxruntime

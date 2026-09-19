@@ -88,16 +88,21 @@ class TestCheckEnvFixes(unittest.TestCase):
         self.assertTrue((V4 / "versions" / "reference" / "v1_well_folds.json").is_file())
 
     def test_optional_deps_are_degradable_not_hard(self):
-        """R3-M2：onnx/onnxruntime 有降级路径，不能把训练卡死。"""
+        """R3-M2 + R5-M1：pyarrow/onnx/onnxruntime/tensorboard 有降级路径，不能把训练卡死。"""
         src = _read("E0/code/check_env.py")
-        m = re.search(r"OPTIONAL_PY_DEPS\s*=\s*\{(.*?)\}", src, re.S)
+        m = re.search(r"OPTIONAL_PY_DEPS\s*:\s*dict\[str,\s*str\s*\|\s*None\]\s*=\s*\{(.*?)\}",
+                      src, re.S)
         self.assertIsNotNone(m)
-        self.assertIn("onnx", m.group(1))
+        for mod in ("pyarrow", "onnx", "onnxruntime", "tensorboard"):
+            self.assertIn(mod, m.group(1), mod)
         self.assertIn("degraded_paths", src)
-        required = re.search(r"REQUIRED_PY_DEPS\s*=\s*\{(.*?)\}", src, re.S).group(1)
-        for mod in ("numpy", "pandas", "scipy", "sklearn", "pyarrow", "einops"):
+        required = re.search(
+            r"REQUIRED_PY_DEPS\s*:\s*dict\[str,\s*str\s*\|\s*None\]\s*=\s*\{(.*?)\}",
+            src, re.S).group(1)
+        for mod in ("numpy", "pandas", "scipy", "sklearn", "einops"):
             self.assertIn(mod, required, mod)
-        self.assertNotIn("onnx", required)
+        for mod in ("onnx", "tensorboard"):
+            self.assertNotIn(mod, required)
 
 
 class TestCommittedE0CacheEvidence(unittest.TestCase):
@@ -129,10 +134,14 @@ class TestCommittedE0CacheEvidence(unittest.TestCase):
 
 
 class TestCheckEnvCudaSemantics(unittest.TestCase):
-    """R4-B1：`torch.version.cuda` 是 **runtime**（12.4），不是驱动能力（12.6）。
+    """R4-B1 + R5-B1：`torch.version.cuda` 是 **runtime**，不是驱动能力。
 
-    旧实现硬断言 `torch.version.cuda == 12.6`，云端 `--mode env` 会必然 `exit 11`，
-    于是 `E0_env.json` / `E0_disk_budget.json` 永远产不出来、`E0_cloud_gate` 永远 blocked。
+    四审前硬断言 `torch.version.cuda == 12.6`（驱动声明值）→ 云端 `--mode env` 必然
+    `exit 11`，`E0_env.json` / `E0_disk_budget.json` 永远产不出来、`E0_cloud_gate` 永远
+    blocked。现在的实际镜像是 torch 2.7.1 + CUDA 12.8，因此口径改为三层：
+    hard = "CUDA-enabled wheel 且 runtime major == 12"；warn = 是否等于声明值 12.8；
+    advisory = 驱动能力 >= 12.8。**不得**再出现把某个具体 wheel 小版本钉死的 hard 断言，
+    否则 cu126/cu128 之间的正常漂移会再次把 Gate 卡死。
     """
 
     @classmethod
@@ -144,27 +153,51 @@ class TestCheckEnvCudaSemantics(unittest.TestCase):
         spec.loader.exec_module(mod)
         cls.mod = mod
 
-    def test_runtime_expectation_is_124_not_126(self):
-        self.assertEqual(tuple(self.mod.EXPECTED_CUDA_RUNTIME), (12, 4))
-        self.assertEqual(tuple(self.mod.MIN_CUDA_DRIVER), (12, 6))
+    def test_declared_stack_is_torch271_cu128(self):
+        self.assertEqual(self.mod.EXPECTED_TORCH, "2.7.1")
+        self.assertEqual(tuple(self.mod.EXPECTED_CUDA_RUNTIME), (12, 8))
+        self.assertEqual(tuple(self.mod.MIN_CUDA_DRIVER), (12, 8))
+        self.assertEqual(self.mod.ACCEPTED_CUDA_RUNTIME_MAJOR, 12)
+        self.assertIn((12, 8), tuple(self.mod.ACCEPTED_CUDA_RUNTIMES))
+        self.assertIn((12, 6), tuple(self.mod.ACCEPTED_CUDA_RUNTIMES))
 
     def test_old_wrong_constant_is_gone(self):
         src = _read("E0/code/check_env.py")
         self.assertNotIn("EXPECTED_CUDA_MAJOR_MINOR", src)
         self.assertNotIn('rep.add("cuda_version"', src)
 
+    def test_cuda_runtime_hard_check_is_major_not_exact_pin(self):
+        """hard 检查不得把 runtime 小版本钉死（这正是上次 Gate 挂掉的根因）。"""
+        src = _read("E0/code/check_env.py")
+        m = re.search(r"ok_hard\s*=\s*(.+)", src)
+        self.assertIsNotNone(m, "找不到 ok_hard 判定")
+        expr = m.group(1)
+        self.assertIn("ACCEPTED_CUDA_RUNTIME_MAJOR", expr)
+        # 不得拿"声明值"（EXPECTED_CUDA_RUNTIME）当 hard 条件
+        self.assertNotIn("EXPECTED_CUDA_RUNTIME", expr)
+        # 注册点必须消费 ok_hard，而不是就地写一个具体值比较
+        self.assertRegex(src, r'rep\.add\("cuda_runtime_version",\s*ok_hard,\s*level')
+
+    def test_declared_runtime_mismatch_is_only_warn(self):
+        src = _read("E0/code/check_env.py")
+        m = re.search(r'rep\.add\("cuda_runtime_declared",\s*[^,]+,\s*"(\w+)"', src, re.S)
+        self.assertIsNotNone(m, "找不到 cuda_runtime_declared 注册")
+        self.assertEqual(m.group(1), "warn")
+
     def test_parse_cuda_driver_from_smi(self):
         f = self.mod.parse_cuda_driver_from_smi
         self.assertEqual(
-            f("| NVIDIA-SMI 550.54.15  Driver Version: 550.54.15  CUDA Version: 12.6  |"),
-            "12.6")
-        self.assertEqual(f("CUDA Version: 12.4"), "12.4")
+            f("| NVIDIA-SMI 570.86.10  Driver Version: 570.86.10  CUDA Version: 12.8  |"),
+            "12.8")
+        self.assertEqual(f("CUDA Version: 12.6"), "12.6")
         self.assertIsNone(f("no cuda version here"))
         self.assertIsNone(f(""))
 
     def test_expected_json_block_splits_runtime_and_driver(self):
         src = _read("E0/code/check_env.py")
         self.assertIn('"cuda_runtime"', src)
+        self.assertIn('"cuda_runtime_accepted"', src)
+        self.assertIn('"cuda_runtime_hard_major"', src)
         self.assertIn('"cuda_driver_min"', src)
         # 旧的单一 "cuda" 键会让读者再次把 runtime 当驱动
         self.assertNotIn('"cuda": f"', src)
@@ -177,6 +210,59 @@ class TestCheckEnvCudaSemantics(unittest.TestCase):
         m = re.search(r'rep\.add\("cuda_driver_version",[^)]*?"(hard|warn)"', src, re.S)
         self.assertIsNotNone(m)
         self.assertEqual(m.group(1), "warn")
+
+    def test_pyarrow_is_optional_not_required(self):
+        """R5-M1：分片缓存是 `.npz`，没有任何代码 import pyarrow；
+        把它留在 required 会让 `--mode data` 的 full 校验因缺它而 hard fail。"""
+        self.assertIn("pyarrow", self.mod.OPTIONAL_PY_DEPS)
+        self.assertNotIn("pyarrow", self.mod.REQUIRED_PY_DEPS)
+        src = _read("src/data/dataset.py")
+        self.assertIn("npz", src)
+        self.assertNotIn("import pyarrow", _read("src/data/dataset.py"))
+
+    def test_required_deps_are_version_agnostic(self):
+        """R5-M1：required 依赖不得钉死版本（镜像升级会误报）。"""
+        for mod, want in self.mod.REQUIRED_PY_DEPS.items():
+            self.assertIsNone(want, f"REQUIRED_PY_DEPS[{mod!r}] 不应钉死版本")
+
+    def test_pip_install_list_matches_declared_deps(self):
+        """四审要求：我给出的 pip 安装清单必须与代码里的 REQUIRED 集合一致。"""
+        self.assertEqual(set(self.mod.REQUIRED_PY_DEPS),
+                         {"numpy", "pandas", "scipy", "sklearn", "einops"})
+
+    def test_requirements_txt_active_lines_match_required_deps(self):
+        """`requirements.txt` 里**未被注释**的行必须恰好等于 REQUIRED_PY_DEPS。
+
+        这是用户实际照着敲的清单，所以它是真正的接口；`pandas` 用的是发行名
+        (`scikit-learn`)，而 import 名是 `sklearn`，两者都要对得上。
+        """
+        active = []
+        for raw in _read("requirements.txt").splitlines():
+            line = raw.split("#", 1)[0].strip()
+            if line:
+                active.append(line.split("==")[0].split(">")[0].strip())
+        import_name = {"scikit-learn": "sklearn"}
+        self.assertEqual(sorted(import_name.get(p, p) for p in active),
+                         sorted(self.mod.REQUIRED_PY_DEPS))
+
+    def test_requirements_does_not_declare_torch(self):
+        """`pip install -r requirements.txt` 绝不能替换镜像里的 torch。"""
+        for raw in _read("requirements.txt").splitlines():
+            line = raw.split("#", 1)[0].strip()
+            self.assertFalse(line.startswith("torch"),
+                             f"requirements.txt 不得声明 torch：{raw!r}")
+
+    def test_setup_deps_fallback_matches_required_deps(self):
+        """`setup_deps.sh` 的兜底包列表（lock 缺失时用）不得漂移。"""
+        src = _read("E0/code/setup_deps.sh")
+        m = re.search(r"PKGS=\(\s*(.*?)\)", src, re.S)
+        self.assertIsNotNone(m, "找不到 setup_deps.sh 的兜底 PKGS")
+        pkgs = [p.strip().strip('"') for p in m.group(1).split() if p.strip()]
+        import_name = {"scikit-learn": "sklearn"}
+        self.assertEqual(sorted(import_name.get(p, p) for p in pkgs),
+                         sorted(self.mod.REQUIRED_PY_DEPS))
+        # 兜底列表里绝不能出现 torch
+        self.assertFalse(any(p.startswith("torch") for p in pkgs))
 
 
 class TestRunE0PlanStatsEvidence(unittest.TestCase):
