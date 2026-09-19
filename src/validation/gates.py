@@ -3,10 +3,13 @@
 职责
 ----
 1. `validate_prereg(prereg)`：校验必填字段齐全、类型正确、`mandatory_checks` 含 6 项核心、
-   `multiplicity` 与 `candidate_budget` 自洽、`min_detectable_effect` 与 `pilot_std/mde_units` 一致。
+   `multiplicity` 与 `candidate_budget` 自洽、`min_detectable_effect` 与 `pilot_std/mde_units` 一致、
+   绝对门槛键**方向已知**。
 2. `mde_two_sided(pilot_std, n_units, alpha)`：功效下限估算。
 3. `effective_threshold(prereg)`：`max(thresholds[primary_threshold_key], thresholds.min_effect_floor)`。
-4. `aggregate_gate(prereg, result)`：判定 `passed`，并强制 mandatory 全绿。
+4. `required_absolute_keys` / `check_absolute_thresholds` / `absolute_direction`：
+   `min_*` 走 `>=`、`max_*` 走 `<=`，并把指标名映射到 result 字段（R3-H1）。
+5. `aggregate_gate(prereg, result)`：判定 `passed`，并强制 mandatory 全绿 + 绝对门槛全绿。
 
 只依赖标准库（外加可选 numpy 用于 MDE 的正态分位）。
 """
@@ -47,22 +50,95 @@ VALID_MULTIPLICITY = {"none", "holm", "bonferroni", "fdr_bh"}
 #   boolean      : 确定性检查（env/契约/复现等）；只要求 mandatory_checks 全绿
 #   non_inferior : E9 专用；delta > -margin 且 ci_low > -margin
 GATE_TYPES = ("delta", "absolute", "boolean", "non_inferior")
-# 除主键外还要同时满足的绝对门槛键（R2-B2：oof_total_min 等此前被忽略）
-ABSOLUTE_KEYS = ("oof_total_min", "min_auc", "min_atomic_acc", "max_hard_failures",
-                 "abs_tolerance", "max_point_diff", "max_minutes", "max_memory_gb",
-                 "max_degradation")
+
+# ---------------------------------------------------------------------------
+# R3-H1：绝对门槛的**方向**与**指标字段映射**
+# ---------------------------------------------------------------------------
+# 旧实现把所有 ABSOLUTE_KEYS 一律按 `have >= want` 判定，导致
+#   max_hard_failures / max_point_diff / max_minutes / max_memory_gb / max_degradation / abs_tolerance
+# 被当成下界（例如 max_degradation=0.1 要求 degradation>=0.1），方向完全反了；
+# 且 result 里只认 score/oof_total，auc/atomic_acc/minutes/memory_gb/point_diff 等字段取不到值，
+# 于是这些阈值**静默失效**。下面按方向拆成两组，并为每个键声明 result 字段名候选。
+MIN_ABSOLUTE_KEYS = (
+    "oof_total_min", "min_auc", "min_atomic_acc", "min_atomic_f1",
+    "min_atomic_precision", "min_atomic_recall",
+    "min_atom_acc", "min_atom_precision", "min_atom_recall", "min_atom_f1",
+    "min_joint_atom_auc", "min_por_acc", "min_perm_acc", "min_sw_acc",
+    "min_align_score", "min_hard_pass", "min_effect_abs",
+)
+MAX_ABSOLUTE_KEYS = (
+    "max_hard_failures", "max_point_diff", "max_minutes", "max_memory_gb",
+    "max_degradation", "max_regression", "abs_tolerance",
+)
+ABSOLUTE_KEYS = MIN_ABSOLUTE_KEYS + MAX_ABSOLUTE_KEYS
+
+# 这些 `min_*` 键是 delta / non_inferior 类 Gate 的主阈值，不是绝对门槛
+DELTA_THRESHOLD_KEYS = ("min_delta", "min_effect_floor", "non_inferiority_margin")
+
+# 阈值键 -> 允许的 result 字段名（按顺序取第一个**存在**的）
+METRIC_RESULT_FIELDS: dict[str, tuple[str, ...]] = {
+    # --- 分数 ---
+    "oof_total_min": ("oof_total", "score"),
+    # --- E6/P0 状态分类 ---
+    "min_auc": ("auc", "state_auc"),
+    "min_atomic_acc": ("atomic_acc",),
+    "min_atomic_f1": ("atomic_f1",),
+    "min_atomic_precision": ("atomic_precision",),
+    "min_atomic_recall": ("atomic_recall",),
+    # --- 逐目标原子头（改进 proposal §2/§11） ---
+    "min_atom_acc": ("atom_acc",),
+    "min_atom_precision": ("atom_precision",),
+    "min_atom_recall": ("atom_recall",),
+    "min_atom_f1": ("atom_f1",),
+    "min_joint_atom_auc": ("joint_atom_auc",),
+    "min_por_acc": ("por_acc",),
+    "min_perm_acc": ("perm_acc",),
+    "min_sw_acc": ("sw_acc",),
+    "min_align_score": ("align_score",),
+    "min_effect_abs": ("effect_abs", "min_effect_abs"),
+    # --- E0/P0 环境 ---
+    "min_hard_pass": ("hard_pass", "n_hard_pass", "hard_passed"),
+    # --- 资源 / 退化解 ---
+    "max_hard_failures": ("hard_failures",),
+    "max_point_diff": ("point_diff", "max_point_diff"),
+    "max_minutes": ("minutes", "cpu_minutes"),
+    "max_memory_gb": ("memory_gb", "cpu_memory_gb"),
+    "max_degradation": ("degradation", "max_degradation"),
+    "max_regression": ("regression", "max_regression"),
+    # abs_tolerance 比较的是**偏差绝对值**，因此 result 要提供 abs_diff/score_diff
+    "abs_tolerance": ("abs_diff", "score_diff", "abs_error"),
+}
+
+
+def absolute_direction(key: str) -> str:
+    """`min` -> 要求 `have >= want`；`max` -> 要求 `have <= want`。未知键抛错。"""
+    if key in MIN_ABSOLUTE_KEYS:
+        return "min"
+    if key in MAX_ABSOLUTE_KEYS:
+        return "max"
+    raise KeyError(f"unknown absolute threshold key: {key!r}")
 
 BOOLEAN_METRICS = ("env_hard_checks_passed", "guardrail_pass", "no_high_risk_leak",
                    "clean_dir_reproduce", "submission_recorded", "archive_complete",
                    "retrospective_complete", "constant_baseline_anchor",
-                   "data_card_recomputable", "contract_selftest_passed")
+                   "data_card_recomputable", "contract_selftest_passed",
+                   # 管线/契约/交付类的确定性判据（R3-H1：此前只按 _ok/_passed/_reported
+                   # 后缀推断，导致 a_board_no_breakdown 被误判为 delta，其 max_degradation
+                   # 阈值与 mandatory_checks 的语义都对不上）
+                   "a_board_no_breakdown", "cpu_inference_ok", "row_pipeline_ok",
+                   "seq_pipeline_ok", "seq_train_ok",
+                   # 改进 proposal §11：E6 的确定性 mandatory 判据
+                   "tau_t_inner_oof_only", "no_atom_continuous_interpolation",
+                   "joint_guard_inner_oof_only", "sw_single_label_scale")
 VALID_PRIMARY = {"oof_total", "confirm_non_inferiority", "env_hard_checks_passed",
                  "data_card_recomputable", "constant_baseline_anchor",
                  "contract_selftest_passed", "row_pipeline_ok", "seq_pipeline_ok",
                  "seq_train_ok", "target_acc", "por_acc", "perm_acc", "sw_acc",
                  "state_auc", "atomic_f1", "guardrail_pass", "no_high_risk_leak",
                  "a_board_no_breakdown", "cpu_inference_ok", "clean_dir_reproduce",
-                 "submission_recorded", "archive_complete", "retrospective_complete"}
+                 "submission_recorded", "archive_complete", "retrospective_complete",
+                 # 改进 proposal（R3-H3）：逐目标原子头与损失调试用指标
+                 "joint_atom_auc", "per_target_atom_acc", "align_score"}
 
 
 def mde_two_sided(pilot_std: float, n_units: int, alpha: float = 0.05) -> float:
@@ -169,6 +245,15 @@ def validate_prereg(prereg: dict[str, Any], strict: bool = True,
             if bad and gtype == "boolean":
                 errs.append(f"boolean Gate must not declare absolute score thresholds {bad}")
 
+    # R3-H1：任何形如 min_*/max_*/abs_* 的阈值键都必须有已知方向，否则 aggregate_gate
+    # 会静默放过（正是三审发现的缺陷）。**模板也要查**，否则坏模板会一直在仓库里。
+    unknown = [k for k in th
+               if k.startswith(("min_", "max_", "abs_"))
+               and k not in ABSOLUTE_KEYS and k not in DELTA_THRESHOLD_KEYS]
+    if unknown:
+        errs.append(f"thresholds 含方向未知的绝对门槛键 {unknown}；"
+                    f"请加入 gates.MIN_ABSOLUTE_KEYS / MAX_ABSOLUTE_KEYS 并给出 result 字段映射")
+
     # MDE 自洽
     ps, n, mde = prereg["pilot_std"], prereg["mde_units"], prereg["min_detectable_effect"]
     if ps is not None and mde is not None:
@@ -178,11 +263,16 @@ def validate_prereg(prereg: dict[str, Any], strict: bool = True,
     return errs
 
 
-def gate_type(prereg: dict[str, Any]) -> str:
-    """显式 `gate_type` 优先；否则按 `primary_metric` 推断（兼容旧模板）。"""
-    if prereg.get("gate_type") in GATE_TYPES:
-        return prereg["gate_type"]
-    pm = prereg.get("primary_metric", "")
+def infer_gate_type(primary_metric: str, gate_type_field: Any = None) -> str:
+    """Gate 类型的**唯一事实源**（生成器 `docs/gen_p_details.py` 直接 import 本函数）。
+
+    R3-H1：此前生成器里另抄了一份 boolean 指标清单，与 `BOOLEAN_METRICS` 不一致，
+    导致同一条目「显式 gate_type」与「推断 gate_type」不相等（E9/P2 的
+    `a_board_no_breakdown` 就是实例）。现在只有这一处定义。
+    """
+    if gate_type_field in GATE_TYPES:
+        return gate_type_field
+    pm = str(primary_metric or "")
     if pm == "confirm_non_inferiority":
         return "non_inferior"
     if pm in BOOLEAN_METRICS or pm.endswith(("_ok", "_passed", "_reported")):
@@ -190,10 +280,62 @@ def gate_type(prereg: dict[str, Any]) -> str:
     return "delta"
 
 
-def required_absolute_keys(prereg: dict[str, Any]) -> list[str]:
-    """模板里声明、且必须同时满足的绝对门槛键（排除 delta 类键）。"""
+def gate_type(prereg: dict[str, Any]) -> str:
+    """显式 `gate_type` 优先；否则按 `primary_metric` 推断（兼容旧模板）。"""
+    return infer_gate_type(prereg.get("primary_metric", ""), prereg.get("gate_type"))
+
+
+def required_absolute_keys(prereg: dict[str, Any],
+                           gtype: str | None = None) -> list[str]:
+    """模板里声明、且必须同时满足的绝对门槛键（排除 delta 类键）。
+
+    R3-H1：`primary_threshold_key` 若本身就是一个绝对键，则由该 Gate 类型的主判定消费
+    （delta 比增量、absolute 比分数、non_inferior 比 margin），此处不再重复计一次。
+    """
     th = prereg["thresholds"]
-    return [k for k in ABSOLUTE_KEYS if k in th]
+    prim = prereg.get("primary_threshold_key")
+    consumed = gtype in ("delta", "absolute", "non_inferior")
+    return [k for k in ABSOLUTE_KEYS
+            if k in th and not (consumed and k == prim)]
+
+
+def resolve_metric_value(key: str, result: dict[str, Any]) -> tuple[Any, str | None]:
+    """按 `METRIC_RESULT_FIELDS` 从 result 里取值；返回 `(value, field_name)`。
+
+    取不到时返回 `(None, None)` —— 由调用方判为 **未通过**（宁严勿松：
+    声明了阈值却拿不到指标，等价于该项没被验证）。
+    """
+    for field in METRIC_RESULT_FIELDS.get(key, (key,)):
+        if field in result and result[field] is not None:
+            return result[field], field
+    return None, None
+
+
+def check_absolute_thresholds(prereg: dict[str, Any],
+                              result: dict[str, Any],
+                              gtype: str | None = None) -> dict[str, dict[str, Any]]:
+    """逐项校验绝对门槛（带方向）。返回 `{key: {...}}`，全部 `ok` 才算通过。"""
+    th = prereg["thresholds"]
+    out: dict[str, dict[str, Any]] = {}
+    for k in required_absolute_keys(prereg, gtype=gtype):
+        try:
+            direction = absolute_direction(k)
+        except KeyError as exc:                      # 未知键 -> 明确失败而非静默放过
+            out[k] = {"required": th[k], "have": None, "ok": False,
+                      "direction": "?", "field": None, "error": str(exc)}
+            continue
+        want = float(th[k])
+        raw, field = resolve_metric_value(k, result)
+        have = None if raw is None else float(raw)
+        if have is None:
+            ok = False
+        elif direction == "min":
+            ok = have >= want
+        else:
+            ok = have <= want
+        out[k] = {"required": want, "have": have, "ok": bool(ok),
+                  "direction": direction, "field": field}
+    return out
 
 
 def effective_threshold(prereg: dict[str, Any]) -> float:
@@ -205,14 +347,21 @@ def effective_threshold(prereg: dict[str, Any]) -> float:
 
 
 def aggregate_gate(prereg: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
-    """按 Gate 类型做聚合判定（R2-B2 / R2-H4 修复）。
+    """按 Gate 类型做聚合判定（R2-B2 / R2-H4 / R3-H1 修复）。
 
     result 字段（按需）：
-      - checks        : dict[str,bool]  mandatory check 结果
-      - delta         : 相对基线的增量
-      - paired_ci_low : 加权配对 bootstrap 下界
-      - score         : absolute 类 Gate 的绝对分数
-      - value         : boolean 类 Gate 的布尔结果（可省略，改用 checks）
+      - checks          : dict[str,bool]  mandatory check 结果
+      - delta           : 相对基线的增量
+      - paired_ci_low   : 加权配对 bootstrap 下界
+      - score/oof_total : 绝对分数
+      - auc/state_auc, atomic_acc, atomic_f1, minutes, memory_gb,
+        point_diff, degradation, hard_failures, abs_diff ... 见 `METRIC_RESULT_FIELDS`
+
+    R3-H1 关键语义：
+      * `min_*` 键要求 `have >= want`；`max_*` 键要求 `have <= want`（此前一律按 >= 判定）；
+      * 绝对门槛在**所有** Gate 类型下都参与判定（此前 boolean Gate 直接忽略它们，
+        导致 E10/P0 的 `max_minutes`/`max_memory_gb` 与 E10/P1 的 `max_point_diff` 静默失效）；
+      * 声明了阈值但 result 未提供对应指标 -> 判为**未通过**（不可复算的 Gate 不能算过）。
     """
     errs = validate_prereg(prereg)
     gtype = gate_type(prereg)
@@ -228,9 +377,9 @@ def aggregate_gate(prereg: dict[str, Any], result: dict[str, Any]) -> dict[str, 
 
     details: dict[str, Any] = {"gate_type": gtype}
     if gtype == "boolean":
-        # 确定性 Gate：只看 mandatory checks（不要求 delta/CI）
-        metric_pass = not mandatory_fail
-        details["note"] = "boolean Gate 只要求 mandatory_checks 全绿"
+        # 确定性 Gate：不要求 delta/CI；但仍须满足声明的资源/计数类绝对门槛
+        metric_pass = True
+        details["note"] = "boolean Gate 不要求 delta/CI，但仍强制绝对门槛与 mandatory_checks"
     elif gtype == "absolute":
         key = prereg["primary_threshold_key"]
         if key not in th or score is None:
@@ -238,31 +387,29 @@ def aggregate_gate(prereg: dict[str, Any], result: dict[str, Any]) -> dict[str, 
             details["error"] = f"absolute Gate 需要 score 与 thresholds[{key!r}]"
         else:
             want = float(th[key])
-            metric_pass = score >= want
+            try:
+                direction = absolute_direction(key)
+            except KeyError:
+                direction = "min"
+            metric_pass = (score >= want) if direction == "min" else (score <= want)
             details["required"] = want
             details["score"] = score
+            details["direction"] = direction
     elif gtype == "non_inferior":
         margin = float(th["non_inferiority_margin"])
         metric_pass = (delta > -margin) and (ci_low is not None and ci_low > -margin)
         details["non_inferiority_margin"] = margin
     else:  # delta
         eff = effective_threshold(prereg)
-        primary_pass = (delta >= eff) and (ci_low is not None and ci_low > 0.0)
-        # 附加绝对门槛（如 oof_total_min / min_auc）必须同时满足
-        abs_checks: dict[str, Any] = {}
-        for k in required_absolute_keys(prereg):
-            want = float(th[k])
-            have = score
-            if have is None:
-                # 允许把绝对分数放进 result["score"] 或 result["oof_total"]
-                have = result.get("oof_total")
-                have = None if have is None else float(have)
-            ok = have is not None and have >= want
-            abs_checks[k] = {"required": want, "have": have, "ok": ok}
-        metric_pass = primary_pass and all(v["ok"] for v in abs_checks.values())
+        metric_pass = (delta >= eff) and (ci_low is not None and ci_low > 0.0)
         details["effective_threshold"] = eff
-        details["primary_pass"] = primary_pass
+        details["primary_pass"] = metric_pass
+
+    # 绝对门槛：所有 Gate 类型统一强制（R3-H1）
+    abs_checks = check_absolute_thresholds(prereg, result, gtype=gtype)
+    if abs_checks:
         details["absolute_checks"] = abs_checks
+        metric_pass = metric_pass and all(v["ok"] for v in abs_checks.values())
 
     passed = (not errs) and (not mandatory_fail) and metric_pass
     return {

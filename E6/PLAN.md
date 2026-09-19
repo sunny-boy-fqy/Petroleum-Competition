@@ -8,13 +8,14 @@
 
 ## 1. 目标
 
-实现 H0 联合常量状态头与逐目标学习型原子门（硬切换），使占位行精确命中，并用 inner-OOF 选择门限 τ；完整 PD1 管线 OOF ≥ 82.0。
+把 H0 联合占位头升级为**逐目标原子头 `q_por/q_perm/q_sw`（主保护）+ 辅助 `q_joint`（可选高置信硬门禁，默认关）**，逐目标独立硬切换，用 inner-OOF **官方总分**选择门限 τ_t；完整 PD1 管线 OOF ≥ 82.0。
 
 ## 2. 为什么这么设计
 
 1. 66.719% 的行是联合常量占位，占约 66.72 分的白送分；任何软融合都会把 POR 推出 ±0.008 容差带。
 2. 占位状态可从输入预测（v1 的原子门已验证），因此应把"是否输出常量"做成显式可学习决策，而不是让回归头勉强逼近。
 3. 硬切换保证了原子点的精确性，是纯 DL 管线（无 B0 patch 隔离）下唯一的保护屏障。
+4. 改进 proposal §1/§2：单目标原子行并不少（SW 31,030 / PERM 7,373 / POR 157），一个 joint 概率同时决定三目标会漏保护非 joint 原子行、又误伤 joint 行里的非原子目标；因此必须逐目标原子头，且 τ_t 要按官方总分（而非 F1/Acc）选。
 
 ## 3. 输入
 
@@ -23,7 +24,7 @@
 
 ## 4. 产物
 
-- `src/models/state_head.py`、`src/inference/atomic_gate.py`
+- `src/models/state_head.py`（`q_joint + q_por/q_perm/q_sw`）、`src/inference/atomic_gate.py`
 - `models/E6/pd1_*.pt`、`experiments/E6/P2/pd1/{result.json,result.zip,cv.json}`
 - `reports/E6_gate.json`、`reports/E6_atomic_report.json`
 
@@ -33,20 +34,25 @@
 
 ## 6. P 级子计划
 
-- [P0 联合常量状态头](P0/PLAN.md)
-- [P1 原子门 τ 搜索（inner-OOF）](P1/PLAN.md)
-- [P2 PD1 完整管线与 Gate](P2/PLAN.md)
+- [P0 逐目标原子头 + 辅助 joint 头（两阶段训练）](P0/PLAN.md)
+- [P1 逐目标原子门 τ_t 搜索（inner-OOF 官方总分）](P1/PLAN.md)
+- [P2 PD1 完整管线组装与硬 Gate（≥82.0）](P2/PLAN.md)
 
 ## 7. 完成判据（Gate）
 
 - OOF Total **≥ 82.0**（超过 B0 本地锚点 80.382479）。
-- 占位行逐目标 Acc **≥ 0.99**；τ 的选择过程可复算（只用 inner-OOF）。
+- **逐目标**占位行 Acc **≥ 0.99**、recall **≥ 0.98**，并上报 precision/F1；τ_t 的选择过程可复算（只用 inner-OOF 官方总分）。
 - 提交契约通过（10 井 / 95,948 行）且 `predict.py --use-version PD1` 可在本机 CPU 跑通。
+- 两阶段训练记录完整；`joint_guard` 默认关闭且启用与否有 inner-OOF 证据。
+- **原子/连续之间无任何插值**，`no_atom_continuous_interpolation` 为 true。
 
 ## 8. 禁止事项
 
 - 在占位与连续分支之间做线性插值
-- 用 outer 折选 τ
+- 用 outer 折或 A 榜选 τ
+- 用 F1/准确率而非官方总分选 τ_t
+- 默认启用 `joint_guard`
+- 把 joint 头当作三目标的唯一保护（丢失逐目标原子行）
 
 ## 9. 通用约束（继承总计划）
 

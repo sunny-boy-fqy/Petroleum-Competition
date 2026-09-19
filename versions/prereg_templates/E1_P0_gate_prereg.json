@@ -3,6 +3,7 @@
   "stage": "E1",
   "p_stage": "P0",
   "created_at": "<ISO8601，写盘时填写>",
+  "gate_type": "boolean",
   "primary_metric": "row_pipeline_ok",
   "primary_threshold_key": "min_delta",
   "baseline_version": "<已冻结候选或 CONST>",
@@ -27,7 +28,8 @@
     "disk_budget_ok",
     "training_time_log_valid",
     "checkpoint_resumable",
-    "no_label_leak"
+    "no_label_leak",
+    "row_pipeline_ok"
   ],
   "decisions_locked": [],
   "notes": ""

@@ -164,7 +164,139 @@ class TestNonInferiority(unittest.TestCase):
                                               "checks": chk})["passed"])
 
 
-class TestRepoPreregTemplates(unittest.TestCase):
+class TestAbsoluteThresholdDirection(unittest.TestCase):
+    """R3-H1：`min_*` 用 `>=`、`max_*` 用 `<=`，并映射到正确的 result 字段。
+
+    修复前 `aggregate_gate` 把所有绝对键一律按 `have >= want` 判定，于是
+    `max_degradation=0.1` 被当成下界（要求 degradation>=0.1），E9/P2 的
+    `degradation=0.01` 被误判为 FAIL；`max_minutes`/`max_memory_gb`/`max_point_diff`
+    在 boolean Gate 下则完全不参与判定（静默失效）。
+    """
+
+    def test_direction_registry(self):
+        for k in ("oof_total_min", "min_auc", "min_atom_acc", "min_atom_recall"):
+            self.assertEqual(G.absolute_direction(k), "min", k)
+        for k in ("max_hard_failures", "max_point_diff", "max_minutes",
+                  "max_memory_gb", "max_degradation", "abs_tolerance"):
+            self.assertEqual(G.absolute_direction(k), "max", k)
+        with self.assertRaises(KeyError):
+            G.absolute_direction("max_not_a_real_key")
+
+    def test_every_absolute_key_has_result_field_mapping(self):
+        """每个登记的方向键都必须有 result 字段映射，否则会取不到值而静默失败。"""
+        for k in G.ABSOLUTE_KEYS:
+            self.assertIn(k, G.METRIC_RESULT_FIELDS, k)
+            self.assertTrue(G.METRIC_RESULT_FIELDS[k], k)
+
+    def _tpl(self, stage: str, pstage: str) -> dict:
+        """读取仓库里真实的 P 级预注册模板（P 级 PLAN.md 里的 ```json 块）。"""
+        f = V4 / stage / pstage / "PLAN.md"
+        m = re.search(r"```json\n(.*?)\n```", f.read_text(encoding="utf-8"), re.S)
+        self.assertIsNotNone(m, f)
+        return json.loads(m.group(1))
+
+    def _checks(self, prereg: dict) -> dict:
+        return {c: True for c in prereg["mandatory_checks"]}
+
+    def test_e9_p2_max_degradation_is_upper_bound(self):
+        """E9/P2：degradation=0.01 必须 PASS；超界必须 FAIL；缺指标必须 FAIL。"""
+        pr = self._tpl("E9", "P2")
+        self.assertIn("max_degradation", pr["thresholds"])
+        r = G.aggregate_gate(pr, {"checks": self._checks(pr), "degradation": 0.01})
+        self.assertTrue(r["passed"], r)
+        self.assertTrue(r["details"]["absolute_checks"]["max_degradation"]["ok"])
+        self.assertEqual(r["details"]["absolute_checks"]["max_degradation"]["direction"], "max")
+        # 修复前这里会被判 FAIL：max_degradation 被当成下界 0.1
+        r2 = G.aggregate_gate(pr, {"checks": self._checks(pr), "degradation": 0.35})
+        self.assertFalse(r2["passed"], r2)
+        # 拿不到指标 -> 未通过（不可复算的 Gate 不能算过）
+        r3 = G.aggregate_gate(pr, {"checks": self._checks(pr)})
+        self.assertFalse(r3["passed"], r3)
+
+    def test_e10_p0_resource_limits_are_enforced(self):
+        """E10/P0：boolean Gate 的 max_minutes / max_memory_gb 必须真正生效。"""
+        pr = self._tpl("E10", "P0")
+        self.assertIn("max_minutes", pr["thresholds"])
+        self.assertIn("max_memory_gb", pr["thresholds"])
+        chk = self._checks(pr)
+        self.assertTrue(G.aggregate_gate(
+            pr, {"checks": chk, "minutes": 28.0, "memory_gb": 6.0})["passed"])
+        self.assertFalse(G.aggregate_gate(
+            pr, {"checks": chk, "minutes": 31.0, "memory_gb": 6.0})["passed"])
+        self.assertFalse(G.aggregate_gate(
+            pr, {"checks": chk, "minutes": 28.0, "memory_gb": 9.0})["passed"])
+        # 不提供指标 -> 必须在结果里失败，而不是当作没声明
+        res = G.aggregate_gate(pr, {"checks": chk})["details"]["absolute_checks"]
+        self.assertEqual(set(res), {"max_minutes", "max_memory_gb"})
+        self.assertTrue(all(not v["ok"] for v in res.values()))
+
+    def test_e10_p1_point_diff_and_abs_tolerance_are_upper_bounds(self):
+        """E10/P1：max_point_diff 必须真正生效；abs_tolerance 比较的是偏差绝对值。"""
+        pr = self._tpl("E10", "P1")
+        chk = self._checks(pr)
+        self.assertTrue(G.aggregate_gate(pr, {"checks": chk, "point_diff": 1e-9})["passed"])
+        self.assertFalse(G.aggregate_gate(pr, {"checks": chk, "point_diff": 1e-3})["passed"])
+        # abs_tolerance -> result["abs_diff"]，方向为 max
+        d = _prereg(gate_type="boolean", primary_metric="data_card_recomputable",
+                    primary_threshold_key="abs_tolerance",
+                    thresholds={"abs_tolerance": 1e-4})
+        self.assertTrue(G.aggregate_gate(
+            d, {"checks": {c: True for c in CORE}, "abs_diff": 5e-5})["passed"])
+        self.assertFalse(G.aggregate_gate(
+            d, {"checks": {c: True for c in CORE}, "abs_diff": 5e-2})["passed"])
+
+    def test_metric_specific_field_mapping(self):
+        """state_auc -> auc；atomic_f1 -> atomic_acc/atomic_f1；逐目标原子指标同名映射。"""
+        cases = [
+            ({"min_auc": 0.97}, "auc", 0.98, 0.95),
+            ({"min_atomic_acc": 0.99}, "atomic_acc", 0.995, 0.98),
+            ({"min_atom_recall": 0.98}, "atom_recall", 0.99, 0.90),
+            ({"min_por_acc": 0.99}, "por_acc", 0.995, 0.97),
+            ({"max_hard_failures": 0}, "hard_failures", 0, 3),
+        ]
+        for th, field, good, bad in cases:
+            d = _prereg(thresholds={"min_delta": 0.0, **th})
+            base = {"delta": 1.0, "paired_ci_low": 0.2, "checks": {c: True for c in CORE}}
+            self.assertTrue(G.aggregate_gate(d, {**base, field: good})["passed"],
+                            (th, field, good))
+            self.assertFalse(G.aggregate_gate(d, {**base, field: bad})["passed"],
+                             (th, field, bad))
+
+    def test_unknown_absolute_key_is_rejected(self):
+        """方向未知的 min_*/max_* 键必须在 validate_prereg 阶段就报错，而不是静默放过。"""
+        d = _prereg(thresholds={"min_delta": 0.0, "max_made_up_thing": 1.0})
+        self.assertTrue(any("方向未知" in e for e in G.validate_prereg(d)))
+        # 模板也要查（否则坏模板会一直躺在仓库里）
+        d2 = _prereg(created_at="<ISO8601>", thresholds={"min_delta": 0.0,
+                                                         "max_made_up_thing": 1.0})
+        self.assertTrue(any("方向未知" in e for e in G.validate_prereg(d2, template=True)))
+
+    def test_boolean_gate_still_requires_mandatory(self):
+        d = _prereg(gate_type="boolean", primary_metric="env_hard_checks_passed",
+                    primary_threshold_key="max_hard_failures",
+                    thresholds={"max_hard_failures": 0})
+        chk = {c: True for c in CORE}
+        self.assertTrue(G.aggregate_gate(d, {"checks": chk, "hard_failures": 0})["passed"])
+        chk2 = dict(chk); chk2["contract_ok"] = False
+        self.assertFalse(G.aggregate_gate(d, {"checks": chk2, "hard_failures": 0})["passed"])
+
+
+class TestGateTypeInferenceSingleSource(unittest.TestCase):
+    """R3-H1：`infer_gate_type` 是唯一事实源；生成器与校验器不得各抄一份清单。"""
+
+    def test_infer_gate_type_matches_gate_type(self):
+        for pm in sorted(G.VALID_PRIMARY) + ["a_board_no_breakdown", "cpu_inference_ok"]:
+            self.assertEqual(G.infer_gate_type(pm), G.gate_type({"primary_metric": pm}),
+                             pm)
+
+    def test_explicit_field_wins(self):
+        self.assertEqual(
+            G.infer_gate_type("env_hard_checks_passed", "absolute"), "absolute")
+        self.assertEqual(
+            G.infer_gate_type("oof_total", "boolean"), "boolean")
+
+
+
     """仓库内 33 份模板必须全部通过浅层校验；E0 实际预注册必须通过严格校验。"""
 
     def test_all_templates_valid(self):

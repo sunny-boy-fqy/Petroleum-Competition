@@ -51,7 +51,10 @@ odd well(20 列) inputs.shape: (7879, 14)
 | PERM | 0.0100 | 0.0100 | 0.8340 | 54.9964 | 1064.6830 | **122,716** |
 | **SW** | **8.3050** | 32.0133 | **82.8050** | 99.9000 | 99.9000 | **0** |
 
-> 二审 R2-B4 修正：此前本节写的 POR<1=587、PERM min=0.000、PERM<1=122,727、SW<1=11 与直方图 `[5,0,…,236337]` **均与 JSON 不符**；现已改为由脚本从 JSON 生成，`tools/gen_data_card_md.py --check` 可校验一致性。
+> 二审 R2-B4 修正：此前本节手写的若干数字（POR 小于 1 的行数 587、PERM 最小值 0.000、PERM 小于 1 的行数 122,727、
+> SW 小于 1 的行数曾被写成 11、以及一份对不上的直方图）**均与 JSON 不符**；现已改为**由脚本从 JSON 生成**，`tools/gen_data_card_md.py --check` 可校验一致性。
+>
+> **R3-C1**：全仓统一 SW 口径为「**单一标签尺度（百分数）**，实测有效 8.305–99.9，小于 1 的行数为 **0**」；任何「双尺度」或「有效值被归一化到小数区间」的表述都是已被实测证伪的历史假设，不再使用。
 
 SW 的分布是**单峰集中在高位**（有效行 median 82.8，无 <1 的值），与占位峰 99.9 在数值上接近但在**条件分布**上仍可分。
 
@@ -164,7 +167,7 @@ python3 predict.py --use-version CONST --data_dir ../data --output /tmp/r.json
 
 | Gate | 范围 | 报告 | 当前状态 |
 |---|---|---|---|
-| `E0_local_contract_gate` | 本机可复算的口径层 | `reports/E0_local_contract_gate.json` | ✅ passed（mandatory 10/10） |
+| `E0_local_contract_gate` | 本机可复算的口径层 | `reports/E0_local_contract_gate.json` | ✅ passed（mandatory 12/12） |
 | `E0_cloud_gate` | 云端环境与磁盘 | `reports/E0_cloud_gate.json` | ⏸ `blocked_pending_cloud_run` |
 
 `E0_cloud_gate` 的 mandatory：`env_hard_checks_passed`、`disk_budget_ok`。
@@ -234,6 +237,9 @@ python3 predict.py --use-version CONST --data_dir ../data --output /tmp/r.json
 
 输入泄漏回归：抽样 18 井 passed=True，全量 90 井 violations=0。
 
-分片缓存：built=True，32.39 MB，input_cols_ok=True。
+分片缓存：built=True，32.39 MB，input_cols_ok=True，wells=—。
+
+- cache root（可复现形式）：`$V4_CACHE_ROOT`（绝对路径 `/home/fangqiyu/projects/Petroleum-Competition/v4/.v4cache`，portable=True）
+- cache manifest（可复现形式）：`.v4cache/manifest.json`（绝对路径 `/home/fangqiyu/projects/Petroleum-Competition/v4/.v4cache/manifest.json`）——云端对应 `$V4_CACHE_ROOT/manifest.json`；status.json 中 E0/P1 的 evidence 指向它
 
 <!-- END:AUTO_STATS -->

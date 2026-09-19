@@ -8,7 +8,13 @@ venv/
 
 # ---- 大数据 / 二进制：绝不进 git ----
 # 数据集分发包（~30 MB）请走平台云盘 /data，不进仓库
-dist/
+#
+# ⚠️ R3 修复：以下目录模式**一律用前导 `/` 锚定到仓库根**。
+# 不加锚定时 `models/` 会匹配**任意深度**的同名目录，从而把 `src/models/` 整个忽略掉——
+# 本项目实际发生过：`src/models/__init__.py` 与 `src/models/row_mlp.py` 从未进入 git，
+# 若推送后在云端训练会直接缺文件。`git ls-files --others --ignored` 是检查此类事故的手段。
+/dist/*
+!/dist/README.md
 *.tar.gz
 *.tgz
 *.zip
@@ -19,15 +25,15 @@ dist/
 *.npz
 *.parquet
 
-# ---- 运行时产物（云端一律写 /data，本地默认写这些目录）----
-cache/
-runs/
-artifacts/
-submission/
-experiments/
-models/
-tb/
-logs/
+# ---- 运行时产物（云端一律写 /data/v4/*，本地默认写这些根级目录）----
+/cache/
+/runs/
+/artifacts/
+/submission/
+/experiments/
+/models/
+/tb/
+/logs/
 
 # reports 里的**大**产物忽略，但门禁与数据卡要提交（见下方 ! 规则）
 reports/*.parquet
@@ -50,3 +56,7 @@ reports/*.csv
 # ---- 平台注入 ----
 /data/
 /code/
+
+# ---- R3: 本机 CPU-torch 校验 venv 与本地缓存（绝不进 git）----
+.venv-torch/
+.v4cache/

@@ -10,7 +10,8 @@ from pathlib import Path
 V4 = Path(__file__).resolve().parents[2]
 
 E0_STATUS = """> **执行状态（2026-09-19）：本地契约层已完成；阶段整体 `in_progress`（云端 Gate 待 P0）。**
-> **E0 本地契约 Gate：10/10 mandatory PASS**（`reports/E0_local_contract_gate.json`）；
+> **E0 本地契约 Gate：12/12 mandatory PASS（含 `shard_cache_built` / `shard_cache_input_cols_ok`）**
+> （`reports/E0_local_contract_gate.json`；项数由 `tools/plan_stats.py` 从报告实测，禁止手写）；
 > **E0 云端 Gate：`blocked_pending_cloud_run`**（`reports/E0_cloud_gate.json`，需 A100 任务跑 `run_train.sh --mode env`）。
 > 已复算并冻结的事实：
 > - 训练 **80 井 / 730,268 行**；测试 **10 井 / 95,948 行**（= 契约值）
@@ -18,6 +19,8 @@ E0_STATUS = """> **执行状态（2026-09-19）：本地契约层已完成；阶
 > - 常数基线 **70.490735**（`drop` 口径）命中公开锚点 70.4907 ±1e-4；`mask` 口径为 69.843218
 > - 折指纹 `f7c2c58bd035294f0e0d80a9103c366877836249fcd6db42269269c85d94b87e`（80 井 / 5 折，每折 16 井）
 > - 提交契约自检：6 个负样例全部被拒绝；`CONST` 端到端 10 井 / 95,948 行 / 1.4 s（单核 CPU）
+> - 分片缓存 **32.39 MB**，90 井输入列校验通过；`cache_root` 记为**可复现形式**（本地 repo 相对、云端 `$V4_CACHE_ROOT`），不再是 `/tmp` 临时路径
+> - **SW 为单一标签尺度**（百分数，实测有效 8.305–99.9，小于 1 的行数为 **0**）——「双尺度 / 有效值归一化到小数区间」的假设已被实测证伪（R3-C1 统一口径）
 > - **两个硬发现**：①3 口训练井 schema 非规范（20/21/16 列，27,080 行，3.71%），必须按表头名解析；
 >   ②评分分母口径为「逐目标排除缺测」（`drop`），选错会系统性低 0.65 分
 >

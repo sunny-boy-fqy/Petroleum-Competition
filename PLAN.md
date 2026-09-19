@@ -16,17 +16,17 @@
 | D5 | 云端软件栈 | **CUDA 12.6 + PyTorch 2.4.0 + Python 3.11 为镜像预装版本，不得变更/升级/另装 CUDA；无 conda；但 `pip` 可用，可安装额外的轻量纯 Python 依赖** | 允许 `pip install numpy/pandas/scipy/...`；**禁止** `pip install torch`（换版本）与任何需现场编译 CUDA 扩展的包（flash-attn/xformers/apex/deepspeed）。所有第三方依赖仍走「探测 + 降级」层，见 §3.3。 |
 | D6 | 云端可用磁盘 | **仅 30 GB（含镜像已占部分）** | pip 只装轻量包并立即清缓存；强制「按需生成特征 + checkpoint 滚动淘汰 + 中间产物即时清理」，并用 `du` 实测。见 §3.4。 |
 | D2 | 架构 | **深度序列主干 + 行级精度头** | 1D U-Net / TCN / Patch-Transformer 做深度上下文主干；行级精度头做逐点精修；再叠学习型原子门。见 §五。 |
-| D3 | 起点与保护 | **从零纯 DL 管线** | 不继承 B0 权重、不做 B0 patch 隔离；**但“联合常量占位必须精确命中”由模型内部的联合状态头承担**（自包含，不依赖 B0）。见 §六.4。 |
+| D3 | 起点与保护 | **从零纯 DL 管线** | 不继承 B0 权重、不做 B0 patch 隔离；**但“逐目标常量占位必须精确命中”由模型内部的 `q_joint` 联合头 + `q_por/q_perm/q_sw` **逐目标原子头**共同承担**（自包含，不依赖 B0）。见 §五.3 与 §六.4。 |
 | D4 | 交付形态 | **权重随包 + CPU 可推理，训练可选** | 提交包含 `models/` 权重；`predict.py` 纯 CPU、确定性、无网络；`train.py` 可在 A100 上完整重训但不是评测必需。见 §九.3。 |
 
 > D1 的执行纪律：虽然用户允许超 100h，但**每一步训练都必须写 checkpoint 并支持 `--resume`**，且每个 P 的 Gate 报告必须记录 `actual_h`。原因：A100 租用是按时的，且赛题 `rules.md` 原文（“每个模型训练任务 wall-clock 上限 100 小时”）仍是唯一书面规则，保留 ≤100h 可行性是零成本的保险。
 
 > **E0-R2 修订（2026-09-19，独立审查后的修复，最高优先级）**：独立审查（[`reports/V4_PLAN_REVIEW.md`](reports/V4_PLAN_REVIEW.md)）发现三处会直接导致结论无效的错误，已全部修复并加回归测试：
 > 1. **输入列泄漏**：`parse.py` 的 `inputs = arr[:, 1:15]` 使索引 14（**POR 标签**）成为第 14 个输入，80 口井全部泄漏；且测试井只得到 13 列（提交必崩）。→ 改为 13 条曲线 + DEPTH 分离，布局常量集中在 `parse.py`，列布局与 `with_targets` 无关，新增 `input_no_label_leak` 回归（90 井全过）。
-> 2. **SW 尺度误判**：实测有效 SW 为 min **8.305** / median **82.805** / max **99.9**，SW<1 仅 **11** 行 → SW 是**单一标签尺度（百分数）**，取消"×100 双尺度"前提；`SW_SMALL_BRANCH=False`；仍然严禁全局裁剪到 [0,1]。
+> 2. **SW 尺度误判**：实测有效 SW 为 min **8.305** / median **82.805** / max **99.9**，**SW<1 的行数为 0** → SW 是**单一标签尺度（百分数）**，取消"×100 双尺度"前提；`SW_SMALL_BRANCH=False`（旧对照路径已 deprecated，永久关闭）；仍然严禁全局裁剪到 [0,1]。
 > 3. **非规范井描述错误**：只有 `c7611b01` 缺 CASE；`42f2870b`/`b7eb1274` 含 CASE，只是多了 K/U/CGR → 17,426 行"多列" + 9,654 行"缺 CASE"。
 >
-> 同时修复：E0 Gate 拆分为**本地契约 Gate**（10/10 PASS）与**云端 Gate**（`blocked_pending_cloud_run`）；候选注册表逐目标分数按实测回填并加总分恒等式校验（`tools/check_consistency.py`）；`build_cache` 纳入 E0 产出（32.4 MB，90 井输入列校验通过）；33 份 P 级 Gate 预注册模板全部通过 `src/validation/gates.py::validate_prereg`；新增 `tools/check_status.py` 校验状态台账与实物一致。
+> 同时修复：E0 Gate 拆分为**本地契约 Gate**（12/12 PASS，含 cache 两项）与**云端 Gate**（`blocked_pending_cloud_run`）；候选注册表逐目标分数按实测回填并加总分恒等式校验（`tools/check_consistency.py`）；`build_cache` 纳入 E0 产出（32.4 MB，90 井输入列校验通过）；33 份 P 级 Gate 预注册模板全部通过 `src/validation/gates.py::validate_prereg`；新增 `tools/check_status.py` 校验状态台账与实物一致。
 >
 > **E0-R1 修订（2026-09-19，本机复算后的契约修订）—— ⚠️ 本节已被下方 E0-R2 取代**，保留仅作历史追溯；其中「3 口井都缺 CASE」的表述是错的。
 >
@@ -34,16 +34,16 @@
 >
 > **E0-R2 修订（2026-09-19，独立审查后的修复，最高优先级）**：独立审查（[`reports/V4_PLAN_REVIEW.md`](reports/V4_PLAN_REVIEW.md)）发现三处会直接导致结论无效的错误，已全部修复并加回归测试：
 > 1. **输入列泄漏**：`parse.py` 的 `inputs = arr[:, 1:15]` 使索引 14（**POR 标签**）成为第 14 个输入，80 口井全部泄漏；且测试井只得到 13 列（提交必崩）。→ 改为 13 条曲线 + DEPTH 分离，布局常量集中在 `parse.py`，列布局与 `with_targets` 无关，新增 `input_no_label_leak` 回归（90 井全过）。
-> 2. **SW 尺度误判**：实测有效 SW 为 min **8.305** / median **82.805** / max **99.9**，SW<1 仅 **11** 行 → SW 是**单一标签尺度（百分数）**，取消"×100 双尺度"前提；`SW_SMALL_BRANCH=False`；仍然严禁全局裁剪到 [0,1]。
+> 2. **SW 尺度误判**：实测有效 SW 为 min **8.305** / median **82.805** / max **99.9**，**SW<1 的行数为 0** → SW 是**单一标签尺度（百分数）**，取消"×100 双尺度"前提；`SW_SMALL_BRANCH=False`（旧对照路径已 deprecated，永久关闭）；仍然严禁全局裁剪到 [0,1]。
 > 3. **非规范井描述错误**：只有 `c7611b01` 缺 CASE；`42f2870b`/`b7eb1274` 含 CASE，只是多了 K/U/CGR → 17,426 行"多列" + 9,654 行"缺 CASE"。
 >
-> 同时修复：E0 Gate 拆分为**本地契约 Gate**（10/10 PASS）与**云端 Gate**（`blocked_pending_cloud_run`）；候选注册表逐目标分数按实测回填并加总分恒等式校验（`tools/check_consistency.py`）；`build_cache` 纳入 E0 产出（32.4 MB，90 井输入列校验通过）；33 份 P 级 Gate 预注册模板全部通过 `src/validation/gates.py::validate_prereg`；新增 `tools/check_status.py` 校验状态台账与实物一致。
+> 同时修复：E0 Gate 拆分为**本地契约 Gate**（12/12 PASS，含 cache 两项）与**云端 Gate**（`blocked_pending_cloud_run`）；候选注册表逐目标分数按实测回填并加总分恒等式校验（`tools/check_consistency.py`）；`build_cache` 纳入 E0 产出（32.4 MB，90 井输入列校验通过）；33 份 P 级 Gate 预注册模板全部通过 `src/validation/gates.py::validate_prereg`；新增 `tools/check_status.py` 校验状态台账与实物一致。
 >
 > **E0-R1 修订（2026-09-19，本机复算后的契约修订，最高优先级）**：执行 E0 口径层时发现**两个会静默吃掉分数的硬事实**，已冻结进契约：
 > 1. **3 口训练井的表头不是官方 17 列**（`42f2870b` 20 列含 K/U/CGR 缺 CASE；`b7eb1274` 21 列含 TH/K/U/CGR 缺 CASE；`c7611b01` 16 列缺 CASE），共 **27,080 行（3.71%）**，且这 3 口井**都在 80 井折内、三目标齐全**。→ **禁止按列位置解析**，必须按表头名对齐、缺列补 `NaN`、多余列忽略，并对内部列宽做硬断言。开发中已实际触发一次 numpy 越界切片静默截断（丢掉 SW 列且不报错）。
 > 2. **评分分母口径确定**：常数基线 (0.1, 0.01, 99.9) 在 `missing_mode="drop"`（逐目标排除缺测行）下 = **70.490735**，命中锚点 70.4907 ±1e-4；在 `"mask"`（全行分母）下 = 69.843218。→ **全项目统一使用 `drop`**，所有 OOF 数字必须标注该口径。
 >
-> 同时已复算并冻结：训练 80 井 / **730,268 行**；测试 10 井 / **95,948 行**；状态计数 缺测 **6,700** / 占位 **487,225** / 有效 **236,343**；折指纹 sha256 `f7c2c58b…d94b87e`（80 井 / 5 折）。E0 **本地契约 Gate 10/10 通过**（`reports/E0_local_contract_gate.json`）；云端 Gate 待 P0（`E0_cloud_gate.json` 状态 `blocked_pending_cloud_run`）。
+> 同时已复算并冻结：训练 80 井 / **730,268 行**；测试 10 井 / **95,948 行**；状态计数 缺测 **6,700** / 占位 **487,225** / 有效 **236,343**；折指纹 sha256 `f7c2c58b…d94b87e`（80 井 / 5 折）。E0 **本地契约 Gate 12/12 通过（含 cache 两项）**（`reports/E0_local_contract_gate.json`）；云端 Gate 待 P0（`E0_cloud_gate.json` 状态 `blocked_pending_cloud_run`）。
 
 ---
 
@@ -51,12 +51,13 @@
 
 | 层级 | 数量 | 篇幅 | 状态 |
 |---|---:|---:|---|
-| 总计划 `PLAN.md` | 1 | **729 行** | ✅ 完成 |
-| 阶段计划 `E*/PLAN.md` | 12 | 平均 59 行（合计 711） | ✅ 完成 |
-| P 级子计划 `E*/P*/PLAN.md` | 33 | **平均 150 行**（合计 4,982） | ✅ 完成（V2 深度：输入/输出契约、执行步骤、参数表、完成判据、禁止事项、风险对策、停止规则、inner-OOF 选择协议、复算命令、Gate 预注册 JSON） |
-| 计划文件合计 | 46 | **6,425 行** | ✅ |
+| 总计划 `PLAN.md` | 1 | **808 行** | ✅ 完成 |
+| 阶段计划 `E*/PLAN.md` | 12 | 平均 62 行（合计 754） | ✅ 完成 |
+| P 级子计划 `E*/P*/PLAN.md` | 33 | **平均 158 行**（合计 5,219） | ✅ 完成（V2 深度：输入/输出契约、执行步骤、参数表、完成判据、禁止事项、风险对策、停止规则、inner-OOF 选择协议、复算命令、Gate 预注册 JSON） |
+| 计划文件合计 | 46 | **6,781 行** | ✅ |
 
-> **行数由 `tools/check_status.py` 与 `wc -l` 实测，不手写**（审查 H3：此前手写数字已过期）。
+> **行数由 `tools/plan_stats.py` 实测、`tools/sync_plan_stats.py` 同步、`plan_stats.py --check` 校验**
+> （审查 R2-H6/R3-C2：此前手写数字两次过期，且旧校验只查总量、漏检阶段/P 分项）。
 
 **执行状态唯一事实源**：[`versions/status.json`](versions/status.json)（阶段/P 级状态 + 证据 + 锚点 + 环境）。
 
@@ -69,7 +70,7 @@
 | P2 | 评分器与分母口径冻结 | ✅ | `src/score.py`、常数基线 **70.490735**（锚点 70.4907） |
 | P3 | 提交契约、版本路由、干净目录冒烟 | ✅ | `predict.py`、`reports/E0_contract_tests.json`（6 负样例全拒绝） |
 
-**E0 本地契约 Gate：10/10 mandatory PASS**（`reports/E0_local_contract_gate.json`）；
+**E0 本地契约 Gate：12/12 mandatory PASS（含 `shard_cache_built` / `shard_cache_input_cols_ok`）**（`reports/E0_local_contract_gate.json`）；
 **E0 云端 Gate：`blocked_pending_cloud_run`**（需 E0/P0 在 A100 任务实测，`reports/E0_cloud_gate.json`）。
 
 E0 的两个硬发现（已冻结进契约，详见 §6.1 与 [`E0/docs/data_card.md`](E0/docs/data_card.md)）：
@@ -121,7 +122,8 @@ E1–E11 全部处于 `pending`，按 §七 的顺序执行；每个 Gate 的阈
 | 常量占位 `(0.1, 0.01, 99.9)` 占 **66.719%**（487,225/730,268） | `资料库/12` §3.1 | 占位行是“白送分”，必须精确命中；POR 容差仅 `0.08×0.1 = ±0.008` |
 | 占位行白送分 **66.72** | `资料库/12` §3.3 | 任何模型只要退化为“只在有效行预测”就会掉到 ~50 分 |
 | PERM 必须 log10 域建模 | `资料库/12` §2.4 提示 3、`资料库/05` §2.3 | 网络输出 `z=log10(PERM)`，`PERM=10^z` |
-| SW 占位 99.9 与有效值域 [0,1] 相距极远，需**双分支** | `资料库/12` §3.4 | SW 头 = `q̂·99.9 + (1-q̂)·σ(f)`，`q̂` 由 BCE 监督 |
+| **SW 是单一标签尺度**（百分数，实测有效 8.305–99.9，`SW<1` = **0** 行）；「99.9 vs [0,1] 双尺度」假设已被实测证伪 | E0 数据卡 `target_stats.SW` | 取消任何 ×100 换算；SW 连续头在**训练折内做仿射归一化**（`mu/sigma`）再反变换回标签尺度；常量 99.9 由 `q_sw` 原子头精确输出 |
+| 逐目标原子事件远多于联合原子事件 | 80 井实测：`q_joint` 487,225 行，但 `q_sw` 518,255 / `q_perm` 494,598 / `q_por` 487,382 | **单个 joint 头会漏保护 31,030 个 SW 原子行、7,373 个 PERM 原子行、157 个 POR 原子行** → 必须用**逐目标**原子头 |
 | 相邻深度点强自相关，必须**按井分组** CV | `资料库/07` §8、`资料库/12` §3.5 | 折维度恒定为井；标准化/分位数只在训练折 fit |
 | 评分对齐的三段式可微损失已给出参考实现 | `资料库/12` §2.2–2.4 | v4 直接采用 Charbonnier + softplus 平滑方案，见 §六 |
 | 技术梯度推荐：第 2 层 = 1D U-Net / TCN；第 3 层 = Patch 化 Transformer | `资料库/08` §0.3 | v4 的主力正是这两层 |
@@ -342,17 +344,19 @@ python v4/src/data/disk_guard.py --min-free-gb 8 --report /home,/tmp \
                                   │
                  ┌────────────────▼─────────────────┐
                  │  C. 头 src/models/heads.py       │
-                 │  H0 联合常量状态头  → q ∈ (0,1)   │
-                 │  H1 POR 头  → p̂  (≈0.1 或连续)   │
-                 │  H2 PERM 头 → ẑ = log10(PERM)    │
-                 │  H3 SW 双分支 → q̂·99.9+(1-q̂)σ(f)│
+                 │  q_joint  → 联合占位概率（辅助）  │
+                 │  q_por/q_perm/q_sw → 逐目标原子头 │
+                 │  cont_por  → POR（可到 0）        │
+                 │  cont_perm → ẑ = log10(PERM)      │
+                 │  cont_sw   → SW（折内归一化域）    │
                  │  (+ H4 井级分支：井均值/井偏置)   │
                  └────────────────┬─────────────────┘
                                   │
                  ┌────────────────▼─────────────────┐
                  │  D. 解码与后处理 src/inference/  │
-                 │  原子门 argmax / 阈值（inner-OOF）│
-                 │  多尺度拼接平均 / 集成加权        │
+                 │  逐目标硬切换 τ_t（inner-OOF 选） │
+                 │  joint_guard（可选，默认关闭）    │
+                 │  SW 反变换 / 多尺度 / 集成加权    │
                  │  契约校验（10 井 95,948 行）      │
                  └──────────────────────────────────┘
 ```
@@ -374,34 +378,84 @@ python v4/src/data/disk_guard.py --min-free-gb 8 --report /home,/tmp \
 4. **不得使用 ImageNet/大规模预训练权重**：测井曲线与自然图像分布无关；预训练只会引入无关先验。若有条件，用**同数据集自监督预训练**（掩码曲线重建，E2 可选 P2）。
 5. **工程曲线单独治理**：CAL/DEVI/AZIM/BIT/CASE 在井内近常数（`资料库/08` §0.1-4），把它们同时（a）作为逐点通道送入主干，**且**（b）聚合成井级向量送井级分支 H4。这是“井间泛化信号”的唯一合法来源。
 
+### 5.2.1 主干的工程要求（proposal §6，逐条进 Gate）
+
+| 项 | 要求 | 验收方式 |
+|---|---|---|
+| **B1 U-Net-1D** | 深度可分离卷积 + 空洞卷积；**seq2seq 全段输出**，不做“滑窗→中心点”；chunk 重叠推理时按权重拼接 | **padding 边界伪影检查**：比较每口井首/末 10 m 与井中段的逐目标 Acc；若边界显著更差必须改 padding 策略 |
+| **B2 TCN** | 离线任务用**非因果**（不做因果掩码）；`dilation_max=512` ≈ 50 m 感受野 | **感受野消融**：`depth∈{3,5}`、`dilation_max∈{64,512}`；感受野增大而分数不升 → 先查数据/结构，不盲目加深 |
+| **B3 PatchTF** | 通道独立 + 相对位置编码保留；patch size/stride/overlap 在 inner-OOF 搜索；chunk 重叠推理 | 80 井小数据易过拟合 → 优先小 `d`、小 `layers`；报告参数量 |
+| **B4 多尺度融合** | **优先门控融合或 FiLM，而不是直接 concat**；融合头参数量要小 | 融合结构/权重**只在 inner-OOF 选**；与单尺度最好者同折对照 |
+| **深度平滑** | 连续分支可加 TV/L2/CRF 式相邻深度平滑；**必须在原子硬切换之前**执行；**不得跨越 atom/continuous 边界平滑** | 平滑强度在 inner-OOF 选；报告平滑对原子边界的影响（原子行不得被平滑出容差） |
+| **井级分支 H4** | 只做**辅助**、小容量、强正则；所有井级偏差/校准参数只在 inner-OOF 选 | **必须消融**（前代证据：80 井上井级校准极易过拟合）；无效即 NO-GO |
+
 ### 5.3 输出头
 
 | 头 | 结构 | 监督信号 | 输出语义 |
 |---|---|---|---|
-| **H0 联合常量状态头** | `Linear(d→1)` + sigmoid，作用于主干表示的**井内平均池化 + 逐点**拼接 | BCE：`y_ph = 1[POR=0.1 ∧ PERM=0.01 ∧ SW=99.9]` | `q(x)`：该点属于联合占位状态的概率 |
-| **H1 POR** | `Linear(d→1)`，输出 `p̂ = 0.1 + softplus(g)`（保证非负且可从 0.1 起步） | 相对误差对齐损失（δ=0.08） | 连续孔隙度 |
-| **H2 PERM** | `Linear(d→1)`，输出 `ẑ`（对数域）；`PERM = 10^ẑ`，且 `ẑ` 裁剪到 `[-6, 6]` | 对数域对齐损失 | log10 渗透率 |
-| **H3 SW** | 两分支：`q̂ = sigmoid(g₀)`（复用 H0 或独立），`SW = q̂·99.9 + (1-q̂)·sigmoid(f)·100` | 占位 BCE + 相对误差对齐（δ=0.05） | 双峰混合输出 |
+| **q_joint 联合头** | `Linear(d→1)` → logit | BCE：`y_joint = 1[POR=0.1 ∧ PERM=0.01 ∧ SW=99.9]`（三者都非缺测） | `q_joint(x)`：**辅助损失**；可选高置信硬门禁，**默认关闭** |
+| **q_por 原子头** | `Linear(d→1)` → logit | BCE：`y_atom[:,POR] = 1[POR=0.1]`（非缺测） | `q_por`：该点 POR 取常量 0.1 的概率（**主保护**） |
+| **q_perm 原子头** | `Linear(d→1)` → logit | BCE：`y_atom[:,PERM] = 1[PERM=0.01]` | `q_perm`（**主保护**） |
+| **q_sw 原子头** | `Linear(d→1)` → logit | BCE：`y_atom[:,SW] = 1[SW=99.9]` | `q_sw`（**主保护**） |
+| **cont_por 连续头** | `Linear(d→1)` → `p̂ = por_max · sigmoid(g)`，`por_max = 1.2 × max(训练折有效 POR)` ≈ 39.8 | 归一化对齐损失（δ=0.08）+ 归一化 `L_aux` | 连续孔隙度，**下界为 0**（可表示真实 0.0 与 <0.1，见下方说明） |
+| **cont_perm 连续头** | `Linear(d→1)` → `ẑ = 6·tanh(g)`；`PERM = 10^ẑ` | log10 域对齐损失（含 `max(ẑ−z, log10 ε)` 截断）+ z 域 `L_aux` | log10 渗透率，`PERM>0` |
+| **cont_sw 连续头** | `Linear(d→1)` → `sw_norm`；`sw = sw_mu + sw_sigma · sw_norm` | 归一化 `L_aux`（`(sw_hat−y)/s_sw`）+ 对齐损失（δ=0.05） | 连续 SW，**标签尺度**（输出时反变换） |
 | **H4 井级分支** | 主干输出做井级 attention-pool → 井向量 → 预测井级偏置 `Δ_t`（逐目标），以 `p̂_t + λ·Δ_t`（λ 由 inner OOF 选） | 井级均值回归（辅助） | 只在 E8 作为消融/可选增益 |
 
-> **H3 的尺度细节（E0-R2 修正）**：此前假设"SW 占位 99.9（百分数）而有效值 [0,1]（小数）"是**错的**。
-> 80 口训练井实测（非缺测且非占位行）：SW **min=8.305 / median=82.805 / max=99.9**，
-> SW<1 的行数仅 **11**（占有效行 6.8e-5）→ **SW 与 POR/PERM 一样是单一标签尺度（百分数）**。
-> 因此：默认**不做** ×100 换算（`constants.SW_SMALL_BRANCH=False`），SW 头直接输出标签尺度；
-> `labels.sw_scale_report` 把实测范围写入数据卡；**仍然严禁把 SW 全局裁剪到 [0,1]**。
-> 旧双尺度路径保留为对照开关，默认关闭。
+> **SW 的尺度事实（E0 实测冻结，R3-C1 统一口径）**：此前假设"SW 占位 99.9（百分数）而有效值 [0,1]（小数）"
+> 是**错的**。80 口训练井实测（非缺测且非占位行）：SW **min=8.305 / median=82.805 / max=99.9**，
+> **SW<1 的行数为 0** → **SW 与 POR/PERM 一样是单一标签尺度（百分数）**。
+> 因此：默认**不做** ×100 换算（`constants.SW_SMALL_BRANCH=False`，旧对照路径已 deprecated 并永久关闭）；
+> SW 连续头在**训练折内**做仿射归一化 `sw_norm = (sw − sw_mu)/sw_sigma`
+> （`sw_mu = median(有效 SW)`、`sw_sigma = IQR/1.349`），输出时反变换回标签尺度，
+> `sw_mu/sw_sigma` 写入 manifest 与 scaler JSON；
+> `labels.sw_scale_report` 把实测范围写入数据卡；**仍然严禁把 SW 全局裁剪到 [0,1]**（`[0,100]` 软裁剪允许）。
+>
+> **POR 的参数化与下界（proposal B1）**：有效 POR 有 **576 行 < 1**（其中 **186 行 < 0.1**，并有真实 `0.0`），
+> 因此 `por = 0.1 + softplus(g)` 的 0.1 下界**无法表示这些真值**，已删除。
+> 采用 `por = por_max · sigmoid(g)`（推荐，天然有界非负可逼近 0）或 `softplus(g) − softplus(g0)`（记录备选）；
+> 初始化按训练折有效 POR 中位数（≈11.34）而非 0.1；**精确的 0.1 由 `q_por` 原子头硬切换输出**，
+> 连续头不负责命中容差 ±0.008。E5/P0 必须给出参数化消融，E1/P1 单测必须覆盖 `POR=0` 与 `POR<0.1` 切片。
+>
+> **为什么必须是逐目标原子头（proposal §1）**：`q_joint` 只覆盖三目标同时取常量的 487,225 行，
+> 而实测 SW 原子行 518,255、PERM 494,598、POR 487,382 —— 即 **31,030 个 SW 原子行 / 7,373 个 PERM 原子行 /
+> 157 个 POR 原子行不是 joint**。用一个 joint 概率同时决定三目标，会对低 joint 概率的单目标原子行漏保护，
+> 又对高 joint 概率的行强行覆盖三目标而误伤非原子目标，且无法满足"逐目标原子 Acc ≥0.98/0.99"的按目标验收。
 
 ### 5.4 损失（src/losses/score_aligned.py）
 
 严格按 `资料库/12` §2.2–2.4 实现三段式：
 
 ```
-L = L_align(主) + λ₁ · L_aux(稠密梯度) + λ₂ · L_ph(占位 BCE) + λ₃ · L_phys(可选物理软约束)
+L = L_align(主) + λ₁·L_aux(稠密梯度) + λ_joint·L_joint + λ_atom·L_atom + λ₃·L_phys(可选物理软约束)
 ```
 
-- `L_align`：`smooth_abs`（Charbonnier，α=1e-3）+ `softplus` 截断（β=20），POR δ=0.08、SW δ=0.05、PERM 在 log10 域 `|ẑ−z|` 上取 `max(0,1−·)`。
-- `L_aux`：变换空间的 Smooth L1（POR/SW 用相对误差形式，PERM 用 z 空间），保证早期有稠密梯度；**`λ₁` 从 1.0 退火到 0.1**。
-- `L_ph`：H0 的 BCE，`λ₂ = 0.2`。
+- `L_align`：`smooth_abs`（Charbonnier，α=1e-3）+ `softplus` 截断（β=20），POR δ=0.08、SW δ=0.05、
+  PERM 在 log10 域取 `max(0, 1 − |max(ẑ−z, log10 ε)|)`。
+  **PERM 截断必须与官方同构**：官方是 `1 − |log10(max(ŷ/y, ε))|`，低估时误差**恒为** `log10(1/ε)`；
+  因此对 log 差值显式下截断 `d = max(ẑ − z, log10(ε))`（E5/P1 必须报告"PERM 低估尾部与官方评分器一致性"）。
+- `L_aux`：**按目标尺度归一化**，避免 SW（99.9 量级）主导整个辅助损失：
+  ```
+  L_aux = 0.30·SmoothL1((p̂ − y_POR)/s_POR) + 0.35·SmoothL1(ẑ − z) + 0.35·SmoothL1((ŝ − y_SW)/s_SW)
+  ```
+  `s_POR`/`s_SW` **只由训练折有效标签的鲁棒尺度（IQR/1.349）决定**，写入 manifest 与 scaler JSON；
+  禁止跨折 fit。**`λ₁` 从 1.0 退火到 0.1**。
+- `L_joint`：`q_joint` 的 BCE，`λ_joint = 0.2`（搜索 0.1 / 0.2 / 0.5）。
+- `L_atom`：**逐目标**原子头 BCE，`λ_atom = 0.5`（搜索 0.2 / 0.5 / 1.0）：
+  ```
+  w_t      = 1 + α·y_atom[:,t]·(¬y_joint)          # α 默认 1.0（搜索 1.0/2.0/3.0）
+  L_atom_t = Σ(BCE(q_t, y_atom_t)·w_t·mask_t) / Σ(w_t·mask_t)
+  L_atom   = mean_t L_atom_t
+  ```
+  非 joint 的单目标原子行被加权，而**不删除** joint 行、也不整行过采样（避免不同目标互相干扰）。
+- **NaN 安全**：`masked_mean` 必须先 `nan_to_num` 再乘掩码，否则 `NaN × 0 = NaN` 会污染整个 batch。
+- **可按切片加权**（连续头，第二阶段）：joint 占位行在连续损失中降权（0.1–0.3，因为硬切换后不会用到连续头）、
+  non-joint 原子行保留中等权重作为 fallback、有效连续行权重 1.0；**权重不得设为 0**
+  （原子头一旦误判，连续头仍是 fallback）。
+- **容差边界聚焦（E7 消融项，默认关闭）**：官方分不是对有效点等权，超过容差即归零，故可给边界附近点更高权重
+  `w = 1 + κ·exp(−(r−1)²/(2σ²))`，其中 POR/SW 取 `r = |p̂−y|/(δ(|y|+ε))`、PERM 取 `r = |ẑ−z|`；
+  搜索 `κ ∈ {0.5,1.0,2.0}`、`σ ∈ {0.15,0.25,0.35}`；缺测 mask 必须为 0，原子行单独切片报告。
+  应用位置可在 `L_align` 或 `L_aux`，但**必须在 E7/P0 做同结构对照，不得只报整体 Total**。
 - `L_phys`（E6 可选）：Archie / Wyllie / Kozeny–Carman 的软约束（`资料库/08` §10.2），`λ₃` 固定 0.05，且**必须消融验证**（`资料库/03` §8.2 提醒 KC 只能定性）。
 - **早停与模型选择一律用真实 `score.py` 分数，不用 loss 值**（`资料库/12` §2.3 末）。
 - 掩码：缺测行（三目标 = -99999）不参与任何监督；占位行**参与监督**（`rules.md` §5.3 项目决策）。
@@ -478,11 +532,31 @@ L = L_align(主) + λ₁ · L_aux(稠密梯度) + λ₂ · L_ph(占位 BCE) + λ
 
 ### 6.4 占位原子保护（D3 下的自包含实现）
 
-因为不做 B0 patch 隔离，占位保护的唯一屏障是模型自身的 H0/H3 头。因此设三条**不可协商**的规则：
+因为不做 B0 patch 隔离，占位保护的唯一屏障是模型自身的 `q_por/q_perm/q_sw` 原子头。因此设五条**不可协商**的规则：
 
-1. **解码是硬切换，不是软融合**：`q > τ_t` 时该点输出**精确常量**（POR=0.1 / PERM=0.01 / SW=99.9），否则输出连续分支。禁止在两者之间做线性插值（POR 容差 ±0.008，插值必然出带）。
-2. **`τ_t` 只在 inner-OOF 上选**，且必须报告 `atomic_precision` / `atomic_recall` / `atomic_F1` 与“误判代价分解”（把有效行判成常量会立刻丢分，反之亦然）。
-3. **Gate 强制上报**：占位行在 OOF 上的**逐目标命中率**（POR/PERM/SW 各自的 Acc），并给出“若全部输出常量”的分数 70.4907 作为下界对照。任何版本只要在占位行上的 Acc 低于 0.98，该目标即 NO-GO。
+1. **解码是逐目标硬切换，不是软融合**。对每个目标 `t` 独立动作：
+   ```python
+   for t, atom_t in enumerate([0.1, 0.01, 99.9]):
+       out[:, t] = np.where(q_atom[:, t] > tau_t[t], atom_t, cont[:, t])
+   ```
+   禁止在 atom 与 continuous 之间做**任何线性插值或软加权**（POR 容差 ±0.008，插值必然出带）。
+   原子分支必须输出**精确常量**（0.1 / 0.01 / 99.9），后处理**不得修改**原子输出。
+2. **`τ_t` 逐目标独立，且只在 inner-OOF 上用官方总分选**：
+   ```
+   对每个 outer 折：用该折的 inner-OOF 预测 q_atom、cont
+     对每个目标 t：τ_t* = argmax_τ  100 · w_t · Acc_t(τ)
+   ```
+   目标函数是**官方加权总分**（POR 0.30 / PERM 0.35 / SW 0.35），**不是 F1、不是原子分类准确率**；
+   取**平台区中点**而非 argmax 尖峰（防 inner-OOF 过拟合）；outer 折只推理一次。
+   必须报告：`τ_t` 曲线（阈值 vs inner-OOF Total）、平台区、逐目标 `atomic_precision/recall/F1/acc`、
+   连续切片 Acc、以及**误判代价分解**（有效行判原子 / 原子行判连续各自的分数变化）。
+3. **`joint_guard` 是可选门禁，默认关闭**：仅当 `q_joint > tau_joint_high` 时把三目标一起置为原子值。
+   是否启用**必须由 inner-OOF 总分决定**（正增益且 CI 下界 > 0），并在 manifest 记录；否则永久关闭。
+   它是对"逐目标原子头漏保护"的补充，绝不是替代。
+4. **SW 灰色地带不按 F1 选阈值**：对 `q_sw` 灰区用 inner-OOF 期望总分判断（可按 `q_sw` 分箱估计
+   atom action 与 continuous action 的期望分，再做单调化），最终仍落成可复算的单调动作表或 τ 数组。
+   POR 吸附同理：`q_por` 高置信 → 精确 0.1；灰区用 inner-OOF 期望分判断吸附还是保留连续预测。
+5. **Gate 强制上报**：占位行在 OOF 上的**逐目标命中率**（POR/PERM/SW 各自的 Acc），并给出"若全部输出常量"的分数 70.4907 作为下界对照。任何版本只要在占位行上的 Acc 低于 0.98，该目标即 NO-GO。
 
 ---
 
@@ -490,15 +564,15 @@ L = L_align(主) + λ₁ · L_aux(稠密梯度) + λ₂ · L_ph(占位 BCE) + λ
 
 执行顺序：**E0 → E1 → E2 ⇒ E3 → E4 → E5 → E6 →（E7 公共件）→ E8 → E9 → E10 → E11**
 
-- [E0 数据、评测与提交契约](E0/PLAN.md) — 数据卡、哨兵、标签状态、评分器复算（70.4907）、按井折、提交契约与 CPU-only 单测。**不训练任何模型。**　**状态：本地契约 Gate 10/10 PASS（`reports/E0_local_contract_gate.json`）；云端 Gate `blocked_pending_cloud_run`（`reports/E0_cloud_gate.json`）。**
+- [E0 数据、评测与提交契约](E0/PLAN.md) — 数据卡、哨兵、标签状态、评分器复算（70.4907）、按井折、提交契约与 CPU-only 单测。**不训练任何模型。**　**状态：本地契约 Gate 12/12 PASS（`reports/E0_local_contract_gate.json`）；云端 Gate `blocked_pending_cloud_run`（`reports/E0_cloud_gate.json`）。**
 - [E1 纯 DL 行级基线](E1/PLAN.md) — **当前阶段（P0/P1 代码待写）**。32 维行级输入 + MLP（无序列上下文），对接对齐损失，建立纯 DL 分母与容量标定；硬 Gate ≥ 78.0。
 - [E2 特征工程与数据管线](E2/PLAN.md) — `F_phys`/`F_win`/`F_well` 三组特征、增强策略、按井分片缓存与 16 GiB 内存纪律。
 - [E3 深度序列主干](E3/PLAN.md) — 1D U-Net 与 TCN 头对头，含**感受野消融**；硬 Gate ≥ 81.0 且序列主干必须优于同头行级模型。
 - [E4 Patch Transformer 与多尺度](E4/PLAN.md) — PatchTST 式通道独立 Transformer；与 CNN 主干的多尺度融合。
-- [E5 逐目标精修](E5/PLAN.md) — POR 窄带、PERM log 域、SW 双分支的独立头与专用解码。
-- [E6 联合常量状态与原子门](E6/PLAN.md) — H0 状态头 + 学习型原子门 + 精确常量切换；`τ_t` inner-OOF 选择。**PD1 完整管线在此打通**。
-- [E7 评分对齐损失与解码](E7/PLAN.md) — 损失三件套的消融与调参、解码后处理、温度/偏置校准。
-- [E8 多任务、井级分支与集成](E8/PLAN.md) — MMoE 任务平衡、井级分支（消融）、多 seed/快照/多结构集成、transductive 适配（只作消融）。
+- [E5 逐目标精修](E5/PLAN.md) — POR **可到 0 的参数化**、PERM log 域与官方截断、SW **训练折仿射归一化 + 反变换**的独立连续头与专用解码。
+- [E6 逐目标原子层次与原子门](E6/PLAN.md) — `q_joint` + `q_por/q_perm/q_sw` 逐目标原子头、**两阶段训练**、逐目标硬切换 `τ_t`（inner-OOF 官方总分选）、可选 joint_guard。**PD1 完整管线在此打通**。
+- [E7 评分对齐损失与解码](E7/PLAN.md) — 归一化 `L_aux`、**容差边界聚焦**、PERM 截断一致性、逐目标期望分解码与后处理敏感性（全部同结构对照）。
+- [E8 多任务、井级分支与集成](E8/PLAN.md) — MMoE 任务平衡、井级分支（消融）、**EMA/SWA**、**同折 top-k 快照集成**（权重只在 inner-OOF 选 + 同源性报告）、transductive 适配（只作消融）。
 - [E9 诚实验证与提交护栏](E9/PLAN.md) — 80 井 OOF 汇总、16 井体检、泄漏终审、A 榜短名单、`choose_submission.py` 护栏。
 - [E10 全量重训、打包与提交](E10/PLAN.md) — 全量重训或折集成、ONNX/CPU 推理导出、干净目录一次性复现、提交执行。
 - [E11 归档与复盘](E11/PLAN.md) — 资产归档、三口径一致性复盘、下一代方向储备。
@@ -546,14 +620,14 @@ L = L_align(主) + λ₁ · L_aux(稠密梯度) + λ₂ · L_ph(占位 BCE) + λ
 | Gate | 硬门槛 | 附加条件 |
 |---|---|---|
 | E0 | **本地契约 Gate**：数据卡可复算、常数基线 70.4907（±1e-4）、折指纹一致、契约单测、`missing_mode_is_drop`、`score_total_consistent`、`input_no_label_leak`、`target_scale_reported`；**云端 Gate**：`env_hard_checks_passed` + `disk_budget_ok`（实测 ≥8 GB） | 干净目录下 `python predict.py --help` 可运行 |
-| E1 | OOF Total **≥ 78.0**；5 折方向一致 | 占位行逐目标 Acc ≥ 0.98；loss 曲线无 NaN |
+| E1 | OOF Total **≥ 78.0**；5 折方向一致 | 占位行逐目标 Acc ≥ 0.98；loss 曲线无 NaN；单测覆盖 `POR=0` / `POR<0.1` 切片；SW 归一化往返一致 |
 | E2 | 特征组必须**逐组消融**证明增量 | 特征来源表登记每个派生列的公式；无标签派生列 |
 | E3 | OOF Total **≥ 81.0**；**序列主干 > 同头行级模型**（同折同头对比）；感受野消融显示上下文被利用 | 5 折全正；加权配对 bootstrap 95% CI 下界 > 0 |
 | E4 | 多尺度 ≥ 单尺度最好者，或明确 NO-GO 并保留 E3 结构 | 参数量/显存报告 |
-| E5 | 逐目标：至少一个目标的连续切片 Acc 显著提升 | 不得以其他目标退化换取 |
-| E6 | 完整 PD1 管线 OOF **≥ 82.0**；占位行 Acc ≥ 0.99；契约通过 | 原子 precision/recall 双报 |
-| E7 | 对齐损失 ≥ 纯 aux 损失（同结构对照） | 三段式权重的消融表 |
-| E8 | 集成 ≥ 最佳单成员，且 CI 下界 > 0 | 成员同源性报告（防“同源平均造假增益”） |
+| E5 | 逐目标：至少一个目标的连续切片 Acc 显著提升 | 不得以其他目标退化换取；**必须报 POR 参数化消融**与 SW 每折 `mu/sigma` 一致性 |
+| E6 | 完整 PD1 管线 OOF **≥ 82.0**；**逐目标**原子 Acc ≥ 0.99、逐目标原子 recall ≥ 0.98；契约通过 | 必须报：逐目标 `atomic_acc/precision/recall/F1`、逐目标 `τ_t`、逐目标连续切片 Acc、`q_joint` AUC/AP、总分分解与阈值曲线、误判代价矩阵、`inner_only_selection` 证据；`joint_guard` 启用需正增益且 CI 下界 > 0 |
+| E7 | 对齐损失 ≥ 纯 aux 损失（同结构对照） | 三段式权重消融表；**边界聚焦消融表完整**；`masked_mean` NaN 单测通过；PERM 低估尾部与官方评分器一致性报告 |
+| E8 | EMA/SWA/快照**至少一个策略**在 inner-OOF ≥ 最佳单成员，且 CI 下界 > 0 | 成员相关性/同源性报告完整；**同源平均不得计为增益**（CI 含 0 即 NO-GO） |
 | E9 | 80 井 OOF ≥ 82.0 且护栏通过（`choose_submission.py`） | 16 井体检不得崩坏（掉 >1.5 分即触发复核） |
 | E10 | 干净目录两次运行结果一致；10 井/95,948 行；CPU 单次 < 30 min | README 两条命令可执行 |
 
@@ -662,16 +736,21 @@ v4 可能整体失败（纯 DL 在 80 井上不收敛优于树模型）。因此
 
 | 风险 | 早期信号 | 预案 |
 |---|---|---|
-| **占位行被网络学坏** | 占位行 Acc < 0.98，OOF 卡在 70 出头 | H0/H3 状态头 + 硬切换解码；`λ₂` 提高；必要时对占位行做**过采样** |
-| **SW 尺度混淆（99.9 vs [0,1]）** | SW Acc 掉 ~10 分 | E0 单元测试锁死；双分支混合输出；契约禁止裁剪 SW |
-| **POR 容差过窄（±0.008）** | POR Acc 在 0.6 附近打转 | POR 头从 0.1 起步（`0.1+softplus`）；占位行硬输出 0.1 |
+| **占位行被网络学坏** | 占位行 Acc < 0.98，OOF 卡在 70 出头 | `q_por/q_perm/q_sw` **逐目标原子头** + 逐目标硬切换；提高 `λ_atom`；对**非 joint 单目标原子行**加 per-target sample weight（不删除 joint 行） |
+| **joint-only 结构误伤** | 某目标原子 recall 高、另两个掉；逐目标原子 Acc 不达标 | 用逐目标原子头替代 joint-only；先不共享原子头；per-target loss 权重；必要时 joint_guard 兜底 |
+| **`τ_t` 在 inner 上过拟合** | inner 好、outer 差 | 只取**平台区中点**；报告敏感性曲线；必要时改用分箱期望分做成单调动作表 |
+| **SW 归一化参数跨折不一致** | 逐折 `mu/sigma` 差异大 | **只允许训练折 fit**；报告每折 `mu/sigma`；用鲁棒统计量（IQR） |
+| **SW 尺度混淆** | SW Acc 掉 ~10 分 | E0 单元测试锁死（SW<1 = 0，单一标签尺度）；连续头**训练折仿射归一化 + 输出反变换**；契约层 SW 中位数守卫，禁止裁剪到 [0,1] |
+| **POR 容差过窄（±0.008）** | POR Acc 在 0.6 附近打转 | `q_por` 原子头硬输出**精确 0.1**；连续头用 `por_max·sigmoid(g)`（可到 0），不承担命中容差 |
 | **16 GiB 系统内存 OOM** | DataLoader 被杀、swap 抖动、训练中途 OOM-kill | `num_workers=4`、禁止全局井缓存、按井分片按需读、每 worker < 300 MB 自检 |
 | **30 GB 磁盘打爆** | `pip install` 后剩余 < 5 GB；checkpoint 越攒越多 | 装完 `pip cache purge`；特征按版本目录落盘 + 旧版本即删；checkpoint 滚动窗口（best/last/last_prev）；每 epoch `assert_disk_headroom(8.0)`；E0 Gate 强制 `disk_budget_ok` |
 | **PyTorch 2.4 API 不兼容** | 启动即 `AttributeError`/`ImportError` | `check_env.py` 前置断言；禁用 2.5+ API 与需编译扩展（flash-attn/xformers/apex）；注意力统一走 `F.scaled_dot_product_attention` |
 | **序列主干不优于行级模型** | E3 delta CI 含 0 或为负 | 感受野消融 → 检查窗口统计是否泄漏/是否被 batch 内打乱；最多两次结构修订后降级 |
 | **过拟合（80 井太少）** | inner 高、outer 低；折间方差大 | dropout/stochastic depth/weight decay；曲线随机掩码与深度抖动增强；早停用真实分数 |
 | **长尾 PERM 崩塌** | PERM Acc < 0.85 | log10 域 + 分位数损失辅助；输出裁剪到 [-6,6] |
-| **训练不稳定（NaN）** | loss 变 NaN | 梯度裁剪 1.0；bf16 而非 fp16；`softplus` 的 `β` 不超过 30 |
+| **训练不稳定（NaN）** | loss 变 NaN | `masked_mean` 先 `nan_to_num` 再乘掩码；梯度裁剪 1.0；bf16 而非 fp16；`softplus` 的 `β` 不超过 30 |
+| **两阶段训练第二段遗忘原子头** | atom Acc 下降 | 冻结原子头或用极低 `q_head_lr_mult`（0.05–0.1）；inner-OOF 持续监控 atom Acc；必要时联合微调 |
+| **边界平滑跨越原子边界** | 原子行被平滑出容差 | 平滑只作用于**连续分支**，且必须在原子硬切换**之前**、按 atom mask 断开 |
 | **评测机无 GPU / torch 版本不符** | 干净目录报错 | ONNX 导出兜底路径 + `map_location='cpu'` + 纯 numpy 后处理 |
 | **复现失败** | 两次运行 sha256 不一致 | 固定 seed + 确定性算子；不确定时在 README 声明容差并给出逐点最大差 |
 | **本地 CV 虚高** | A 榜远低于本地 | 折维度恒定为井；一切 fit 只用训练折；特征来源表审计 |
@@ -718,7 +797,7 @@ v4 可能整体失败（纯 DL 在 80 井上不收敛优于树模型）。因此
 ## 十三、为什么这样设计（设计依据索引）
 
 1. **评分是优化目标本身**：`rules.md` §7.3–7.4；`资料库/12` §1（逐条解析）、§2（可微损失设计）→ §5.4 三段式损失。
-2. **标签是混合分布（66.7% 占位 + SW 双峰）**：`rules.md` §5.3、`资料库/12` §3.1/§3.4 → §5.3 的 H0/H3 头。
+2. **标签是混合分布（66.7% 联合占位，且逐目标原子事件更多）**：`rules.md` §5.3、`资料库/12` §3.1/§3.4 → §5.3 的 `q_joint` + `q_por/q_perm/q_sw` 逐目标原子头，§6.4 的逐目标硬切换。
 3. **PERM 必须 log 域**：`资料库/12` §2.4 提示 3、`资料库/05` §2.3 → H2 输出对数域。
 4. **井级验证是红线**：`资料库/07` §8、`资料库/12` §3.5 → §6.3 折协议。
 5. **深度序列模型是第 2 层**：`资料库/08` §0.3 → §5.2 主干候选。

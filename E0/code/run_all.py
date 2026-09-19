@@ -128,6 +128,121 @@ def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
+# ---------------------------------------------------------------- 证据可移植化（R3）
+EPHEMERAL_PREFIXES = ("/tmp", "/var/tmp", "/dev/shm", "/run")
+
+
+def _resolved(p: Path) -> Path:
+    try:
+        return p.resolve()
+    except Exception:  # pragma: no cover - 路径异常时退回原值
+        return p
+
+
+def _same_path(a: Path, b: Path) -> bool:
+    return _resolved(a) == _resolved(b)
+
+
+def _relative_to(path: Path, base: Path) -> str | None:
+    try:
+        return _resolved(path).relative_to(_resolved(base)).as_posix()
+    except ValueError:
+        return None
+
+
+def portable_path(path: Path) -> tuple[str, bool]:
+    """把绝对路径转成可复现证据用的 portable 形式。
+
+    优先级（R3 修复）：
+      1. 等于 ``$V4_CACHE_ROOT`` -> 字面量 ``"$V4_CACHE_ROOT"``
+      2. 位于 ``$V4_DATA_ROOT`` 内 -> 用 ``$V4_DATA_ROOT`` 前缀替换
+      3. 位于仓库根内 -> 仓库相对路径
+      4. 其它 -> 绝对路径
+
+    返回 ``(portable, cache_root_portable)``；后者的语义是"portable 形式含 $ 占位符
+    或是仓库相对路径"。
+    """
+    cache_env = os.environ.get("V4_CACHE_ROOT")
+    if cache_env and _same_path(path, Path(cache_env)):
+        return "$V4_CACHE_ROOT", True
+    data_env = os.environ.get("V4_DATA_ROOT")
+    if data_env:
+        rel = _relative_to(path, Path(data_env))
+        if rel is not None:
+            return ("$V4_DATA_ROOT" if rel in ("", ".") else f"$V4_DATA_ROOT/{rel}"), True
+    rel = _relative_to(path, V4)
+    if rel is not None:
+        return (rel or "."), True
+    return str(_resolved(path)), False
+
+
+def resolve_cache_root(arg: str | None) -> Path:
+    """解析 --cache-root：相对路径按**仓库根**解析，因此 --cache-root .v4cache 稳定可用。"""
+    if arg:
+        p = Path(arg).expanduser()
+        if not p.is_absolute():
+            p = V4 / p
+        return p
+    return Path(os.environ.get("V4_CACHE_ROOT", str(V4 / "cache")))
+
+
+def warn_if_ephemeral(cache_root: Path) -> bool:
+    """缓存落在 /tmp 等易失位置时大声告警（不 hard-fail，本机开发允许）。"""
+    sp = str(_resolved(cache_root))
+    ephemeral = any(sp == pre or sp.startswith(pre + os.sep)
+                    for pre in EPHEMERAL_PREFIXES)
+    if not ephemeral or os.environ.get("V4_ALLOW_TMP_CACHE") == "1":
+        return False
+    bar = "!" * 78
+    print(bar, file=sys.stderr)
+    print(f"WARN: 分片缓存根目录位于临时/易失位置：{sp}", file=sys.stderr)
+    print("WARN: 该路径在任务/重启后不保留，E0_data_card.json 的缓存证据将不可复现；",
+          file=sys.stderr)
+    print("WARN: 云端请用 $V4_CACHE_ROOT（/data/v4/cache），本机开发可设 "
+          "V4_ALLOW_TMP_CACHE=1 关闭本告警。", file=sys.stderr)
+    print(bar, file=sys.stderr)
+    return True
+
+
+def evaluate_disk_budget(data_root: str | None = None,
+                         reports_dirs: tuple[Path, ...] | None = None
+                         ) -> tuple[bool, str | None, str | None]:
+    """从 E0_disk_budget.json 求 cloud gate 的 disk_budget_ok。
+
+    R3 修复：必须读 **data root**（$V4_DATA_ROOT=/data 的 30 GB 配额）的 level，
+    而不是 ROOT 文件系统的 level。
+
+    取值顺序：
+      1. `primary_path` 与 data root 相同 -> 用顶层 `level`（权威）
+      2. 否则若存在 `worst_level` -> 用 `worst_level`（所有挂载点里最差的）
+      3. 否则退回顶层 `level`（兼容没有 primary_path 的旧报告）
+
+    返回 ``(ok, level, primary_path)``；文件缺失 -> ``(False, None, None)``。
+    """
+    if data_root is None:
+        data_root = DATA_ROOT
+    if reports_dirs is None:
+        reports_dirs = (REPORTS_DIR, V4 / "reports")
+    for cand in reports_dirs:
+        f = Path(cand) / "E0_disk_budget.json"
+        if not f.is_file():
+            continue
+        try:
+            db = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        primary_path = db.get("primary_path") or db.get("path")
+        if primary_path is not None and data_root and \
+                _same_path(Path(primary_path), Path(data_root)):
+            level = db.get("level")
+        elif "worst_level" in db:
+            level = db.get("worst_level")
+        else:
+            level = db.get("level")
+        return level == "ok", level, primary_path
+    return False, None, None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     default_train = (Path(DATA_ROOT) / "v4" / "data" / "train") if DATA_ROOT \
@@ -142,7 +257,8 @@ def main() -> int:
                     help="同时构建 cache/raw|labels 分片与 cache/manifest.json（E1 的输入，"
                          "审查 B6）")
     ap.add_argument("--cache-root", default=None,
-                    help="缓存根目录；默认 $V4_CACHE_ROOT 或 <v4>/cache")
+                    help="缓存根目录；默认 $V4_CACHE_ROOT 或 <v4>/cache。相对路径按仓库根解析"
+                         "（--cache-root .v4cache 会存成 repo 相对证据）")
     args = ap.parse_args()
 
     if not HAS_NUMPY:
@@ -290,8 +406,9 @@ def main() -> int:
     # ---------------- 分片缓存（E1 的输入；审查 B6：此前无任何 P 负责生成）
     cache_info: dict = {"built": False}
     if args.with_cache:
-        cache_root = Path(args.cache_root) if args.cache_root else Path(
-            os.environ.get("V4_CACHE_ROOT", str(V4 / "cache")))
+        cache_root = resolve_cache_root(args.cache_root)
+        cache_root_portable, cache_root_is_portable = portable_path(cache_root)
+        warn_if_ephemeral(cache_root)
         echo(f"构建分片缓存 -> {cache_root}")
         man = DS.build_cache(train_dir if not args.limit else train_dir,
                              test_dir, cache_root, limit=args.limit, verbose=False)
@@ -301,9 +418,17 @@ def main() -> int:
             sh = DS.read_well_shard(cache_root, w, "train")
             if sh["inputs"].shape[1] != C.N_INPUT:
                 viol.append({"well": w, "reason": f"n_inputs={sh['inputs'].shape[1]}"})
+        manifest_path = cache_root / "manifest.json"
         cache_info = {
-            "built": True, "cache_root": str(cache_root), "counts": man["counts"],
-            "manifest": str(cache_root / "manifest.json"),
+            "built": True,
+            # R3 修复：cache_root 必须是**可复现证据**（$V4_CACHE_ROOT / repo 相对），
+            # 不能是 /tmp/v4cache_final 这类本机临时路径；绝对路径另存 cache_root_abs。
+            "cache_root": cache_root_portable,
+            "cache_root_abs": str(_resolved(cache_root)),
+            "cache_root_portable": cache_root_is_portable,
+            "counts": man["counts"],
+            "manifest": str(manifest_path),
+            "manifest_portable": portable_path(manifest_path)[0],
             "mb": round(DS.shard_bytes(cache_root) / 1e6, 2),
             "input_cols_ok": not viol,
             "violations": viol,
@@ -453,14 +578,9 @@ def main() -> int:
             except Exception:
                 env_json = None
     env_ok = bool(env_json and env_json.get("passed") and env_json.get("hard_failures") == 0)
-    disk_ok = False
-    for cand in (REPORTS_DIR / "E0_disk_budget.json", V4 / "reports" / "E0_disk_budget.json"):
-        if cand.is_file():
-            try:
-                disk_ok = json.loads(cand.read_text(encoding="utf-8")).get("level") == "ok"
-                break
-            except Exception:
-                disk_ok = False
+    # R3 修复：disk_budget_ok 必须读**data root**（$V4_DATA_ROOT=/data 的 30 GB 配额）的 level，
+    # 而不是 ROOT 文件系统的 level。
+    disk_ok, disk_level, disk_primary_path = evaluate_disk_budget(DATA_ROOT)
     cloud_checks = {
         "env_hard_checks_passed": env_ok,
         "disk_budget_ok": disk_ok,
@@ -473,6 +593,10 @@ def main() -> int:
         "passed": all(cloud_checks.values()),
         "status": "passed" if all(cloud_checks.values()) else "blocked_pending_cloud_run",
         "mandatory_checks": cloud_checks,
+        # 证据自描述：说明 disk_budget_ok 到底测的是哪个文件系统
+        "disk_budget_primary_path": disk_primary_path,
+        "disk_budget_level": disk_level,
+        "disk_budget_expected_data_root": DATA_ROOT,
         "how_to_satisfy": (
             "在平台训练任务执行 `bash /code/workspace/v4/run_train.sh --mode env`，"
             "产出 $V4_REPORTS_DIR/E0_env.json 与 E0_disk_budget.json，然后重跑本脚本。"

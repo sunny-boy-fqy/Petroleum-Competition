@@ -3,6 +3,7 @@
   "stage": "E10",
   "p_stage": "P1",
   "created_at": "<ISO8601，写盘时填写>",
+  "gate_type": "boolean",
   "primary_metric": "clean_dir_reproduce",
   "primary_threshold_key": "min_delta",
   "baseline_version": "<已冻结候选或 CONST>",
@@ -28,7 +29,9 @@
     "disk_budget_ok",
     "training_time_log_valid",
     "checkpoint_resumable",
-    "no_label_leak"
+    "no_label_leak",
+    "clean_dir_reproduce",
+    "b0_fallback_verified"
   ],
   "decisions_locked": [],
   "notes": ""

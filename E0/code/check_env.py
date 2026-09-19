@@ -7,6 +7,14 @@
    无 torch 的开发机上也能跑出一份 "环境不满足" 的明确报告，而不是 ImportError。
 2. 任何一项 hard 检查失败 -> exit code 非 0，训练脚本应在启动时调用它并拒绝继续。
 3. 结果可写成 JSON，供 E0 Gate 的 mandatory_check `env_ok` 读取。
+4. 依赖分两档（R3 修复）：
+   - **required**（训练/推理主路径）：numpy/pandas/scipy/sklearn/pyarrow/einops。
+     `--profile full` 下缺失 = hard。
+   - **optional / degradable**：onnx/onnxruntime 等有文档化降级路径的依赖。
+     `--profile full` 下缺失 = warn，并记入 JSON 顶层 `degraded_paths`
+     （例如 ONNX 导出不可用时改用原生 torch checkpoint 做推理），**不阻塞训练**。
+   注意：本模块 `OPTIONAL_PY_DEPS` 里 optional 依赖的版本号是**参考值（advisory）**，
+   仅用于提示版本漂移，不作为门禁；真实版本一致性由 `versions/locks/cloud.txt` 保证。
 
 用法
 ----
@@ -31,6 +39,30 @@ EXPECTED_TORCH = "2.4.0"
 EXPECTED_CUDA_MAJOR_MINOR = (12, 6)
 MIN_FREE_GB_DEFAULT = 8.0
 DISK_BUDGET_GB = 30.0
+
+# 依赖分档（R3 修复）。
+#   REQUIRED_PY_DEPS：训练/推理主路径硬依赖；profile=full 且缺失 -> hard。
+#   OPTIONAL_PY_DEPS：有文档化降级路径；profile=full 且缺失 -> warn + degraded_paths。
+# 版本号为**参考值（advisory）**：只有 major.minor 不一致时给 warn，不阻塞。
+REQUIRED_PY_DEPS = {
+    "numpy": "1.26.4",
+    "pandas": "2.2.3",
+    "scipy": "1.13.1",
+    "sklearn": "1.5.2",
+    "pyarrow": "17.0.0",
+    "einops": "0.8.0",
+}
+OPTIONAL_PY_DEPS = {
+    "onnx": "1.16.2",
+    "onnxruntime": "1.18.1",
+}
+# 缺失 optional 依赖时启用的降级路径（写进 JSON 的 degraded_paths）
+DEGRADATION_PATHS = {
+    "onnx": "ONNX export/serving path disabled; use the native torch checkpoint for inference",
+    "onnxruntime": "ONNX runtime unavailable; native torch/CPU inference path is used instead",
+}
+
+FOLDS_FALLBACK_RELPATH = ("versions", "reference", "v1_well_folds.json")
 
 
 class Report:
@@ -129,26 +161,28 @@ def check_torch(rep: Report, allow_non_a100: bool) -> dict:
     return info
 
 
-def check_py_deps(rep: Report, allow_non_a100: bool, profile: str = "full") -> dict:
-    """可选依赖探测。
+def check_py_deps(rep: Report, allow_non_a100: bool,
+                  profile: str = "full") -> tuple[dict, dict]:
+    """依赖探测，返回 (已安装版本 info, degraded_paths)。
 
-    profile=base（首次 --mode env，依赖尚未安装）-> warn
-    profile=full（安装完成后 / 训练前）           -> hard
-    本机 --allow-non-a100 始终 warn。
+    分档语义（R3 修复）：
+      - required（numpy/pandas/scipy/sklearn/pyarrow/einops）：
+        profile=full 且缺失 -> **hard**（训练主路径不可用）。
+      - optional/degradable（onnx/onnxruntime）：
+        缺失一律 -> **warn**，并记入 degraded_paths；即使 profile=full 也不阻塞训练，
+        因为 PLAN 有文档化的降级路径（ONNX 导出不可用时改用原生 torch checkpoint 推理）。
+      - profile=base：required 也降为 warn（保持既有行为；首次 --mode env 依赖尚未安装）。
+      - `--allow-non-a100` 只影响 GPU/torch 检查，不影响依赖分档。
+
+    版本不匹配始终只给 warn：`expected` 里的 optional 版本号是 advisory，
+    真正的版本一致性由 lock 文件保证。
     """
-    level = "warn" if (allow_non_a100 or profile == "base") else "hard"
+    required_level = "warn" if profile == "base" else "hard"
     info: dict = {}
-    expected = {
-        "numpy": "1.26.4",
-        "pandas": "2.2.3",
-        "scipy": "1.13.1",
-        "sklearn": "1.5.2",
-        "pyarrow": "17.0.0",
-        "einops": "0.8.0",
-        "onnx": "1.16.2",
-        "onnxruntime": "1.18.1",
-    }
-    for mod, want in expected.items():
+    degraded: dict[str, str] = {}
+
+    for mod, want in {**REQUIRED_PY_DEPS, **OPTIONAL_PY_DEPS}.items():
+        optional = mod in OPTIONAL_PY_DEPS
         try:
             m = __import__(mod)
             got = getattr(m, "__version__", "?")
@@ -159,11 +193,19 @@ def check_py_deps(rep: Report, allow_non_a100: bool, profile: str = "full") -> d
                 f"dep_{mod}",
                 major_minor == want_mm,
                 "warn",  # 依赖小版本差异不阻塞；用 lock 文件保证一致性
-                f"{mod} {got} (lock says {want})",
+                f"{mod} {got} (lock says {want})"
+                + ("  [optional/advisory]" if optional else ""),
             )
         except Exception as exc:
-            rep.add(f"dep_{mod}", False, level, f"missing {mod}: {exc!r}")
-    return info
+            if optional:
+                action = DEGRADATION_PATHS.get(
+                    mod, f"{mod} unavailable; documented fallback path is used")
+                degraded[mod] = action
+                rep.add(f"dep_{mod}", False, "warn",
+                        f"missing optional {mod}: {exc!r} -> DEGRADED: {action}")
+            else:
+                rep.add(f"dep_{mod}", False, required_level, f"missing {mod}: {exc!r}")
+    return info, degraded
 
 
 def check_disk(rep: Report, path: Path, min_free_gb: float) -> dict:
@@ -219,7 +261,8 @@ def check_repo(rep: Report, root: Path, profile: str = "full") -> dict:
         from src.validation.folds import find_folds_file  # noqa: PLC0415
         folds = find_folds_file(root)
     except Exception:
-        folds = root / "versions" / "reference" / "well_folds.json"
+        # R3 修复：实际文件名是 versions/reference/v1_well_folds.json（此前写成 well_folds.json）
+        folds = root.joinpath(*FOLDS_FALLBACK_RELPATH)
     n_train = len(list(train_dir.glob("*.txt"))) if train_dir.is_dir() else 0
     n_test = len(list(test_dir.glob("*.txt"))) if test_dir.is_dir() else 0
     info.update({"n_train_files": n_train, "n_test_files": n_test, "folds_exists": folds.is_file()})
@@ -251,7 +294,7 @@ def main() -> int:
     rep = Report()
     check_python(rep)
     torch_info = check_torch(rep, args.allow_non_a100)
-    deps_info = check_py_deps(rep, args.allow_non_a100, args.profile)
+    deps_info, degraded_paths = check_py_deps(rep, args.allow_non_a100, args.profile)
     disk_infos = []
     for dp in disk_paths:
         d = check_disk(rep, dp, args.min_free_gb)
@@ -272,11 +315,16 @@ def main() -> int:
     print("-" * 78)
     print(f"platform : {platform.platform()}")
     print(f"executable: {sys.executable}")
-    print(f"hard failures: {len(hard)}   warnings: {len(warn)}")
+    print(f"hard failures: {len(hard)}   warnings: {len(warn)}   "
+          f"degraded deps: {len(degraded_paths)}")
     if hard:
         print("\nHARD FAILURES -> 训练脚本必须拒绝启动：")
         for c in hard:
             print(f"  - {c['name']}: {c['detail']}")
+    if degraded_paths:
+        print(f"\nDEGRADED PATHS（{len(degraded_paths)} 个可选依赖缺失 -> 启用降级路径，不阻塞训练）：")
+        for mod, action in degraded_paths.items():
+            print(f"  - {mod}: {action}")
     print("=" * 78)
 
     if args.json:
@@ -297,6 +345,7 @@ def main() -> int:
             "executable": sys.executable,
             "torch": torch_info,
             "deps": deps_info,
+            "degraded_paths": degraded_paths,
             "disk": disk_info,
             "repo": repo_info,
             "checks": rep.checks,

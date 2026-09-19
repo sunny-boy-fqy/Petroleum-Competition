@@ -34,7 +34,7 @@
 
 ## 6. P 级子计划
 
-- [P0 全量重训与 CPU 导出](P0/PLAN.md)
+- [P0 全量重训与 CPU 推理导出](P0/PLAN.md)
 - [P1 打包、干净目录复现与 B0 fallback](P1/PLAN.md)
 - [P2 提交执行与归档登记](P2/PLAN.md)
 

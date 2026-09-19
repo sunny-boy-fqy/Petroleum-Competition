@@ -108,7 +108,10 @@ run_env() {
   fi
 
   log "--- [env] 3/3 磁盘余量（$DATA_ROOT 与代码目录分别检查）"
+  # R3 修复：必须显式 --data-root，否则 E0_disk_budget.json::level 描述的是 ROOT 文件系统，
+  # 而云端 30 GB 配额在 $DATA_ROOT；E0_cloud_gate 的 disk_budget_ok 就读这个 level。
   if python3 "$HERE/src/data/disk_guard.py" --min-free-gb 8 \
+       --data-root "$DATA_ROOT" --path "$DATA_ROOT" --path "$HERE" \
        --report "$HERE,$DATA_ROOT" --json "$REPORTS_DIR/E0_disk_budget.json" 2>&1 | tee -a "$LOG"; then
     log "[env] 磁盘余量 ok（>= 8 GiB）"
   else
@@ -144,9 +147,23 @@ run_e0() {
   python3 "$HERE/E0/code/run_all.py" --train-dir "$DATA_ROOT/v4/data/train" \
     --test-dir "$DATA_ROOT/v4/data/test" --cache-root "$CACHE_ROOT" --with-cache \
     --out "$REPORTS_DIR/E0_data_card.json" 2>&1 | tee -a "$LOG"
-  cp -f "$REPORTS_DIR/E0_local_contract_gate.json" "$HERE/reports/" 2>/dev/null || true
-  cp -f "$REPORTS_DIR/E0_cloud_gate.json" "$HERE/reports/" 2>/dev/null || true
-  cp -f "$REPORTS_DIR/E0_data_card.json" "$HERE/reports/" 2>/dev/null || true
+  # 证据权威性：$REPORTS_DIR（云端 /data/v4/reports，云盘持久）= 权威来源，供 Gate / 复算引用；
+  # repo 内 reports/ = 仅供 review / git diff 的快照，必须整体同步以免 data card 与
+  # score-check / prereg 等互相矛盾（R3 修复：此前只 copy 3 个文件）。
+  local f base dest_dir
+  dest_dir="$HERE/reports"
+  for f in "$REPORTS_DIR"/E0_*.json; do
+    [[ -e "$f" ]] || continue                       # 未产出该文件时静默跳过
+    base="$(basename "$f")"
+    if [[ -f "$dest_dir/$base" && "$f" -ef "$dest_dir/$base" ]]; then
+      continue                                      # 同一文件（REPORTS_DIR 指向 repo 内）不自我覆盖
+    fi
+    if cp -f "$f" "$dest_dir/" 2>/dev/null; then
+      log "[e0] copy $base -> reports/ (review snapshot)"
+    else
+      log "!! [e0] copy $base 失败（忽略，权威副本仍在 $REPORTS_DIR）"
+    fi
+  done
 }
 
 run_smoke() {

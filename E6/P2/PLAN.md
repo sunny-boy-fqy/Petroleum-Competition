@@ -12,37 +12,38 @@
 
 ## 1. 目标
 
-组装 数据→主干→头→原子门→契约 的完整 PD1 管线，产出 5 折 OOF、测试集 `result.json`/`result.zip`、manifest 与 cv 报告；**硬 Gate：OOF Total ≥ 82.0**。
+组装 数据→主干→**逐目标原子头 + 辅助 joint 头**→逐目标硬切换→连续后处理→契约 的完整 PD1 管线，产出 5 折 OOF、测试集 `result.json`/`result.zip`、manifest 与 cv 报告；**硬 Gate：OOF Total ≥ 82.0**；并上报 proposal §7 F5 要求的全部逐目标指标。
 
 ## 2. 为什么需要这一步
 
 1. 这是 v4 第一个"端到端可跑、可提交、可复现"的候选；
 2. ≥82.0 意味着超过历史锚点 B0 的本地 OOF 80.382479，是纯 DL 路线成立的最低证据；
-3. 只有完整管线才能暴露"训练能跑但推理契约不过"这类问题（前代多次踩坑）。
+3. 只有完整管线才能暴露"训练能跑但推理契约不过"这类问题（前代多次踩坑）；
+4. 改进 proposal §7 F5/§11：Gate 必须能复算**逐目标** atomic Acc/P/R/F1、τ_t、连续切片 Acc、joint atom AUC/AP、总分分解、误判代价矩阵与 `inner_only_selection` 证据。
 
 ## 3. 输入契约
 
 - E3/E4 冻结主干权重
-- E5 的三个目标头
-- E6 的 H0 与 τ
+- E5 的三个连续头
+- E6 的逐目标原子头 `q_por/q_perm/q_sw`、`q_joint` 与 `τ_t`
 - E0 的契约与评分器
 
 ## 4. 输出契约
 
 - `models/E6/pd1_fold{k}.pt` + `models/E6/pd1_config.json`
 - `experiments/E6/P2/pd1/{oof.npz,cv.json,result.json,result.zip,manifest.json}`
-- `$V4_REPORTS_DIR/E6_gate.json`
+- `$V4_REPORTS_DIR/E6_gate.json`、`$V4_REPORTS_DIR/E6_atomic_report.json`（逐目标 + joint + τ 曲线）
 - `versions/candidates.json::PD1`（status=local_only→shortlisted）
 
 ## 5. 执行步骤
 
-1. 实现统一推理器 `src/inference/predictor.py`：加载配置与权重 → 逐井前向 → 原子门 → 解码
+1. 实现统一推理器 `src/inference/predictor.py`：加载配置与权重 → 逐井前向 → 逐目标硬切换 → 连续后处理 → 解码
 2. 在 5 折上各自推理出 OOF（训练时已产出，此处复核逐行对齐）
 3. 对 10 口测试井推理：平均 5 折权重（或按核验过的最优折），产出 result.json
-4. 跑契约校验（10 井 / 95,948 行 / depth 对齐 / PERM>0 / 无 NaN）
+4. 跑契约校验（10 井 / 95,948 行 / depth 对齐 / PERM>0 / 无 NaN / SW 单尺度 `[0,100]` 守卫）
 5. 本机 CPU 冒烟 `predict.py --use-version PD1 --data_dir ../data --output /tmp/r.json`
-6. 汇总 OOF 评分：逐目标 Acc、连续切片、占位 Acc、bootstrap CI
-7. 写 manifest（config 哈希/数据指纹/折指纹/代码哈希）并注册候选
+6. 汇总 OOF 评分并上报 proposal §7 F5 全部条目：逐目标 `atomic_acc/precision/recall/F1`、逐目标 `τ_t`、逐目标 continuous slice Acc、joint atom Acc/AUC/AP、总分分解与阈值曲线、误判代价矩阵、`inner_only_selection` 证据
+7. 写 manifest（config 哈希/数据指纹/折指纹/代码哈希 + `joint_guard` 开关决定）并注册候选
 8. 写 Gate 并判定 ≥ 82.0
 
 ## 6. 参数与配置
@@ -50,16 +51,18 @@
 | 参数 | 默认值 | 搜索范围/说明 | 选择位置 |
 |---|---|---|---|
 | 折权重聚合 | 5 折平均 | 平均/最优折/加权 | inner 决定，冻结后不改 |
-| τ | E6/P1 选定值 | 冻结 | 写入 candidate registry |
+| `τ_t` | E6/P1 选定值（官方总分平台中点） | 冻结 | 写入 candidate registry |
+| `joint_guard` | E6/P1 决定（默认关） | 冻结 | 写入 manifest |
 | 推理精度 | fp32（CPU） | fp32/fp16 | 提交侧必须 fp32 保证确定性 |
 | `num_folds` | 5 | 冻结 | 与 folds.json 一致 |
 
 ## 7. 完成判据
 
-- OOF Total **≥ 82.0**（硬 Gate）
+- OOF Total **≥ 82.0**（硬 Gate），且 `min_atom_acc ≥ 0.99`、`min_atom_recall ≥ 0.98`、`min_joint_atom_auc ≥ 0.90`
 - 契约全绿；`predict.py --use-version PD1` 在本机 CPU 可跑通并输出 95,948 行
-- 占位行逐目标 Acc ≥ 0.99；连续切片 Acc 一并上报
-- manifest 写全 config/data/folds/code 四类指纹；候选已注册
+- 逐目标原子 Acc/P/R/F1、连续切片 Acc、joint atom AUC/AP、τ_t 与误判代价矩阵全部上报
+- `tau_t_inner_oof_only`、`no_atom_continuous_interpolation`、`input_no_label_leak_full` 均为 true
+- manifest 写全 config/data/folds/code 四类指纹与 `joint_guard` 决定；候选已注册
 - 5 折 delta 全部同向；`disk_budget_ok`、`training_time_log_valid`、`checkpoint_resumable` 为 true
 
 ## 8. 禁止事项
@@ -67,6 +70,8 @@
 - 在管线中混入未冻结的特征版本
 - 推理阶段读取任何标签
 - 把 5 折权重聚合方式在看到 OOF 后临时更换
+- 在原子与连续之间插值，或对 SW 做全局 `[0,1]` 裁剪
+- 只报 Overall Total 而省略逐目标/逐切片指标
 
 ## 9. 风险与对策
 
@@ -74,6 +79,7 @@
 |---|---|---|
 | 训练能跑但推理契约不过 | result.json 行数/字段错 | 契约前置到训练脚本每次落盘时校验 |
 | 低于 82.0 | 纯 DL 未超过树模型锚点 | 按总计划 §9.5 回退协议准备 B0 fallback；同时保留 PD1 为 `local_only` 候选供 E7/E8 继续改进 |
+| 逐目标指标被总分掩盖 | 总分达标但某目标原子 recall 低 | Gate 强制逐目标阈值 + 误判代价矩阵 |
 | 折间差异大 | 逐折 delta 方向不一致 | 检查折内标准化与早停；报告逐折而非只报总分 |
 
 ## 10. 停止规则
@@ -89,7 +95,7 @@
 
 ## 12. 复算与证据
 
-- `reports/E6_gate.json`、`reports/E6_atomic_report.json`
+- `reports/E6_gate.json`、`reports/E6_atomic_report.json`、`reports/E6_tau_search.json`
 
 ```bash
 # 云端（平台训练任务）
@@ -130,7 +136,10 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
   "thresholds": {
     "min_delta": 0.0,
     "min_effect_floor": 0.0,
-    "oof_total_min": 82.0
+    "oof_total_min": 82.0,
+    "min_atom_acc": 0.99,
+    "min_atom_recall": 0.98,
+    "min_joint_atom_auc": 0.9
   },
   "alpha": 0.05,
   "multiplicity": "none",
@@ -147,7 +156,14 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
     "disk_budget_ok",
     "training_time_log_valid",
     "checkpoint_resumable",
-    "no_label_leak"
+    "no_label_leak",
+    "per_target_atom_acc_reported",
+    "per_target_atom_precision_recall_f1_reported",
+    "joint_atom_auc_reported",
+    "tau_t_inner_oof_only",
+    "no_atom_continuous_interpolation",
+    "input_no_label_leak_full",
+    "cpu_inference_ok"
   ],
   "decisions_locked": [],
   "notes": ""

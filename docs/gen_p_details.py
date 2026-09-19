@@ -17,9 +17,34 @@
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]  # v4/
+
+
+def _load_infer_gate_type():
+    """加载 Gate 类型推断的**唯一事实源** `src/validation/gates.py::infer_gate_type`。
+
+    禁止在本文件复制 boolean 指标清单（R3-H1：曾因此让 `a_board_no_breakdown` 等条目
+    的显式 `gate_type` 与 `gates.gate_type()` 的推断结果不一致）。优先正常 import，
+    import 失败时按文件路径兜底加载。
+    """
+    import importlib.util
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    try:
+        from src.validation.gates import infer_gate_type as _f
+        return _f
+    except Exception:  # pragma: no cover - 仅在包结构异常时走到
+        spec = importlib.util.spec_from_file_location(
+            "_v4_gates", ROOT / "src" / "validation" / "gates.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.infer_gate_type
+
+
+infer_gate_type = _load_infer_gate_type()
 
 # =============================================================================
 # 详细内容表
@@ -49,22 +74,28 @@ P["E0"] = [
         inputs=["云端训练任务（Git 仓库代码来源，A100 资源，PyTorch 2.4.0/CUDA 12.6/py3.11 镜像）",
                 "`v4/E0/code/check_env.py`、`v4/E0/code/setup_deps.sh`、`v4/src/data/disk_guard.py`"],
         outputs=["`$V4_REPORTS_DIR/E0_env.json`",
-                 "`$V4_REPORTS_DIR/E0_disk_budget.json`",
+                 "`$V4_REPORTS_DIR/E0_disk_budget.json`（**按挂载点**报告：`paths` + `worst_level` + `primary_path` + `data_root_checked`）",
                  "`versions/locks/cloud_frozen.txt`（镜像构建后 `pip freeze` 快照）",
                  "`$V4_LOG_DIR/train_env_*.log`（stdout 全量日志）"],
         steps=["`bash /code/workspace/v4/run_train.sh --mode env`",
                "读日志确认 `hard failures: 0`，逐项核对 torch/cuda/gpu/bf16/disk 五行",
-               "`df -h / /data /code/workspace` 记录三个挂载点的容量与是否同盘",
+               "`df -h / /data /code/workspace` 记录三个挂载点的容量与是否同盘，"
+               "并写入 `E0_disk_budget.json::paths`（Gate 的 `disk_budget_ok` 只看 DATA-ROOT 级别）",
                "`du -sh /usr /opt /root 2>/dev/null` 记录镜像本体占用，推算项目可用空间",
-               "若可用 < 12 GB，把 `contingency_applied=true` 与收缩项写入 `E0_disk_budget.json`",
+               "若 **DATA-ROOT（`$V4_DATA_ROOT` = `/data`）** 可用 < 12 GB，把 `contingency_applied=true` "
+               "与收缩项写入 `E0_disk_budget.json`（`worst_level`/`primary_path`/`data_root_checked` 一并落盘）",
                "把 `E0_env.json` 的 `deps.versions` 与 `versions/locks/cloud.txt` 逐项比对，不一致则更新 lock 并提交"],
         params=[("`--min-free-gb`", "8.0", "8–12", "磁盘硬门禁；实测后若过紧则上调"),
-                ("`--allow-non-a100`", "false", "—", "仅本机开发时开启（把 GPU 检查降级为 warn）"),
+                ("`--allow-non-a100`", "false", "—", "仅本机开发时开启：**只放宽 GPU/torch 检查**，不放宽依赖检查"),
                 ("`NUM_WORKERS`", "4", "2–6", "16 GiB 内存下的安全值，见总计划 §3.1-3")],
-        done=["`check_env.py` 输出 **hard failures: 0**（判据是「所有 hard 级检查全过」，"
-              "不是固定项数；本机 `--allow-non-a100` 模式下为 15 项检查 / 5 项 hard）",
-              "`E0_disk_budget.json` 含 `total_gb/used_gb/free_gb/level`，且 `level==\"ok\"`",
-              "`E0_env.json` 含全部 9 个可选依赖的 `available/versions`",
+        done=["`check_env.py` 输出 **hard failures: 0**（判据是「**所有 hard 级检查全过**」，"
+              "**不是固定项数**，也不因 `--allow-non-a100` 而放宽依赖检查——该开关只放宽 GPU/torch 检查）；"
+              "非主路径可选依赖（`onnx` / `onnxruntime`）失败时写入顶层 `degraded_paths` 并降级为 warn，"
+              "不阻塞训练",
+              "`E0_disk_budget.json` **按挂载点**报告（`paths` + `worst_level` + `primary_path` + "
+              "`data_root_checked`），且 Gate 的 `disk_budget_ok` 读取 **DATA-ROOT（`$V4_DATA_ROOT` = `/data`）** "
+              "级别——不是 `/`",
+              "`E0_env.json` 含全部可选依赖的 `available/versions` 与 `degraded_paths`",
               "`cloud_frozen.txt` 已生成并与 `versions/locks/cloud.txt` 一致或已更新"],
         forbid=["`pip install torch` / 升级 CUDA / 用 conda 建环境",
                 "安装 flash-attn / xformers / apex / deepspeed 等需编译 CUDA 扩展的包",
@@ -90,7 +121,10 @@ P["E0"] = [
              "产出数据卡、按井折导出与指纹；**必须查清 3 口非规范 schema 井的正确解析方式**。",
         why=["口径是唯一事实源：解析错一列，后面所有分数都不可比；",
              "**实测发现 3 口训练井表头非官方 17 列**（`42f2870b` 20 列含 K/U/CGR、`b7eb1274` 21 列含 TH/K/U/CGR、`c7611b01` 16 列缺 CASE），共 27,080 行（3.71%），且都在 80 井折内、三目标齐全——按列位置解析会错位或丢行；",
-             "**目标值域必须实测而非假设**：E0-R1 曾误以为 SW 是 `99.9`（百分数）+ `[0,1]`（小数）双尺度，实测有效 SW 为 min 8.305 / median 82.805 / max 99.9、SW<1 的行数为 0 → 实为单一标签尺度（审查 B2/R2-B4）；",
+             "**目标值域必须实测而非假设**：E0-R1 曾误以为 SW 是 `99.9`（百分数）+ `[0,1]`（小数）双尺度；"
+             "E0-R2 实测有效 SW 为 min 8.305 / median 82.805 / max 99.9、**`SW<1` 的行数为 0**，"
+             "→ **双尺度假设已证伪**，SW 是单一百分数标签尺度，遗留对照路径 `SW_SMALL_BRANCH` **永久关闭**"
+             "（禁止任何 ×100 换算或 `[0,1]` 归一化；仅允许 `[0,100]` 软裁剪）；",
              "开发过程中已实际触发一次 numpy 越界切片静默截断（`arr[:,15:18]` 在 17 列数组上返回 2 列，丢掉 SW 整列），必须用断言防回归。"],
         inputs=["`$V4_DATA_ROOT/v4/data/train/*.txt`（80 井，含表头/单位/数据三段）",
                 "`$V4_DATA_ROOT/v4/data/test/*.txt`（10 井，无标签）",
@@ -217,7 +251,9 @@ P["E0"] = [
               "干净目录下 `python3 predict.py --use-version CONST --data_dir ./data --output result.json` "
               "在一次运行内产出 10 井 / 95,948 行且 `contract_ok=true`（实测 ≈1.4 s，单核 CPU）",
               "`predict.py` 在**无 torch** 环境可运行；`--list-versions` 正确区分可用/未训练版本",
-              "`versions/registry.json` 建立且被 `predict.py` 读取（`src/versioning/registry.py`）"],
+              "`versions/registry.json` 建立且被 `predict.py` 读取（`src/versioning/registry.py`）",
+              "E0 **本地契约 Gate 12/12（含 cache）**全部 mandatory 通过"
+              "（10 项原检查 + `shard_cache_built` + `shard_cache_input_cols_ok`，见 `reports/E0_local_contract_gate.json`）"],
         forbid=["契约校验依赖 torch 或网络",
                 "静默裁剪 SW / POR 到物理区间",
                 "允许 logId 缺失、行数不符、深度错位通过校验",
@@ -241,32 +277,48 @@ P["E1"] = [
         nature="数据管线：为 E1–E8 共用，必须先冻结",
         deps=["E0/P1（分片写入）、E0/P2（评分）"],
         goal="构建并缓存 `F1 = 13 条曲线 + DEPTH 原始值 + 13+1 缺失位 + 4 深度编码 = 32 维` 行级张量与三目标标签，"
-             "落盘为按井分片，并验证内存占用符合 16 GiB 预算。",
+             "落盘为按井分片，并验证内存占用符合 16 GiB 预算；同时在**每个训练折内**统计连续头需要的稳健尺度"
+             "（`s_por`、`s_sw`、SW 仿射 `sw_mu/sw_sigma`、`por_max`）并写入 scaler JSON/manifest，"
+             "保证推理可反变换。",
         why=["输入管线的正确性决定后面所有对比是否有意义：特征与标签必须逐行对齐；",
              "16 GiB 系统内存是真正的瓶颈，必须把\"按井分片 + 按需读取\"固化为管线，否则 E3 一开始就 OOM；",
              "标准化参数只能在训练折 fit（`资料库/07` §5、§8.6），因此管线必须支持\"折内 fit\"接口。"],
         inputs=["`$V4_CACHE_ROOT/raw|labels/<well>.npz`（E0/P1 产出）",
                 "`src/validation/folds.py`（outer/inner 折）"],
         outputs=["`src/features/basic.py`（`build_row_features`/`build_labels`/`decode_predictions`）",
-                 "`src/data/row_dataset.py`（折内拼接 + 标准化）",
-                 "`$V4_REPORTS_DIR/E1_row_features.json`（维度、缺失率、内存峰值、耗时）"],
+                 "`src/data/row_dataset.py`（折内拼接 + 标准化 + SW/POR 连续头反变换接口）",
+                 "`$V4_REPORTS_DIR/E1_row_features.json`（维度、缺失率、内存峰值、耗时、逐折稳健尺度参数）",
+                 "`versions/scalers/E1_fold{k}.json`（`s_por`/`s_sw`/`sw_mu`/`sw_sigma`/`por_max`，**只在训练折 fit**）"],
         steps=["实现 `build_row_features`：14 原始 + 14 缺失位 + 缺失比例 + 相对深度 + 深度步长 + 深度序号",
-               "实现 `build_labels`：POR/SW 原尺度、PERM 转 log10、三目标 mask、联合占位标签",
+               "实现 `build_labels`：POR/SW 原尺度、PERM 转 log10、三目标 mask、联合占位标签，"
+               "并按目标记录 `y_atom[:,t] = (y==占位常量) & ~missing`",
                "实现 `RowScaler`：**只在训练折 fit** 的中位数填补 + 均值/标准差标准化，输出 JSON 参数",
+               "统计连续头稳健尺度：`s_por`/`s_sw` = 训练折有效标签的 IQR（或 std），"
+               "`sw_mu = median(valid sw)`、`sw_sigma = IQR(valid sw)/1.349`、`por_max = 1.2×max(valid POR)`，"
+               "全部写入 scaler JSON 与 manifest",
                "实现折内数据装配：outer 训练折做 train、outer 验证折做推理，保证行级对齐",
                "实测内存：单折激活内存峰值与常驻内存，写入报告",
+               "写切片单测：构造 `POR=0`、`POR<0.1`、`POR≈11.34`（中位）的行，"
+               "验证连续头反变换/参数化路径能表示这些值；`SW` 侧验证 `(x−sw_mu)/sw_sigma` 与反变换互为逆",
                "缓存体积核对：`raw`+`labels` 合计应远小于 0.2 GB"],
         params=[("特征维度", "32", "冻结（F1）", "含 4 个深度编码列"),
                 ("标准化", "中位数填补 + 零均值单位方差", "冻结", "参数仅在训练折 fit"),
                 ("PERM 变换", "log10, clip[-6,6]", "冻结（F1）", "`constants.PERM_LOG_MIN/MAX`"),
+                ("`s_por` / `s_sw`", "训练折有效标签的 IQR（备选 std）", "冻结", "写入 scaler JSON，禁止跨折"),
+                ("`sw_mu` / `sw_sigma`", "`median` / `IQR/1.349`（训练折有效 SW）", "冻结", "输出反变换 `sw_cont = sw_mu + sw_sigma·head_out`"),
+                ("`por_max`", "`1.2 × max(valid POR)`（训练折，≈39.8）", "冻结", "供 `por_cont = por_max·sigmoid(g)`"),
                 ("分片格式", "npz(compressed), float32", "冻结", "原子写：tmp → rename")],
         done=["特征/标签逐行对齐：`X.shape[0] == y.shape[0] == mask.shape[0]` 对全部 90 井成立",
               "折内装配后训练/验证行的井集合与 `folds.json` 完全一致（无井级泄漏）",
-              "`RowScaler` 参数可序列化为 JSON 并在推理时复现",
+              "`RowScaler` 与连续头尺度参数可序列化为 JSON 并在推理时复现（含 SW 仿射反变换）",
+              "训练折稳健尺度只由训练折有效标签决定；测试井与验证折不参与 fit（单测断言）",
+              "`POR=0` 与 `POR<0.1` 切片单测通过（连续头参数化能输出 ~0）",
               "常驻内存 < 6 GiB、缓存 < 0.2 GB（实测写入报告）"],
         forbid=["在全部 80 井上 fit 标准化参数（必须折内 fit）",
                 "把井身份（`logId`）或折号作为特征",
-                "把占位行从训练集中剔除"],
+                "把占位行从训练集中剔除",
+                "把 SW 当 `[0,1]` 尺度或做 ×100 换算（SW 是单一百分数尺度）",
+                "用验证折/测试井标签估计 `s_por`/`s_sw`/`sw_mu`/`sw_sigma`/`por_max`"],
         risk=[("特征与标签错位", "训练 loss 不下降或分数异常低", "断言行数一致 + 抽查若干井的 depth 对齐"),
               ("标准化泄漏", "OOF 虚高", "`RowScaler` 只接受训练折索引，接口层拒绝整表 fit"),
               ("内存峰值过高", "被 OOM killer 杀", "按井拼接而非全量 concat；`num_workers=4`")],
@@ -280,24 +332,37 @@ P["E1"] = [
         pid="P1", title="行级 MLP + 评分对齐损失 + 5 折 OOF（硬 Gate ≥ 78.0）",
         nature="**分母建立阶段**：允许弱，必须正确",
         deps=["E1/P0"],
-        goal="训练多任务 MLP（共享主干 + POR/PERM/SW 三头 + 联合占位头），用三段式对齐损失，"
-             "跑完 80 井按井 5 折 OOF，产出逐行预测与官方口径评分；**硬 Gate：OOF Total ≥ 78.0、5 折同向、占位行逐目标 Acc ≥ 0.98**。",
+        goal="训练多任务 MLP（共享主干 + POR/PERM/SW 连续头 + 逐目标原子头 `q_por/q_perm/q_sw` + 辅助 `q_joint`），"
+             "用三段式对齐损失（**含训练折尺度归一化的 `L_aux`**），跑完 80 井按井 5 折 OOF，"
+             "产出逐行预测与官方口径评分；**硬 Gate：OOF Total ≥ 78.0、5 折同向、占位行逐目标 Acc ≥ 0.98**。",
         why=["在引入序列主干前必须知道\"只看当前深度点\"的上限，否则无法证明 E3 序列上下文的价值（`资料库/08` §0.3 第 1 层）；",
              "行级基线训练极快（分钟级），是验证损失实现、数据管线、OOF 流程是否正确的最高性价比手段；",
              "v2 E4/P3 的 CPU MLP 是 NO-GO，但那是**逐点 + 无 GPU + 小容量**；E1 要给出"
              "\"正确实现下的行级上限\"作为 E3 的严格对照；",
-             "`资料库/12` §2.3 指出纯对齐损失早期信号稀疏，因此必须用三段式 + 用**真实评分**早停。"],
+             "`资料库/12` §2.3 指出纯对齐损失早期信号稀疏，因此必须用三段式 + 用**真实评分**早停；",
+             "改进 proposal §3/§4：连续头的**参数化**（POR 可到 0、SW 训练折仿射归一化反变换）与损失修正"
+             "（`L_aux` 按目标尺度归一化、`masked_mean` 防 NaN、PERM 官方 log 截断）必须在本层定稿，"
+             "否则 E3/E4 只是在更快地优化错误目标。"],
         inputs=["E1/P0 的行级特征与标签", "`src/losses/score_aligned.py`", "E0 的评分器与折"],
-        outputs=["`models/E1/pd0_fold{k}.pt`（5 折权重，bf16 state_dict）",
+        outputs=["`models/E1/pd0_fold{k}.pt`（5 折权重，bf16 state_dict；含 `q_por/q_perm/q_sw/q_joint` 头）",
                  "`$TENSORBOARD_LOGDIR/E1_pd0/`（平台可见的迭代曲线；"
                  "由 `src/training/tb_logger.py::RunLogger` 写 TensorBoard + JSONL）",
-                 "`$V4_RUN_ROOT/E1/oof.npz`（well_id/depth/y_true/y_pred/q_ph，逐行）",
+                 "`$V4_RUN_ROOT/E1/oof.npz`（well_id/depth/y_true/y_pred/q_atom[3]/q_joint，逐行）",
                  "`$V4_REPORTS_DIR/E1_metrics.json`（逐折/逐目标/连续切片/bootstrap CI）",
                  "`$V4_REPORTS_DIR/E1_loss_curve.csv`（每 epoch 训练/验证真实分数）",
-                 "`$V4_REPORTS_DIR/E1_gate.json`"],
+                 "`$V4_REPORTS_DIR/E1_gate.json`",
+                 "连续头尺度参数（`s_por`/`s_sw`/`sw_mu`/`sw_sigma`/`por_max`）随 checkpoint manifest 落盘"],
         steps=["预注册 `E1_P1_gate_prereg.json`（阈值、候选数、bootstrap 设置、mandatory checks）",
                "实现 `train_row.py`：`--resume`、`--time-budget-h`、每 epoch checkpoint、"
                "每 epoch 调 `assert_disk_headroom(8.0)`、写 `training_time_log.json`",
+               "实现连续头参数化：POR 用 `por_cont = por_max·sigmoid(g)`（备选 `softplus(g)−softplus(g0)`，"
+               "**禁止 `0.1+softplus(g)`**）；SW 用 `sw_cont = sw_mu + sw_sigma·head_out`（`head_out` 在归一化空间训练）；"
+               "PERM 用 `zhat = 6·tanh(g)`，初始化自 `perm_z_median ≈ −0.08`",
+               "实现 `L_aux = 0.30·SmoothL1((por_hat−y)/s_por) + 0.35·SmoothL1(zhat−z) + "
+               "0.35·SmoothL1((sw_hat−y)/s_sw)`，`s_por`/`s_sw` 只取训练折有效标签的稳健尺度并写入 manifest",
+               "修正 `masked_mean`：先 `x = where(m>0, x, 0)` 再 `(x·m).sum()/m.sum().clamp_min(1.0)`，"
+               "并加 NaN 单测（`x=(nan,2.0)`、`m=(0,1)` → 2.0）",
+               "PERM 对齐项在 log 空间显式实现 `d = clamp_min(zhat−z, log10(eps))`，与官方 `max(ŷ/y,ε)` 对齐",
                "每 epoch 用 `RunLogger` 写 TensorBoard（`TENSORBOARD_LOGDIR`，持久在 /data）："
                "`loss/align|aux|ph`、`score/oof_total`、`score/acc_{por,perm,sw}`、`atomic/*`、`lr`",
                "跑 fold0 小规模冒烟（`--max-wells 8 --epochs 2 --smoke`）确认链路与显存/内存",
@@ -305,7 +370,8 @@ P["E1"] = [
                "每 epoch 在**该 outer 折的 inner-OOF** 上用真实 `score.py` 算分（早停依据，不用 loss 值；outer 验证折只在最后推理一次）",
                "汇总 OOF → `score_arrays(..., missing_mode=\"drop\")` → 逐目标 Acc 与 Total",
                "逐折 delta、逐井非退化比例、按井行数加权 paired cluster bootstrap（1000 次）",
-               "评估占位行逐目标 Acc/precision/recall，写入 Gate 的 `atomic_precision_reported`",
+               "评估占位行逐目标 Acc/precision/recall，写入 Gate 的 `atomic_precision_reported`；"
+               "并单独上报 `POR=0` 与 `POR<0.1` 切片的 Acc（单测覆盖该切片构造）",
                "写 `E1_gate.json` 并判定是否 ≥ 78.0"],
         params=[("`hidden`", "256", "128/256/512", "在该 outer 折的 inner-OOF 上选，选后冻结（fold0 仅作资源预检）"),
                 ("`layers`", "2", "1/2/3", "同 hidden，inner-OOF 选择"),
@@ -315,7 +381,10 @@ P["E1"] = [
                 ("`batch_size`", "4096", "2048/4096/8192", "内存允许下尽量大（显存不是约束）"),
                 ("`epochs`", "40", "20–80", "结合早停（patience 5）"),
                 ("`λ1` 退火", "1.0 → 0.1", "线性，前 60% epoch", "`资料库/12` §2.3 建议"),
-                ("`λ2`（占位 BCE）", "0.2", "0.1/0.2/0.3", "同上"),
+                ("`λ2`（原子 BCE）", "0.2", "0.1/0.2/0.3", "同上"),
+                ("POR 参数化", "`por_max·sigmoid(g)`", "sigmoid / softplus 偏移", "inner 选择；**禁用 `0.1+softplus`**"),
+                ("SW 参数化", "训练折仿射归一化 + 反变换", "冻结", "`sw_mu=median`，`sw_sigma=IQR/1.349`"),
+                ("边界聚焦权重", "**关闭（默认）**", "仅 E7 可选消融", "不属于 E1 默认配方"),
                 ("`alpha`/`beta`", "1e-3 / 20", "冻结", "Charbonnier / softplus 平滑参数"),
                 ("`seed`", "42", "42/1337", "固定；多 seed 视为集成成员（E8）")],
         done=["**OOF Total ≥ 78.0**（硬 Gate，低于此值视为实现 bug，先排查不扩容）",
@@ -323,15 +392,26 @@ P["E1"] = [
               "占位行逐目标 Acc **≥ 0.98**，且 `atomic_precision_reported` 写入 Gate",
               "加权配对井级 cluster bootstrap 95% CI 下界 > 0",
               "loss 曲线无 NaN；训练可 `--resume` 且 `disk_budget_ok`、`training_time_log_valid` 均为 true",
-              "CONTIN 连续切片（排除占位行）逐目标 Acc 一并上报"],
+              "CONTIN 连续切片（排除占位行）逐目标 Acc 一并上报",
+              "**连续头参数化验证**：POR 能输出 ~0（`POR=0`/`POR<0.1` 切片单测通过），SW 训练折仿射归一化"
+              "（`sw_cont = sw_mu + sw_sigma·head_out`）可反变换且无 ×100 换算",
+              "**损失修正验证**：`L_aux` 使用训练折 `s_por`/`s_sw` 且写入 manifest；`masked_mean` NaN 单测通过；"
+              "PERM 对齐项使用 `clamp_min(zhat−z, log10(eps))`",
+              "边界聚焦权重保持**默认关闭**（只作为 E7 的可选消融项）"],
         forbid=["加入任何窗口/序列特征（属于 E2/E3）",
                 "用 outer 折或 A 榜选超参、阈值、早停点",
                 "用 loss 值替代真实评分做模型选择",
-                "为冲分而删除占位行或裁剪 SW"],
+                "为冲分而删除占位行或裁剪 SW",
+                "POR 连续头使用 `0.1 + softplus(g)`（锁死下界，无法输出实测 0.0）",
+                "把 SW 当 `[0,1]` 尺度或对连续头做 ×100 换算",
+                "在整表上 fit `s_por`/`s_sw`/`sw_mu`/`sw_sigma`（只能训练折 fit）",
+                "默认开启边界聚焦权重"],
         risk=[("损失实现有误导致学不动", "loss 长时间不降或 Total < 70", "先用 `--smoke` 在 5000 行上做过拟合测试（应能拟合到接近满分）"),
               ("标准化泄漏", "OOF 虚高、A 榜落差大", "折内 fit 断言 + 单元测试"),
-              ("占位行学坏", "占位 Acc < 0.98、Total 卡在 70 出头", "提高 λ₂ 或对占位行过采样；检查 SW 尺度换算"),
-              ("PERM 长尾崩塌", "PERM Acc < 0.85", "确认在 log10 空间监督；检查 clip 范围"),
+              ("占位行学坏", "占位 Acc < 0.98、Total 卡在 70 出头", "提高 λ₂ 或对占位行过采样；检查 SW 是否被误做尺度换算"),
+              ("PERM 长尾崩塌", "PERM Acc < 0.85", "确认在 log10 空间监督；检查 `clamp_min(zhat−z, log10(eps))` 与 clip 范围"),
+              ("POR 连续头锁死在下界", "`POR=0`/`POR<0.1` 切片 Acc 恒为 0", "换用 `por_max·sigmoid(g)`；确认已删除 `0.1+softplus`"),
+              ("SW 梯度被 99.9 主导", "POR/PERM 早期不降", "确认 `L_aux` 已按 `s_sw` 归一化"),
               ("内存/磁盘被打爆", "训练中途被杀", "`num_workers=4`、checkpoint 滚动淘汰、`disk_guard`")],
         stop=["OOF < 78.0 时**禁止扩容**：先做\"5000 行过拟合测试\"与\"折内一致性检查\"",
               "连续 2 次 NaN → 回退上一 checkpoint 并减半 lr",
@@ -522,41 +602,58 @@ P["E3"] = [
         pid="P1", title="1D U-Net 与 TCN 主干实现",
         nature="主线模型实现：本计划的核心赌注",
         deps=["E3/P0"],
-        goal="实现两种深度序列主干（1D U-Net 与 TCN），输出与输入逐行同长，接多任务头与联合占位头，"
-             "在 bf16 下训练单折并记录参数量/显存/耗时。",
+        goal="实现两种深度序列主干（1D U-Net 与 **非因果** TCN），输出与输入逐行同长（**全段 seq2seq，不用滑窗中心点**），"
+             "接多任务头（连续头）+ 逐目标原子头 + 辅助 `q_joint` 头，在 bf16 下训练单折并记录参数量/显存/耗时。",
         why=["`资料库/08` §0.3 把 1D U-Net / TCN 列为\"最可能冲高分的结构\"，"
              "而前代因 CPU 限制从未真正训练过（v2 E7 是 NO-GO 但属\"无 CPU 可行方案\"）；",
              "0.1 m 采样下 10 m 储层段 = 100 点，**没有数百点感受野模型只能逐点外推**；",
              "U-Net 的 skip 保留高频细节（薄层），TCN 的空洞卷积给长程依赖，两者归纳偏置互补，"
-             "必须头对头比较才知道哪个更适合本数据。"],
+             "必须头对头比较才知道哪个更适合本数据；",
+             "改进 proposal §6：本任务是**离线整井**推理，TCN 必须**非因果**；U-Net 用 depthwise 可分离 + "
+             "空洞卷积时会产生 **padding 边界伪影**，且 chunk 拼接会产生接缝跳变，必须专门检查。"],
         inputs=["E3/P0 的 `SeqDataset`", "E1/P0 的 F1 特征（作为输入通道）",
                 "`资料库/08` §4（1D-CNN/空洞/深度可分离）、§6（TCN）"],
         outputs=["`src/models/unet1d.py`、`src/models/tcn.py`、`src/models/heads.py`",
                  "models/E3/{unet,tcn}_fold{k}.pt",
-                 "`$V4_REPORTS_DIR/E3_param_budget.json`（参数量/显存/单折耗时）"],
+                 "`$V4_REPORTS_DIR/E3_param_budget.json`（参数量/显存/单折耗时）",
+                 "`$V4_REPORTS_DIR/E3_boundary_report.json`（padding 边界伪影 + chunk 拼缝检查）"],
         steps=["实现 `UNet1D`：depth=5 级下采样（stride 2）+ 同层数上采样 + skip 拼接；"
-               "每级 2×[Conv1d(k=5,groups=C) → BN → GELU]；`base_ch` 64→256",
-               "实现 `TCN`：残差块 + 空洞卷积（dilation=2^i, i=0..8, k=3）+ weight norm + 残差",
-               "实现 `SeqHead`：把主干输出 (B,L,d) 逐行送 POR/PERM/SW 三头 + 占位头（形状 (B,L)）",
-               "确认前向输出长度与输入严格一致（`out.shape[1]==x.shape[1]`）",
+               "每级 2×[**depthwise-separable Conv1d(k=5, groups=C)** → BN → GELU]，"
+               "下采样块中插入**空洞卷积**扩大感受野；`base_ch` 64→256",
+               "实现 `TCN`：残差块 + **非因果**空洞卷积（dilation=2^i, i=0..8, k=3）+ weight norm + 残差；"
+               "`dilation_max=512` ≈ 50 m 感受野，**先验证有效性**再考虑继续加",
+               "实现 `SeqHead`：把主干输出 (B,L,d) 逐行送 POR/PERM/SW 连续头 + `q_atom[3]` + `q_joint`（形状 (B,L)）",
+               "确认前向输出长度与输入严格一致（`out.shape[1]==x.shape[1]`）——**全段 seq2seq，禁止滑窗中心点**",
+               "实现 chunk 重叠推理与**加权拼接**（三角/汉宁窗，按权重归一），消除接缝跳变",
+               "跑 padding 边界伪影检查：逐目标比较井首/井尾 10 m 与井中段的 Acc，记录差值",
                "单折训练（bf16 + 梯度裁剪 + AdamW），记录参数量与峰值显存/内存",
                "跑 `--smoke`（8 井 2 epoch）确认无 NaN、契约通过"],
         params=[("`base_ch`", "64", "32/64/128", "显存充足；内存不受影响"),
                 ("U-Net 深度", "5", "3/4/5", "对应感受野 ≈ 数十–上百 m"),
+                ("TCN 因果性", "**非因果**（离线任务）", "冻结", "因果化会白丢未来上下文"),
                 ("TCN 块数/最大 dilation", "9 块 / 512", "6/9；64/512", "感受野消融的关键变量"),
                 ("卷积核", "5（U-Net）/ 3（TCN）", "3/5/7", "同上"),
+                ("chunk 拼接权重", "三角窗（按距离）", "三角/汉宁/等权", "inner-OOF 选择，防接缝跳变"),
                 ("归一化", "BN（默认）", "BN/LN/GN", "E3/P2 消融"),
                 ("`dropout`", "0.1", "0.0/0.1/0.2", "序列模型更易过拟合 80 井"),
                 ("`lr`", "1e-3", "3e-4/1e-3/3e-3", "AdamW + 余弦"),
                 ("bf16", "开启", "bf16/fp32", "A100 支持；fp16 易 NaN")],
-        done=["两种主干都能前向且输出长度与输入一致",
+        done=["两种主干都能前向且输出长度与输入一致（全段输出，非中心点）",
               "参数量与峰值资源记录完整，单折耗时在软预算内",
               "`--smoke` 无 NaN、契约通过、checkpoint 可 `--resume`",
+              "TCN 全程**非因果**（单测：将输入尾部置零不应改变头部输出）",
+              "chunk 重叠推理 + 加权拼接实现完成，逐点与整段推理差 < 容差（无缝跳变）",
+              "`E3_boundary_report.json` 给出井首/井尾 10 m vs 井中段的逐目标 Acc 差；"
+              "若显著偏低，必须给出修正（padding 方式/深度可分离归一化）",
               "不使用任何 2.5+ 的 PyTorch API；注意力（若有）走 `F.scaled_dot_product_attention`"],
         forbid=["使用 ImageNet/自然图像预训练权重（分布无关，只会引入无关先验）",
                 "引入 flash-attn / xformers 等需编译的 CUDA 扩展",
-                "在 16 GiB 内存下把整井喂入模型"],
+                "在 16 GiB 内存下把整井喂入模型",
+                "把 TCN 做成因果卷积（离线任务无因果约束）",
+                "用滑窗中心点预测代替全段 seq2seq 输出",
+                "在 chunk 边界不做重叠加权（会留下接缝跳变）"],
         risk=[("感受野不足", "序列模型与行级模型分数接近", "E3/P2 的感受野消融会暴露；先增大 depth/dilation 再谈扩容"),
+              ("padding 边界伪影", "井首/尾 10 m Acc 明显低于中段", "改 padding 方式（reflect/replicate）、加深可分离块、或在拼缝处加权"),
               ("过拟合 80 井", "inner 高 outer 低、折间方差大", "dropout/stochastic depth/weight decay + E2 增强"),
               ("bf16 数值不稳", "loss 出现 NaN", "梯度裁剪 1.0 + 关键归一化层用 fp32（`autocast` 白名单）"),
               ("显存充足但内存爆", "阶段被杀", "chunk + `num_workers=4` + 不缓存分片")],
@@ -578,31 +675,46 @@ P["E3"] = [
         why=["这是\"上下文是否真被利用\"的唯一判据，也是 E4/E5 是否值得继续的前提；",
              "若缩小感受野不降分，说明主干没学到长程结构，此时**扩容是浪费机时**，应先修数据/结构/损失；",
              "前代所有序列/井级尝试都是 NO-GO，因此本次必须给出比\"分数提高了\"更硬的证据："
-             "同折、同头、同特征的受控对照 + 感受野消融。"],
+             "同折、同头、同特征的受控对照 + 感受野消融；",
+             "改进 proposal §6：`dilation_max=512`（≈50 m）必须先**验证感受野是否真的被用上**，"
+             "而不是盲目继续加到 1024；同时要排除 padding 边界伪影与 chunk 拼缝对分数的污染，"
+             "否则\"序列有增益\"的结论可能是接缝 artifact。"],
         inputs=["E3/P1 的 5 折 OOF、E1/P1 的行级 OOF", "E0 的评分器与 bootstrap 工具"],
         outputs=["`$V4_RUN_ROOT/E3/oof.npz`（合并 5 折，逐行）",
                  "`$V4_REPORTS_DIR/E3_receptive_field_ablation.json`",
                  "`$V4_REPORTS_DIR/E3_row_vs_seq.json`",
+                 "`$V4_REPORTS_DIR/E3_boundary_report.json`（padding 边界 + chunk 拼缝）",
                  "`$V4_REPORTS_DIR/E3_gate.json`"],
         steps=["预注册 `E3_P2_gate_prereg.json`（含 `min_delta`、`primary_metric`、`candidate_budget`）",
                "跑 U-Net 与 TCN 各 5 折（可并行任务拆分），汇总 OOF",
                "把**同一份行级头**装在行级特征上训练一遍（同折同超参），作为受控对照",
-               "感受野消融：depth∈{3,5} × dilation_max∈{64,512}，各跑**每个 outer 折的 inner-OOF** 筛查（为省机时可先只在 fold0 做**资源预检**，但预检结论不得进入 Gate 数值）",
+               "感受野消融：depth∈{3,5} × dilation_max∈{64,512}（512≈50 m），各跑**每个 outer 折的 inner-OOF** 筛查"
+               "（为省机时可先只在 fold0 做**资源预检**，但预检结论不得进入 Gate 数值）；"
+               "若 512 与 64 无差异，说明有效感受野已饱和，禁止继续加到 1024",
+               "边界体检：逐目标比较井首/井尾 10 m 与井中段 Acc，并对比「整段推理」与「chunk 重叠拼接」的逐点差；"
+               "确认非因果（把输入尾部置零不影响头部输出）",
                "计算序列 vs 行级的 paired cluster bootstrap（按井行数加权，1000 次）",
                "逐折 delta、逐井非退化比例、占位行 Acc、连续切片 Acc 一并上报",
                "写 Gate 并判定"],
         params=[("主判据", "OOF Total ≥ 81.0", "硬 Gate", "低于此值不得进入 E4"),
                 ("显著性判据", "序列 vs 行级 bootstrap CI 下界 > 0", "冻结", "受控对照必须有"),
                 ("消融预算", "inner-OOF 筛查，胜者再跑全 5 折", "冻结", "省机时且避免看全折后挑结构"),
-                ("感受野变量", "depth {3,5} × dilation {64,512}", "冻结", "4 个组合")],
+                ("感受野变量", "depth {3,5} × dilation_max {64,512}", "冻结", "4 个组合；512≈50 m"),
+                ("边界判据", "井首/尾 10 m 与中段 Acc 差 < 0.02", "冻结", "超限需给修正计划")],
         done=["OOF Total **≥ 81.0**",
               "序列主干相对**同头同特征**行级模型 CI 下界 > 0（若为负，判 NO-GO 并记录证据）",
-              "感受野消融表完整；若缩小感受野不降分，必须给出\"上下文未被利用\"的结论与修正计划",
+              "感受野消融表完整；若缩小感受野不降分，必须给出\"上下文未被利用\"的结论与修正计划；"
+              "并明确 `dilation_max=512` 是否饱和",
+              "**padding 边界伪影检查通过**：井首/尾 10 m 与井中段的逐目标 Acc 差报告齐备",
+              "**全段 seq2seq + chunk 重叠加权拼接**验证通过：整段推理与拼接推理逐点差在容差内（无接缝跳变）",
+              "TCN 非因果性单测通过",
               "5 折 delta 全部同向；`atomic_precision_reported` 与 `contract_ok` 为 true"],
         forbid=["跳过消融直接堆容量",
                 "用 outer 折（含 fold0）验证标签选超参——fold0 只作资源筛查，"
                 "其结论必须标 `selection_score_only`",
-                "在未通过 CI 判据的情况下宣称\"序列有效\""],
+                "在未通过 CI 判据的情况下宣称\"序列有效\"",
+                "在未排除 padding 边界与拼缝 artifact 的情况下把增益归因于上下文",
+                "在 dilation_max=512 无增益时继续盲目加大感受野"],
         risk=[("序列不优于行级", "CI 含 0 或为负", "先查数据分块/覆盖、归一化、损失；最多两次结构修订后降级为 NO-GO"),
               ("分数高但来自容量而非上下文", "缩小感受野分数不降", "以感受野消融结论为准，判定上下文未被利用"),
               ("机时超支", "单折耗时持续增长", "先在 inner-OOF/fold0 资源预检筛查，胜者才跑全折")],
@@ -626,37 +738,47 @@ P["E4"] = [
         pid="P0", title="Patch Transformer 主干（通道独立）",
         nature="第二主干候选",
         deps=["E3/P2（序列路线确认有效）"],
-        goal="实现 PatchTST 式通道独立 Patch Transformer（patch=32/stride=16、d=256、6 层、8 头、"
-             "相对位置编码），与 E3 的 CNN 主干在**同数据同折**下可比。",
+        goal="实现 PatchTST 式**通道独立 + 相对位置编码**的 Patch Transformer，"
+             "patch size/stride/overlap 只在 inner-OOF 上搜索，与 E3 的 CNN 主干在**同数据同折**下可比；"
+             "80 井小数据下**优先小 `d` / 小 `layers`**。",
         why=["`资料库/08` §0.3 第 3 层与 §7.5：把深度序列切成 patch 后做通道独立建模，"
              "是长序列的低成本高效方案（复杂度从 O(n²) 降到 O((n/P)²)）；",
              "CNN 擅长局部形态，注意力擅长长程依赖，两者互补——但必须先证明 Transformer 单体能打平/超过 CNN，"
              "才谈融合；",
-             "`资料库/08` §1.2 指出整井 n≈10⁴ 时原始自注意力不可接受，patch 化是必要前提。"],
+             "`资料库/08` §1.2 指出整井 n≈10⁴ 时原始自注意力不可接受，patch 化是必要前提；",
+             "改进 proposal §6：80 井极易过拟合，PatchTF 必须优先小 `d`/小 `layers`；patch/stride/overlap "
+             "与重叠 chunk 推理都只能在 inner-OOF 上定。"],
         inputs=["E3/P0 的 `SeqDataset`", "`资料库/08` §7.1/§7.3/§7.5/§7.6"],
         outputs=["`src/models/patchtf.py`",
                  "models/E4/patchtf_fold{k}.pt",
-                 "`$V4_REPORTS_DIR/E4_patchtf.json`（与 E3 的对照结果）"],
-        steps=["实现 patch 切分与线性投影（P=32, stride=16, d_model=256）",
+                 "`$V4_REPORTS_DIR/E4_patchtf.json`（与 E3 的对照结果 + patch/stride/overlap 搜索表）"],
+        steps=["实现 patch 切分与线性投影（默认 P=32, stride=16, d_model=128, 4 层，小容量起步）",
                "实现通道独立：每条曲线单独作为 token 序列（共享权重），最后沿通道做聚合",
+               "**保留相对位置编码**并做消融（有/无）",
                "注意力用 PyTorch 2.4 原生 `F.scaled_dot_product_attention`（自动选择 Flash/Memory-Efficient/Math 后端）",
-               "相对位置编码 + Pre-LN + 残差 + FFN(GELU)，dropout 0.1",
-               "输出上采样回逐行长度（patched 输出按 stride overlap-add 还原）",
-               "inner-OOF 筛查（fold0 仅资源预检），胜者跑全 5 折"],
-        params=[("`patch_len`", "32", "16/32/64", "与 stride 联动"),
-                ("`stride`", "16", "8/16/32", "overlap = patch−stride"),
-                ("`d_model`", "256", "128/256/512", "显存充足"),
-                ("`n_layers`", "6", "4/6/8", "同上"),
+               "输出上采样回逐行长度（patched 输出按 stride overlap-add 还原），并实现**重叠 chunk 推理 + 加权拼接**",
+               "patch size/stride/overlap 只在 inner-OOF 上搜索（fold0 仅资源预检），胜者跑全 5 折"],
+        params=[("`patch_len`", "32", "16/32/64", "inner-OOF 搜索"),
+                ("`stride`", "16", "8/16/32", "overlap = patch−stride，inner-OOF 搜索"),
+                ("`d_model`", "128", "64/128/256", "80 井优先小 d"),
+                ("`n_layers`", "4", "2/4/6", "80 井优先小 layers"),
                 ("`n_heads`", "8", "4/8", "d_model 必须整除"),
                 ("通道独立", "是", "是/否", "NO 则退化为多头联合建模，作对照"),
+                ("相对位置编码", "开", "开/关", "消融证明有贡献或记录 NO-GO"),
+                ("chunk 拼接权重", "三角窗", "三角/汉宁/等权", "inner-OOF 选，防接缝跳变"),
                 ("`dropout`", "0.1", "0.0/0.1/0.2", "80 井易过拟合")],
         done=["patch 还原后输出长度与输入严格一致（overlap-add 权重归一）",
               "与 E3 在同折同数据下可比（同 chunk、同特征、同头）",
+              "通道独立与相对位置编码保留且各自有消融结论",
+              "patch/stride/overlap 搜索表完整，全部只在 inner-OOF 上选",
+              "重叠 chunk 推理完成，整段推理与拼接推理逐点差在容差内（无接缝跳变）",
               "注意力只使用 2.4 已有签名；无编译扩展依赖",
               "inner-OOF 筛查结果与资源记录完整（fold0 预检标 exploratory=true）"],
         forbid=["把曲线轴当图像轴做 2D 卷积（曲线轴相邻无物理含义，`资料库/08` §1.3）",
                 "依赖 flash-attn/xformers",
-                "用 2.5+ 的 `torch.nn.attention` API"],
+                "用 2.5+ 的 `torch.nn.attention` API",
+                "用 outer 折选 patch/stride/overlap",
+                "在小数据上直接开大 `d`/`layers` 而不先做容量消融"],
         risk=[("patch 还原错位", "接缝处预测跳变、行数不符", "overlap-add 单测：常数输入应还原为常数"),
               ("通道独立后参数量爆炸", "显存/时间超预算", "共享通道权重；必要时减层"),
               ("注意力数值不稳", "NaN", "Pre-LN + 梯度裁剪 + bf16 关键层 fp32")],
@@ -670,28 +792,36 @@ P["E4"] = [
         pid="P1", title="多尺度融合（CNN × Transformer）与 Gate",
         nature="融合候选：必须超过最佳单主干才算增益",
         deps=["E4/P0、E3/P2"],
-        goal="把 CNN 主干与 PatchTF 的逐行表示按门控或 concat 融合后送同一组头，"
-             "判定是否超过**最佳单主干**；否则 NO-GO 并保留 E3 结构。",
+        goal="把 CNN 主干与 PatchTF 的逐行表示按**门控融合或 FiLM**（其次 concat）融合后送同一组头，"
+             "**融合头保持小容量**，结构与权重只在 inner-OOF 上选，判定是否超过**最佳单主干**；否则 NO-GO 并保留 E3 结构。",
         why=["多尺度是最常见的稳定增益来源，但必须证明超过最好单主干，否则只是参数变多；",
              "CNN 的局部形态与注意力的长程依赖在测井上确实互补（`资料库/08` §0.3 第 3–4 层）；",
-             "融合层参数量小，是\"低成本换分\"的候选。"],
+             "融合层参数量小，是\"低成本换分\"的候选；",
+             "改进 proposal §6：优先**门控 / FiLM** 而不是直接 concat（concat 会让融合头参数量膨胀并在 80 井上过拟合），"
+             "且融合结构/权重只能由 inner-OOF 决定。"],
         inputs=["E3/P1 的 U-Net/TCN 权重与逐行表示", "E4/P0 的 PatchTF"],
         outputs=["`src/models/multiscale.py`",
                  "`$V4_RUN_ROOT/E4/oof.npz`",
                  "`$V4_REPORTS_DIR/E4_gate.json`"],
-        steps=["实现三种融合：① 门控加权（可学习标量/向量门）；② concat + 1×1 卷积降维；③ 表示层平均",
+        steps=["实现三种融合：① **门控加权**（可学习标量/向量门）；② **FiLM**（逐通道仿射调制）；"
+               "③ concat + 1×1（作对照）；受控保持融合头参数量小",
                "冻结两个主干的预训练权重先做快速筛查（只训融合层与头）",
                "胜出方案再解冻联合微调（小 lr）",
+               "融合结构/权重只在 inner-OOF 上选（fold0 仅资源预检）",
                "与最佳单主干做同折 paired bootstrap",
                "写 Gate：融合 ≥ 最佳单主干且 CI 下界 > 0"],
-        params=[("融合方式", "门控（默认）", "门控/concat/平均", "inner-OOF 选（fold0 仅资源预检）"),
+        params=[("融合方式", "门控（默认）", "门控/FiLM/concat/平均", "inner-OOF 选（fold0 仅资源预检）"),
+                ("融合头容量", "小（≤ 1×d 的 1×1）", "冻结上限", "防 80 井过拟合"),
                 ("融合层 lr", "1e-3（冻结主干）/ 2e-4（解冻）", "—", "解冻时用更小 lr"),
                 ("候选数", "3", "—", "multiplicity=holm 校正")],
         done=["融合方案相对最佳单主干的 paired bootstrap CI 下界 > 0，否则判 NO-GO 并保留 E3",
               "同源性报告：两主干 OOF 预测的相关系数（过高说明融合收益可疑）",
+              "融合头参数量保持在预注册上限内，且结构与权重只在 inner-OOF 选定",
               "参数量与耗时增量记录完整"],
         forbid=["用两个高度同源的分支冒充多尺度",
-                "在未与单主干对照的情况下宣称融合有效"],
+                "在未与单主干对照的情况下宣称融合有效",
+                "用 outer 折选融合结构/权重",
+                "把融合头做成大容量 MLP（80 井必然过拟合）"],
         risk=[("融合无增益", "CI 含 0", "判 NO-GO，保留 E3 主干；把预算让给 E5/E6"),
               ("同源性高", "两主干预测相关 > 0.99", "检查是否实现同一结构；若确实同源则融合无意义")],
         stop=["融合 CI 上界 ≤ 0 → NO-GO，E5 直接基于 E3 主干"],
@@ -709,33 +839,54 @@ P["E5"] = [
         pid="P0", title="POR 窄带精修（±0.008）",
         nature="单目标攻坚：POR（权重 30%，容差最窄）",
         deps=["E3/P2 或 E4/P1（冻结主干）"],
-        goal="针对 POR 的极窄容差带（0.08×0.1 = ±0.008）设计专用头与训练策略，"
-             "提升 POR 连续切片准确率且不牺牲其他目标。",
+        goal="解除 POR 连续头的下界锁死：**推荐** `por_cont = por_max·sigmoid(g)`，"
+             "`por_max = 1.2 × max(训练折有效 POR)`（≈39.8）；**备选** `softplus(g) − softplus(g0)`；"
+             "输出层初始化到训练折有效 POR 中位数（≈11.34）而**不是 0.1**；"
+             "在 ±0.008 容差带下提升 POR 连续切片准确率且不牺牲其他目标，并产出 POR 参数化消融表。",
         why=["POR 权重 30% 但**容差带最窄**：占位 0.1 的允许误差只有 ±0.008，"
              "任何抖动都会掉出带外；",
-             "POR 头从 `0.1 + softplus(g)` 起步可保证非负且离占位值近，减少初期震荡；",
+             "**实测数据证明 `0.1 + softplus(g)` 不可用**：有效 POR 有 576 行 <1、其中 186 行 <0.1，"
+             "还有真值 0.0——下界锁死使模型根本无法表示这些值；",
              "`资料库/12` §3.3 指出 POR 全空间 9.71 分，是三个目标中上限最小的，"
-             "因此策略应是\"守住占位 + 精修有效段\"而不是全面重构。"],
-        inputs=["E3/E4 的冻结主干逐行表示", "E1/P1 的 POR 基线 OOF"],
-        outputs=["`src/models/heads.py::PorHead`（精修版）",
+             "因此策略应是\"守住占位 + 精修有效段\"而不是全面重构；",
+             "改进 proposal §3 B1 推荐数据范围 sigmoid：天然有界、非负、可逼近 0，且初始化可贴近中位数。"],
+        inputs=["E3/E4 的冻结主干逐行表示", "E1/P1 的 POR 基线 OOF",
+                "E1/P0 的训练折 `por_max`（≈39.8）与有效 POR 分位数"],
+        outputs=["`src/models/heads.py::PorHead`（精修版，无下界锁死）",
                  "`$V4_RUN_ROOT/E5/por/oof.npz`",
-                 "`$V4_REPORTS_DIR/E5_por.json`（连续切片 Acc、带内占比、逐折 delta）"],
+                 "`$V4_REPORTS_DIR/E5_por.json`（连续切片 Acc、带内占比、`POR=0`/`POR<0.1` 切片、逐折 delta）",
+                 "`$V4_REPORTS_DIR/E5_por_param_ablation.json`（POR 参数化消融表）"],
         steps=["统计 POR 误差分布：落在 ±0.008 带内的比例、带外距离分布（定位问题在偏移还是方差）",
-               "试验三种 POR 参数化：`0.1+softplus`、`sigmoid·0.5`、直接线性（作对照）",
-               "试验误差加权：对接近带边界的样本加大权重（可微权重，不改标签）",
+               "实现参数化对照表：① `por_max·sigmoid(g)`（推荐，`por_max=1.2×max(valid POR)`≈39.8）；"
+               "② `softplus(g) − softplus(g0)`（备选，`g0` 取训练折低分位对应的 logit）；"
+               "③ 直接线性/`0.1+softplus`（**仅作反例对照，必须记录其不可用**）",
+               "初始化输出层使初始 `por_cont` ≈ 训练折有效 POR 中位数（≈11.34），**不是 0.1**；"
+               "`por_max` 与初始化参数写入 manifest",
+               "试验误差加权：对接近带边界的样本加大权重（可微权重，不改标签）——"
+               "边界聚焦只是**可选**，默认关闭，正式消融归 E7",
                "只在 inner-OOF 上选参数化与权重，outer 折只推理一次",
-               "报告 POR 的**连续切片**（排除占位行）Acc 与占位行 Acc 的跷跷板效应"],
-        params=[("POR 参数化", "`0.1 + softplus(g)`", "softplus/sigmoid/线性", "inner 选择"),
-                ("带边加权", "关（默认）", "开/关 + 权重 2/5", "inner 选择"),
+               "写切片单测：构造 `POR=0`、`POR<0.1`、`POR≈11.34` 的行，验证所选参数化能表示这些值",
+               "报告 POR 的**连续切片**（排除占位行）Acc、`POR=0`/`POR<0.1` 切片 Acc 与占位行 Acc 的跷跷板效应"],
+        params=[("POR 参数化", "`por_max·sigmoid(g)`（推荐）", "sigmoid / softplus 偏移 / 线性（反例）", "inner 选择，禁用 `0.1+softplus`"),
+                ("`por_max`", "`1.2×max(valid POR)`（训练折，≈39.8）", "冻结", "E1/P0 写入 scaler JSON"),
+                ("输出初始化", "≈训练折有效 POR 中位数 11.34", "冻结", "**不是 0.1**"),
+                ("`g0`（softplus 备选）", "训练折有效 POR 低分位对应 logit", "inner 选择", "仅备选方案使用"),
+                ("带边加权", "关（默认）", "开/关 + 权重 2/5", "可选，正式消融在 E7"),
                 ("δ（容差）", "0.08（官方）", "冻结", "不得改动"),
                 ("候选数", "3–4", "—", "holm 校正")],
         done=["POR 连续切片 Acc 提升且 CI 下界 > 0",
               "PERM/SW 不退化超过 0.01（总分为准的跷跷板检查）",
-              "POR 占位行 Acc 仍 ≥ 0.99"],
+              "POR 占位行 Acc 仍 ≥ 0.99",
+              "**POR 参数化消融表**完整：`por_max·sigmoid` / `softplus(g)−softplus(g0)` / `0.1+softplus` 反例三行齐备，"
+              "且证明推荐方案的 `POR=0`、`POR<0.1` 切片可表示",
+              "`por_max` 与初始化来自训练折统计并写入 manifest；输出初始值贴近 11.34 而非 0.1"],
         forbid=["改动 POR 容差或评分权重",
-                "用全局裁剪把 POR 压到 [0,0.4]（会破坏占位值 0.1 之外的物理含义）",
-                "为提升 POR 而牺牲 PERM/SW"],
-        risk=[("带边加权导致占位过拟合", "占位 Acc 上升但有效段下降", "报告两个切片并做跷跷板检查"),
+                "POR 连续头使用 `0.1 + softplus(g)`（锁死下界，实测无法表示 0.0）",
+                "把 `por_max` 或初始化分位数在整表/验证折上计算",
+                "为提升 POR 而牺牲 PERM/SW",
+                "默认开启带边加权（它只是 E7 的可选消融项）"],
+        risk=[("POR 连续头锁死在下界", "`POR=0`/`POR<0.1` 切片 Acc 恒为 0", "换用 `por_max·sigmoid(g)`；删除 `0.1+softplus`"),
+              ("带边加权导致占位过拟合", "占位 Acc 上升但有效段下降", "报告多个切片并做跷跷板检查；默认关闭"),
               ("POR 头震荡", "连续段预测呈锯齿", "提高 λ_align 中 POR 的有效样本权重；检查 BN 统计")],
         stop=["POR 连续切片连续 3 次无正增量 → 该方向停止，转 PERM/SW"],
         code=["E5/code/head_por.py"],
@@ -747,27 +898,42 @@ P["E5"] = [
         pid="P1", title="PERM log 域精修（长尾与数量级）",
         nature="单目标攻坚：PERM（权重 35%，边际收益最高）",
         deps=["E5/P0"],
-        goal="在 log10 域精修 PERM：处理长尾与数量级误差，输出经 tanh 夹到 [-6,6] 保证正有限，"
-             "提升 PERM 连续切片准确率。",
+        goal="在 log10 域精修 PERM：处理长尾与数量级误差，对齐官方评分器的截断 "
+             "`1−|log10(max(ŷ/y, ε))|`（即 `clamp_min(ẑ−z, log10(eps))`），"
+             "输出经 tanh 夹到 [-6,6] 保证正有限；输出层初始化使 `perm_z ≈ −0.08`（训练折有效 PERM 的 log10 中位数）。",
         why=["PERM 权重 35%、历史探索最少、边际收益最高（`资料库/12` §3.3 排序 PERM > SW ≈ POR）；",
              "评分是 `|log10(ŷ/y)|`，相差 10 倍即得 0——**必须在数量级上正确**，绝对误差无意义；",
-             "`资料库/13` 指出测井预测渗透率\"落在真值两倍内已算很好\"，因此目标是量级正确而非过拟合 RMSE。"],
-        inputs=["E3/E4 冻结主干表示", "E1/P1 的 PERM 基线 OOF"],
+             "`资料库/13` 指出测井预测渗透率\"落在真值两倍内已算很好\"，因此目标是量级正确而非过拟合 RMSE；",
+             "改进 proposal §3 B3/§4 C2：初始化若停在 0 附近，早期相对误差极大；"
+             "且官方对**极端低估**有 `max(ŷ/y, ε)` 截断，损失必须在 log 空间显式复算这一截断，"
+             "否则低估尾部的梯度与得分与官方不一致。"],
+        inputs=["E3/E4 冻结主干表示", "E1/P1 的 PERM 基线 OOF",
+                "E1/P0 的训练折 `perm_z_median ≈ −0.08`"],
         outputs=["`E5/code/head_perm.py`", "`$V4_RUN_ROOT/E5/perm/oof.npz`",
-                 "`$V4_REPORTS_DIR/E5_perm.json`"],
+                 "`$V4_REPORTS_DIR/E5_perm.json`",
+                 "`$V4_REPORTS_DIR/E5_perm_tail.json`（低估尾部 vs 官方评分器一致性报告）"],
         steps=["分析 z 空间误差分布：σ(z)、落在 |Δz|<1 的比例、长尾方向（低估/高估）",
+               "输出层初始化到训练折有效 PERM 的 `log10` 中位数（≈ −0.08），而不是 0",
+               "实现官方截断对齐：`d = clamp_min(zhat − z, log10(eps))`，再套平滑绝对损失；"
+               "写单测对比「对齐损失」与官方 `acc_perm` 在极端低估处的单调性",
                "试验量化分桶辅助损失（把 z 分箱做 soft 分类，再求期望）与纯回归对照",
                "实现分位数/异方差辅助头（`资料库/09` §4）以改善尾部",
                "确保输出 `10^clip(z)` 严格 > 0 且有限（契约层会二次校验）",
+               "写「PERM 低估尾部 vs 官方评分器」一致性报告：按真值分箱比较预测的官方 Acc 与对齐损失的排序一致性",
                "只在 inner-OOF 上选方案"],
-        params=[("z 输出", "`6·tanh(g)`", "tanh/clip/线性", "tanh 保证有界"),
+        params=[("z 输出", "`6·tanh(g)`，初始化到 `perm_z_median ≈ −0.08`", "tanh/clip/线性", "tanh 保证有界"),
+                ("对齐截断", "`clamp_min(zhat−z, log10(eps))`", "冻结", "与官方 `max(ŷ/y,ε)` 对齐"),
                 ("辅助损失", "Smooth L1（默认）", "Smooth L1 / 分桶 soft-CE / 分位数", "inner 选择"),
                 ("clip 范围", "[-6, 6]", "冻结", "`constants.PERM_LOG_MIN/MAX`"),
                 ("候选数", "3–5", "—", "holm 校正")],
         done=["PERM 连续切片 Acc 提升且 CI 下界 > 0",
               "无 ≤0 或非有限输出（契约自动校验）",
-              "z 空间误差分布改善（σ(z) 或尾部比例）有数据支撑"],
-        forbid=["线性域建模 PERM", "用 ReLU 输出 PERM（0 处零梯度）", "改动 PERM 的评分公式或权重"],
+              "z 空间误差分布改善（σ(z) 或尾部比例）有数据支撑",
+              "输出层初始化落在 `perm_z_median ≈ −0.08` 附近（不是 0）",
+              "对齐损失使用官方截断 `clamp_min(zhat−z, log10(eps))`，并有单测证明低估尾部与官方评分器一致",
+              "`E5_perm_tail.json` 给出按真值分箱的「低估尾部 vs 官方 Acc」一致性结论"],
+        forbid=["线性域建模 PERM", "用 ReLU 输出 PERM（0 处零梯度）", "改动 PERM 的评分公式或权重",
+                "在 log 空间忽略官方 `max(ŷ/y, ε)` 截断（会让极端低估的梯度与官方不一致）"],
         risk=[("长尾被平均掩盖", "整体 Acc 微升但尾部更差", "分位数报告：按真值分箱统计 Acc"),
               ("分桶边界引入偏差", "分桶方案的 OOF 不稳定", "分桶边界只在训练折确定并冻结")],
         stop=["PERM 连续切片连续 3 次无正增量 → 转 SW"],
@@ -777,45 +943,60 @@ P["E5"] = [
                       "candidate_budget": 5, "multiplicity": "holm"},
     ),
     dict(
-        pid="P2", title="SW 单尺度精修（占位 99.9 与有效 8.3–99.9 同尺度）",
-        nature="单目标攻坚：SW（权重 35%，结构最特殊）",
+        pid="P2", title="SW 单尺度精修（训练折仿射归一化 + q_sw 硬切换）",
+        nature="单目标攻坚：SW（权重 35%，单一百分数尺度）",
         deps=["E5/P1"],
-        goal="实现 SW 的占位/有效双分支混合输出（`q̂·99.9 + (1−q̂)·f_valid`，**同一标签尺度**），"
-             "用 BCE 监督占位分支，并验证不引入任何尺度换算；提升 SW 连续切片准确率。",
-        why=["占位峰（99.9）与有效峰（实测 8.3–99.9，中位 82.8）**同尺度但分布形状完全不同**，"
-             "单头线性回归仍会被占位尖峰拉扯（`资料库/12` §3.4 的双峰会震荡结论在结构上成立）；",
-             "**E0-R2 修正**：SW 不是 `[0,1]` 双尺度（审查 B2/R2-B4 实测 SW<1 为 0 行，min 8.305）——"
-             "因此**禁止**任何 ×100 换算；`constants.SW_SMALL_BRANCH=False`，"
-             "有效分支直接用标签尺度监督；",
-             "`资料库/12` §3.4 指出在 `q̂` 灰色地带向 99.9 偏移可换期望分——这是该指标允许的\"下注\"。"],
-        inputs=["E3/E4 冻结主干表示", "E1/P1 的 SW 基线 OOF"],
-        outputs=["`E5/code/head_sw.py`", "`$V4_RUN_ROOT/E5/sw/oof.npz`",
-                 "`$V4_REPORTS_DIR/E5_sw.json`"],
-        notes_extra=["**接口语义（R2-M3）**：`head_sw` 的 `f_valid` 必须输出**标签尺度**"
-                     "（百分数，实测 8.3–99.9），不得是归一化值；`RowMLP` 用 "
-                     "`sw_affine_w/b` 做输出层仿射，训练脚本需先调用 "
-                     "`init_from_stats(sw_median=82.8, sw_std≈20)`。"],
-        steps=["实现双分支：`q̂=sigmoid(g0)`（可与 H0 共享或独立）、`f` 为**标签尺度**的有效分支输出、"
-               "混合 `q̂·99.9 + (1−q̂)·f`",
-               "单测锁定尺度：`q̂=1` 时输出必须精确 99.9；`q̂=0` 时输出等于 `f`（**不做任何倍数换算**）；"
-               "并断言 `constants.SW_SMALL_BRANCH is False`",
-               "试验灰色地带偏移策略（在 inner-OOF 上选阈值）",
+        goal="把 SW 连续头改为**训练折仿射归一化**训练、输出反变换回标签尺度："
+             "`sw_norm = (sw − sw_mu)/sw_sigma`、`sw_cont = sw_mu + sw_sigma·head_out`，"
+             "其中 `sw_mu = median(训练折有效 sw)`、`sw_sigma = IQR(训练折有效 sw)/1.349`；"
+             "占位由**逐目标原子头 `q_sw`** 精确决定 `SW = 99.9`；提升 SW 连续切片准确率。",
+        why=["**E0-R2 已证伪双尺度假设**：SW 是**单一标签尺度**（百分数），"
+             "实测有效 SW 为 min 8.305 / median 82.805 / max 99.9，`SW<1` 的行数为 **0**——"
+             "`SW_SMALL_BRANCH` 作为遗留对照路径**永久关闭**，不存在 `[0,1]` 有效分支，也禁止任何 ×100 换算；",
+             "占位尖峰（99.9）与有效分布（8.3–99.9）**在同一尺度上形状差异极大**，线性头从 0 附近起步会让早期"
+             "相对误差损失极大，因此连续头必须在归一化空间训练、输出再反变换；",
+             "SW 的原子判定交给独立 `q_sw`（不是 joint 头）：实测 SW 单目标原子行有 31,030 行，"
+             "joint 头覆盖不到，必须逐目标保护；",
+             "占位与连续是**互斥的硬切换**（`SW = 99.9 if q_sw > τ_sw else sw_cont`），τ_sw 由 E6/P1 在 inner-OOF 上用官方总分选；"
+             "允许在 `[0,100]` 内做软裁剪，**严禁**全局压到 `[0,1]`。"],
+        inputs=["E3/E4 冻结主干表示", "E1/P1 的 SW 基线 OOF", "E1/P0 的训练折 `sw_mu`/`sw_sigma`"],
+        outputs=["`E5/code/head_sw.py`（归一化空间连续头 + 反变换）",
+                 "`$V4_RUN_ROOT/E5/sw/oof.npz`（含 `sw_cont` 与 `q_sw`）",
+                 "`$V4_REPORTS_DIR/E5_sw.json`（占位行/有效行切片 Acc、逐折 delta、逐折 `sw_mu/sw_sigma`）"],
+        notes_extra=["**接口语义**：`head_sw` 的输出 `head_out` 位于**归一化空间**（零均值单位尺度），"
+                     "`sw_cont = sw_mu + sw_sigma·head_out` 才是标签尺度；`sw_mu/sw_sigma` 只由训练折有效 SW 决定，"
+                     "写入 checkpoint manifest 与 scaler JSON，推理时反变换。"
+                     "`RowMLP` 不再需要 `sw_affine_w/b` 的 ×100 语义；`constants.SW_SMALL_BRANCH` 恒为 `False`（遗留对照，永久关闭）。"],
+        steps=["在训练折内统计 `sw_mu = median(valid sw)` 与 `sw_sigma = IQR(valid sw)/1.349`（备选 std），写入 manifest",
+               "连续头在归一化空间监督：`sw_norm = (sw − sw_mu)/sw_sigma`，输出 `head_out`，"
+               "前向还原 `sw_cont = sw_mu + sw_sigma·head_out`；输出层 bias 初始化为 0（初始输出≈sw_mu，不是 0）",
+               "实现逐目标原子头 `q_sw = sigmoid(g)`（在 E6/P0 与其它原子头一起训练），"
+               "硬切换 `SW = 99.9 if q_sw > τ_sw else sw_cont`（τ_sw 来自 E6/P1）",
+               "单测锁定：`q_sw > τ` 时输出**精确** 99.9；否则输出等于 `sw_cont`；"
+               "断言 `constants.SW_SMALL_BRANCH is False`，且全程**无 ×100、无插值、无混合尺度算术**",
+               "允许输出在 `[0,100]` 内做软裁剪，但**断言不存在 `[0,1]` 全局裁剪**",
                "报告 SW 两个切片的 Acc：占位行、有效行（实测 8.3–99.9）",
-               "确认**绝不做全局 [0,1] 裁剪**（会掉约 23 分）"],
-        params=[("有效分支输出", "标签尺度（**不乘 100**）", "冻结", "`constants.SW_SMALL_BRANCH=False`"),
-                ("占位分支", "常数 99.9", "冻结", "不参与梯度（只作为混合常量）"),
-                ("灰色地带阈值", "0.3–0.5 内选", "inner 选择", "向 99.9 下注"),
+               "逐折报告 `sw_mu/sw_sigma`，确认只由训练折决定且折间差异有记录"],
+        params=[("连续头训练空间", "归一化 `(sw−sw_mu)/sw_sigma`", "冻结", "输出必反变换回标签尺度"),
+                ("`sw_mu`", "`median(训练折有效 sw)`", "冻结", "写入 manifest/scaler JSON"),
+                ("`sw_sigma`", "`IQR(训练折有效 sw)/1.349`（备选 std）", "冻结", "写入 manifest/scaler JSON"),
+                ("连续输出裁剪", "`[0,100]` 软裁剪（允许）", "冻结", "**禁止** `[0,1]` 全局裁剪"),
+                ("原子判定", "`q_sw` 硬切换（τ_sw 由 E6/P1 定）", "冻结", "禁止插值/混合尺度"),
                 ("候选数", "3–4", "—", "holm 校正")],
-        done=["尺度单测通过（`q̂=1 → 99.9`；`q̂=0 → 输出等于有效分支，无倍数换算）",
+        done=["尺度单测通过：`q_sw > τ` → 精确 99.9；否则 → `sw_mu + sw_sigma·head_out`，无倍数换算",
               "SW 有效行与占位行的 Acc 均报告；有效行 Acc 提升且 CI 下界 > 0",
-              "契约校验通过：SW 输出不被裁剪，且与标签尺度一致",
-              "占位行 SW Acc ≥ 0.99"],
-        forbid=["全局裁剪 SW 到 [0,1]（`资料库/12` §0 结论 2：直接损失约 23 分）",
-                "对有效分支做 ×100 换算（E0-R2 已证伪双尺度假设）",
-                "用占位行样本训练有效分支"],
-        risk=[("误用双尺度换算", "SW 有效段预测整体偏大 100 倍", "单测断言 SW_SMALL_BRANCH=False + 契约层范围检查"),
-              ("双分支失衡", "占位/有效一侧塌陷", "分别报告两切片 Acc；调整 λ₂"),
-              ("灰色地带过拟合", "inner 提升 outer 下降", "阈值只在 inner 选并报告敏感性")],
+              "契约校验通过：SW 输出只允许 `[0,100]` 软裁剪，**绝不被压到 `[0,1]`**，且与标签尺度一致",
+              "占位行 SW Acc ≥ 0.99",
+              "`sw_mu/sw_sigma` 只由训练折统计并可反变换；逐折参数记录完整",
+              "`SW_SMALL_BRANCH is False` 单测通过（遗留双尺度对照永久关闭）"],
+        forbid=["把 SW 全局裁剪到 [0,1]（`资料库/12` §0 结论 2：直接损失约 23 分）",
+                "对连续头做 ×100 换算（E0-R2 已证伪双尺度假设）",
+                "在原子 99.9 与连续输出之间做插值或混合尺度算术",
+                "用占位行样本训练连续头而不加权重区分",
+                "在整表/验证折上 fit `sw_mu/sw_sigma`"],
+        risk=[("残留双尺度换算", "SW 有效段预测整体偏大 100 倍", "单测断言 `SW_SMALL_BRANCH=False` + 契约层 `[0,100]` 范围检查"),
+              ("归一化参数跨折不一致", "逐折分数方差大", "只允许训练折 fit；报告每折 `mu/sigma`；用鲁棒统计量"),
+              ("原子/连续误判", "占位或有效一侧塌陷", "分别报告两切片 Acc；τ_sw 由 E6/P1 在 inner-OOF 上用官方总分选")],
         stop=["SW 有效行连续 3 次无正增量 → 该方向停止，转 E6"],
         code=["E5/code/head_sw.py"],
         evidence=["`reports/E5_sw.json`"],
@@ -828,125 +1009,198 @@ P["E5"] = [
 # ------------------------------------------------------------------ E6
 P["E6"] = [
     dict(
-        pid="P0", title="联合常量状态头（H0）",
-        nature="保护屏障：66.7% 的白送分靠它守住",
-        deps=["E5/P2（三个目标头定型）"],
-        goal="训练联合占位状态分类头（BCE 监督 `POR=0.1 ∧ PERM=0.01 ∧ SW=99.9`），"
-             "评估 AUC 与逐目标原子 precision/recall/F1。",
+        pid="P0", title="逐目标原子头 + 辅助 joint 头（两阶段训练）",
+        nature="保护屏障：66.7% 的白送分 + 单目标原子行都靠逐目标原子头守住",
+        deps=["E5/P2（三个连续头定型）"],
+        goal="训练**逐目标原子头** `q_por/q_perm/q_sw`（主保护）+ **辅助** `q_joint`（可选高置信硬门禁，默认关），"
+             "并做**两阶段训练**：stage 1 训练主干 + 原子头（`L_atom + λ_joint·L_joint` + 极小连续 fallback 0.05）；"
+             "stage 2 冻结原子头（或 `q_head_lr_mult=0.05–0.1`）训练连续头（按切片加权，**权重永不为 0**）。"
+             "评估逐目标 AUC / 原子 Acc/Precision/Recall/F1 与 joint atom AUC。",
         why=["487,225 行（66.719%）是联合常量占位，占约 66.72 分的白送分；",
              "v1 的原子门已被证明可从输入预测（E7 的 +0.2015 主要来自此），因此应把"
              "\"是否输出常量\"做成**显式可学习决策**，而不是让回归头勉强逼近；",
-             "本项目不做 B0 patch 隔离（用户决策 D3），H0 是**唯一**的占位保护屏障，"
-             "因此它的质量直接决定管线是否安全。"],
-        inputs=["E3/E4 主干逐行表示或 E1 行级特征", "E0 的占位标签"],
-        outputs=["`src/models/state_head.py`、`$V4_RUN_ROOT/E6/state/{foldk}.pt`",
-                 "`$V4_REPORTS_DIR/E6_atomic_report.json`（AUC/PR 曲线/逐目标原子指标）"],
-        steps=["实现 H0：`Linear(d→1)`，可用\"逐行 + 井内平均池化\"拼接增强井级信息",
-               "用 BCE 训练（占位/有效/缺测三类的处理：缺测行不参与）",
-               "报告 AUC 与 PR-AUC（占位类不平衡，PR 更重要）",
-               "报告逐目标原子 precision/recall/F1（在 τ=0.5 与最优 τ 两处）",
-               "做 label-shuffle 阴性对照，确认 AUC 不是来自泄漏"],
-        params=[("H0 输入", "逐行表示（默认）", "逐行/逐行+井级池化", "inner 选择"),
-                ("正负样本", "全量（占位 66.7%）", "全量/过采样有效", "过采样需消融"),
-                ("`pos_weight`", "1.0", "1.0/1.5/2.0", "inner 选择")],
-        done=["AUC ≥ 0.97 且 PR-AUC 报告完整",
-              "label-shuffle 对照下 AUC ≈ 0.5（证明非泄漏）",
-              "逐目标原子 precision/recall/F1 全部上报（`atomic_precision_reported`）"],
-        forbid=["用测试集或验证折标签训练 H0",
-                "把 H0 当作\"裁剪器\"直接覆盖回归输出而不经 τ 判定"],
-        risk=[("H0 学不到占位", "AUC < 0.9", "检查特征是否包含足够区分信息；加井级池化"),
-              ("H0 过拟合", "inner AUC 高 outer 低", "减容量 + dropout + 折内早停")],
+             "本项目不做 B0 patch 隔离（用户决策 D3），原子头是**唯一**的占位保护屏障，"
+             "因此它的质量直接决定管线是否安全；",
+             "改进 proposal §1/§2：**单个 joint 头不够**——SW 单目标原子 31,030 行、PERM 7,373 行、POR 157 行"
+             "并非 joint；joint 头对它们漏保护，又会误伤 joint 行中的非原子目标，且无法满足按目标验收的 Gate；",
+             "改进 proposal §5 D1：两步训练能避免连续损失把刚学好的原子边界冲掉；"
+             "非 joint 原子行加权比整行过采样更精确，避免不同目标互相干扰。"],
+        inputs=["E3/E4 主干逐行表示或 E1 行级特征", "E0 的占位标签与三目标 mask"],
+        outputs=["`src/models/state_head.py`（`q_joint + q_por/q_perm/q_sw` 五个头）、"
+                 "`$V4_RUN_ROOT/E6/state/{foldk}.pt`（含 stage 1/2 元数据）",
+                 "`$V4_REPORTS_DIR/E6_atomic_report.json`（逐目标 AUC / Acc / Precision / Recall / F1、joint atom AUC、两阶段曲线）"],
+        steps=["实现原子头：`q_t = sigmoid(Linear(d→1))`（`t∈{por,perm,sw}`）+ `q_joint = sigmoid(Linear(d→1))`；"
+               "标签 `y_atom[:,t] = (y[:,t]==占位值[t]) & ~missing[:,t]`、`y_joint = y_atom.all(1) & ~missing.any(1)`",
+               "实现 **stage 1**：训练主干 + 原子头，损失 `L_atom + λ_joint·L_joint`（外加极小连续 fallback 0.05）；"
+               "监控 per-target atomic Acc/Precision/Recall",
+               "实现 per-target 非 joint 原子行加权：`w_t = 1 + α·y_atom[:,t]·(¬y_joint)`，"
+               "`L_atom_t = Σ(BCE(q_t,y_atom_t)·w_t·mask_t)/Σ(w_t·mask_t)`",
+               "实现 **stage 2**：冻结原子头（或 `q_head_lr_mult=0.05–0.1`），训练连续头；"
+               "按切片加权：joint 行 0.1–0.3、非 joint 原子行 0.1–0.3（作为 fallback）、有效连续行 1.0，**永不置 0**",
+               "总损失：`L = L_cont + λ_joint·L_joint + λ_atom·L_atom`，默认 `λ_atom=0.5`、`λ_joint=0.2`，"
+               "per-target `pos_weight` 1.0（搜 1.0/1.5/2.0），非 joint 原子行权重 `α` 1.0（搜 1.0/2.0/3.0）",
+               "用 BCE 训练（缺测行不参与）；报告 AUC、PR-AUC 与 joint atom AUC/AP",
+               "报告**逐目标**原子 Acc/Precision/Recall/F1（τ=0.5 与最优 τ 两处）",
+               "做 label-shuffle 阴性对照 + 全量输入泄漏回归（`input_no_label_leak_full`），确认指标不是来自泄漏"],
+        params=[("头结构", "`q_joint + q_por/q_perm/q_sw`", "冻结", "逐目标原子是主保护"),
+                ("`λ_atom`", "0.5", "0.2/0.5/1.0", "inner 选择"),
+                ("`λ_joint`", "0.2", "0.1/0.2/0.5", "inner 选择"),
+                ("per-target `pos_weight`", "1.0", "1.0/1.5/2.0", "inner 选择"),
+                ("非 joint 原子行权重 `α`", "1.0", "1.0/2.0/3.0", "inner 选择"),
+                ("`q_head_lr_mult`", "0.05–0.1（stage 2）", "0（冻结）/0.05/0.1", "inner 选择"),
+                ("stage 2 切片权重", "joint 0.1–0.3 / 非 joint 原子 0.1–0.3 / 有效 1.0", "冻结", "**永不为 0**"),
+                ("正负样本", "全量（占位 66.7%）", "全量/过采样有效", "过采样需消融")],
+        done=["逐目标原子 Acc **≥ 0.99**、recall **≥ 0.98**，precision/F1 全部上报；`state_auc ≥ 0.97` 且 PR-AUC 报告完整",
+              "**joint atom AUC/AP** 单独上报（`joint_atom_auc_reported`）",
+              "label-shuffle 对照下 AUC ≈ 0.5（证明非泄漏）；`input_no_label_leak_full` 为 true",
+              "两阶段训练记录完整：stage 2 后原子 Acc 不下降（冻结或低 lr 生效）",
+              "连续头切片权重非 0 且写入配置；`pos_weight`/`α`/`λ_atom`/`λ_joint` 均只在 inner-OOF 选"],
+        forbid=["用测试集或验证折标签训练原子头",
+                "把原子头当作\"裁剪器\"直接覆盖回归输出而不经 τ 判定",
+                "用单个 joint 头覆盖三目标（必须逐目标原子头）",
+                "把连续头切片权重设为 0（原子误判时连续头必须能 fallback）",
+                "在 stage 2 让原子头以全 lr 继续更新（会冲掉原子边界）"],
+        risk=[("逐目标原子头互相干扰", "某目标 recall 上升、另两个下降", "独立 loss 权重 + per-target sample weight；必要时先不共享原子头"),
+              ("原子头学不到占位", "AUC < 0.9", "检查特征是否包含足够区分信息；加井级池化"),
+              ("原子头过拟合", "inner AUC 高 outer 低", "减容量 + dropout + 折内早停"),
+              ("两阶段第二段遗忘原子头", "stage 2 后 atom Acc 下降", "冻结或极低 lr；inner-OOF 监控 atom Acc；必要时联合微调")],
         stop=["AUC < 0.9 且无改善 → 记录 NO-GO，改用固定常量策略并重新评估总分上限"],
         code=["src/models/state_head.py", "E6/code/train_state.py"],
         evidence=["`reports/E6_atomic_report.json`"],
-        prereg_extra={"primary_metric": "state_auc", "thresholds": {"min_auc": 0.97},
-                      "mandatory_checks": ["atomic_precision_reported", "no_label_leak"]},
+        prereg_extra={"primary_metric": "state_auc",
+                      "thresholds": {"min_auc": 0.97, "min_atom_acc": 0.99, "min_atom_recall": 0.98},
+                      "mandatory_checks": ["per_target_atom_acc_reported",
+                                           "per_target_atom_precision_recall_f1_reported",
+                                           "joint_atom_auc_reported", "tau_t_inner_oof_only",
+                                           "no_atom_continuous_interpolation", "input_no_label_leak_full"]},
     ),
     dict(
-        pid="P1", title="原子门 τ 搜索（inner-OOF，硬切换）",
-        nature="开关设定：决定\"输出常量还是连续\"",
+        pid="P1", title="逐目标原子门 τ_t 搜索（inner-OOF 官方总分）",
+        nature="开关设定：决定\"输出常量还是连续\"，按官方总分优化",
         deps=["E6/P0"],
-        goal="在 inner-OOF 上逐目标搜索门限 τ_t，实现**硬切换**解码，并报告误判代价分解。",
+        goal="在 inner-OOF 上**逐目标**搜索门限 `τ_t`，目标函数是**官方总分**"
+             "`τ_t* = argmax_τ 100·w_t·Acc_t(τ)`（不是 F1/准确率的点估计），"
+             "取最宽平台中点实现**硬切换**解码，并报告误判代价分解。",
         why=["τ 决定每个点是走常量分支还是连续分支，是纯 DL 管线唯一保护屏障的开关；",
              "误判代价不对称：把有效行判成常量会立刻丢分，把占位行判成连续同样丢分，"
              "两者代价需分别量化；",
-             "**禁止在常量与连续之间线性插值**：POR 容差仅 ±0.008，插值必然出带。"],
-        inputs=["E6/P0 的 q 概率（inner-OOF）", "E3–E5 的连续预测（inner-OOF）"],
-        outputs=["`src/inference/atomic_gate.py`", "`$V4_REPORTS_DIR/E6_tau_search.json`",
-                 "三个 τ 值写入 `versions/candidates.json::PD1.atomic.tau`"],
-        steps=["对每个目标，在 inner-OOF 上网格搜索 τ ∈ [0.05,0.95]（步长 0.01）",
-               "目标函数 = 该目标的官方 Acc（drop 口径）",
-               "报告：τ 曲线、最优 τ、误判代价分解（FP 代价 vs FN 代价）",
-               "验证 τ 的稳定性：不同 inner 折选出的 τ 是否接近（方差过大则不可靠）",
-               "在三目标上分别确定 τ，并记录到候选注册表"],
+             "**禁止在常量与连续之间线性插值**：POR 容差仅 ±0.008，插值必然出带；",
+             "改进 proposal §2 A4/§7 F1：Total 是三目标加权和、硬切换逐目标独立，因此 τ_t 可逐目标搜；"
+             "目标函数必须是官方总分（含权重 w_t），并且要取**最宽平台的中点**而非 argmax 尖峰，"
+             "否则 inner 过拟合；`joint_guard` 只是可选门禁，默认关闭。"],
+        inputs=["E6/P0 的 `q_por/q_perm/q_sw/q_joint`（inner-OOF）", "E3–E5 的连续预测（inner-OOF）",
+                "官方评分权重 `w = (0.30, 0.35, 0.35)`"],
+        outputs=["`src/inference/atomic_gate.py`（逐目标 `τ_t` 硬切换 + 可选 `joint_guard`）",
+                 "`$V4_REPORTS_DIR/E6_tau_search.json`（τ-总分曲线、平台、逐目标 atomic P/R/F1/acc、连续切片 acc、误判代价分解）",
+                 "三个 τ 值与 `joint_guard` 开关写入 `versions/candidates.json::PD1.atomic` 与 manifest"],
+        steps=["对每个目标 t，在 inner-OOF 上网格搜索 τ∈[0.05,0.95]（步长 0.01），"
+               "目标函数 `100·w_t·Acc_t(τ)`（官方 drop 口径）",
+               "记录**最宽平台**（连续满足 `score ≥ max−ε` 的区间）并取其中点，而不是 argmax 尖峰",
+               "报告：`τ_t` vs inner-OOF Total 曲线、平台区间、逐目标 atomic precision/recall/F1/acc、"
+               "连续切片 Acc、误判代价分解（有效判 atom vs atom 判连续）",
+               "评估可选 `joint_guard`：仅当 `q_joint > τ_joint_high` 时三目标全输出 atom；"
+               "默认关闭，只有它在 inner-OOF 上提升 Total 且 CI 下界 > 0 才启用，并把决定写入 manifest",
+               "验证 τ 稳定性：不同 inner 折选出的 τ 是否接近（方差过大则取更保守值并说明）",
+               "在三目标上分别确定 τ 并记录到候选注册表；**断言原子/连续之间无任何插值**"],
         params=[("τ 搜索范围", "[0.05, 0.95]，步长 0.01", "冻结", "逐目标独立"),
-                ("目标函数", "该目标官方 Acc", "冻结", "不是 F1"),
+                ("目标函数", "`100·w_t·Acc_t(τ)`（官方总分）", "冻结", "**不是 F1/准确率**"),
+                ("平台选择", "最宽平台中点（`max−ε`）", "ε=1e-3", "避免 argmax 尖峰过拟合 inner"),
                 ("硬切换", "q ≥ τ → 输出精确常量", "冻结", "禁止插值"),
+                ("`joint_guard`", "**关闭（默认）**", "开/关", "仅当 inner-OOF Total 提升且 CI 下界 > 0 才开"),
+                ("`τ_joint_high`", "—", "inner 搜索", "仅 joint_guard 启用时使用"),
                 ("稳定性判据", "不同 inner 折最优 τ 的极差 ≤ 0.2", "冻结", "超限则用更保守 τ")],
-        done=["三个 τ 都只在 inner-OOF 上选出，过程可复算",
+        done=["三个 τ 都只在 inner-OOF 上按**官方总分**选出，过程可复算；`tau_t_inner_oof_only` 为 true",
+              "报告 τ-总分曲线与**最宽平台**，所选 τ 落在平台中点（附平台宽度）",
+              "逐目标 atomic precision/recall/F1/acc 与连续切片 Acc 全部上报",
               "误判代价分解表完整",
               "τ 稳定性通过（跨 inner 折极差 ≤ 0.2），否则取更保守值并说明",
-              "占位行逐目标 Acc ≥ 0.99（这是 Gate 硬条件）"],
+              "占位行逐目标 Acc ≥ 0.99；`oof_total_min ≥ 81.0`",
+              "`joint_guard` 默认关闭；若启用，必须有 inner-OOF Total 提升 + CI 下界 > 0 的证据并写入 manifest",
+              "`no_atom_continuous_interpolation` 为 true（代码级断言，无插值/混合尺度算术）"],
         forbid=["用 outer 折或 A 榜选 τ",
-                "在常量与连续输出之间做线性插值",
-                "用 F1 而非官方 Acc 作为 τ 的目标函数"],
-        risk=[("τ 过拟合 inner", "inner 最优但 outer 变差", "报告 τ 敏感性曲线；取平坦区间的中点"),
-              ("误判代价不对称被忽视", "总分下降但 F1 上升", "以官方 Acc 为目标函数")],
-        stop=["τ 搜索若无法让占位 Acc ≥ 0.99 → 回到 E6/P0 加强 H0"],
+                "在常量与连续输出之间做线性插值或混合尺度算术",
+                "用 F1 而非官方总分作为 τ 的目标函数",
+                "取 argmax 尖峰而不看平台",
+                "默认启用 `joint_guard`"],
+        risk=[("τ 过拟合 inner", "inner 最优但 outer 变差", "报告 τ 敏感性曲线；取最宽平台中点"),
+              ("joint_guard 误伤", "非 joint 行三目标全被覆盖", "默认关闭；仅 inner-OOF 正增益 + CI 下界 > 0 才启用"),
+              ("误判代价不对称被忽视", "总分下降但 F1 上升", "以官方总分为目标函数，报告代价分解")],
+        stop=["τ 搜索若无法让占位 Acc ≥ 0.99 → 回到 E6/P0 加强逐目标原子头"],
         code=["src/inference/atomic_gate.py", "E6/code/search_tau.py"],
         evidence=["`reports/E6_tau_search.json`"],
-        prereg_extra={"primary_metric": "atomic_f1", "thresholds": {"min_atomic_acc": 0.99},
-                      "mandatory_checks": ["atomic_precision_reported", "inner_only_selection"]},
+        prereg_extra={"primary_metric": "atomic_f1",
+                      "thresholds": {"min_atomic_acc": 0.99, "min_atom_acc": 0.99,
+                                     "min_atom_recall": 0.98, "oof_total_min": 81.0},
+                      "mandatory_checks": ["per_target_atom_acc_reported",
+                                           "per_target_atom_precision_recall_f1_reported",
+                                           "joint_atom_auc_reported", "tau_t_inner_oof_only",
+                                           "no_atom_continuous_interpolation", "input_no_label_leak_full"]},
     ),
     dict(
         pid="P2", title="PD1 完整管线组装与硬 Gate（≥82.0）",
         nature="**完整管线诞生**：本计划第一个可提交候选",
         deps=["E6/P0–P1、E5/P2"],
-        goal="组装 数据→主干→头→原子门→契约 的完整 PD1 管线，产出 5 折 OOF、测试集 `result.json`/`result.zip`、"
-             "manifest 与 cv 报告；**硬 Gate：OOF Total ≥ 82.0**。",
+        goal="组装 数据→主干→**逐目标原子头 + 辅助 joint 头**→逐目标硬切换→连续后处理→契约 的完整 PD1 管线，"
+             "产出 5 折 OOF、测试集 `result.json`/`result.zip`、manifest 与 cv 报告；**硬 Gate：OOF Total ≥ 82.0**；"
+             "并上报 proposal §7 F5 要求的全部逐目标指标。",
         why=["这是 v4 第一个\"端到端可跑、可提交、可复现\"的候选；",
              "≥82.0 意味着超过历史锚点 B0 的本地 OOF 80.382479，是纯 DL 路线成立的最低证据；",
-             "只有完整管线才能暴露\"训练能跑但推理契约不过\"这类问题（前代多次踩坑）。"],
-        inputs=["E3/E4 冻结主干权重", "E5 的三个目标头", "E6 的 H0 与 τ", "E0 的契约与评分器"],
+             "只有完整管线才能暴露\"训练能跑但推理契约不过\"这类问题（前代多次踩坑）；",
+             "改进 proposal §7 F5/§11：Gate 必须能复算**逐目标** atomic Acc/P/R/F1、τ_t、连续切片 Acc、"
+             "joint atom AUC/AP、总分分解、误判代价矩阵与 `inner_only_selection` 证据。"],
+        inputs=["E3/E4 冻结主干权重", "E5 的三个连续头", "E6 的逐目标原子头 `q_por/q_perm/q_sw`、`q_joint` 与 `τ_t`",
+                "E0 的契约与评分器"],
         outputs=["`models/E6/pd1_fold{k}.pt` + `models/E6/pd1_config.json`",
                  "`experiments/E6/P2/pd1/{oof.npz,cv.json,result.json,result.zip,manifest.json}`",
-                 "`$V4_REPORTS_DIR/E6_gate.json`",
+                 "`$V4_REPORTS_DIR/E6_gate.json`、`$V4_REPORTS_DIR/E6_atomic_report.json`（逐目标 + joint + τ 曲线）",
                  "`versions/candidates.json::PD1`（status=local_only→shortlisted）"],
-        steps=["实现统一推理器 `src/inference/predictor.py`：加载配置与权重 → 逐井前向 → 原子门 → 解码",
+        steps=["实现统一推理器 `src/inference/predictor.py`：加载配置与权重 → 逐井前向 → 逐目标硬切换 → 连续后处理 → 解码",
                "在 5 折上各自推理出 OOF（训练时已产出，此处复核逐行对齐）",
                "对 10 口测试井推理：平均 5 折权重（或按核验过的最优折），产出 result.json",
-               "跑契约校验（10 井 / 95,948 行 / depth 对齐 / PERM>0 / 无 NaN）",
+               "跑契约校验（10 井 / 95,948 行 / depth 对齐 / PERM>0 / 无 NaN / SW 单尺度 `[0,100]` 守卫）",
                "本机 CPU 冒烟 `predict.py --use-version PD1 --data_dir ../data --output /tmp/r.json`",
-               "汇总 OOF 评分：逐目标 Acc、连续切片、占位 Acc、bootstrap CI",
-               "写 manifest（config 哈希/数据指纹/折指纹/代码哈希）并注册候选",
+               "汇总 OOF 评分并上报 proposal §7 F5 全部条目：逐目标 `atomic_acc/precision/recall/F1`、"
+               "逐目标 `τ_t`、逐目标 continuous slice Acc、joint atom Acc/AUC/AP、总分分解与阈值曲线、"
+               "误判代价矩阵、`inner_only_selection` 证据",
+               "写 manifest（config 哈希/数据指纹/折指纹/代码哈希 + `joint_guard` 开关决定）并注册候选",
                "写 Gate 并判定 ≥ 82.0"],
         params=[("折权重聚合", "5 折平均", "平均/最优折/加权", "inner 决定，冻结后不改"),
-                ("τ", "E6/P1 选定值", "冻结", "写入 candidate registry"),
+                ("`τ_t`", "E6/P1 选定值（官方总分平台中点）", "冻结", "写入 candidate registry"),
+                ("`joint_guard`", "E6/P1 决定（默认关）", "冻结", "写入 manifest"),
                 ("推理精度", "fp32（CPU）", "fp32/fp16", "提交侧必须 fp32 保证确定性"),
                 ("`num_folds`", "5", "冻结", "与 folds.json 一致")],
-        done=["OOF Total **≥ 82.0**（硬 Gate）",
+        done=["OOF Total **≥ 82.0**（硬 Gate），且 `min_atom_acc ≥ 0.99`、`min_atom_recall ≥ 0.98`、"
+              "`min_joint_atom_auc ≥ 0.90`",
               "契约全绿；`predict.py --use-version PD1` 在本机 CPU 可跑通并输出 95,948 行",
-              "占位行逐目标 Acc ≥ 0.99；连续切片 Acc 一并上报",
-              "manifest 写全 config/data/folds/code 四类指纹；候选已注册",
+              "逐目标原子 Acc/P/R/F1、连续切片 Acc、joint atom AUC/AP、τ_t 与误判代价矩阵全部上报",
+              "`tau_t_inner_oof_only`、`no_atom_continuous_interpolation`、`input_no_label_leak_full` 均为 true",
+              "manifest 写全 config/data/folds/code 四类指纹与 `joint_guard` 决定；候选已注册",
               "5 折 delta 全部同向；`disk_budget_ok`、`training_time_log_valid`、`checkpoint_resumable` 为 true"],
         forbid=["在管线中混入未冻结的特征版本",
                 "推理阶段读取任何标签",
-                "把 5 折权重聚合方式在看到 OOF 后临时更换"],
+                "把 5 折权重聚合方式在看到 OOF 后临时更换",
+                "在原子与连续之间插值，或对 SW 做全局 `[0,1]` 裁剪",
+                "只报 Overall Total 而省略逐目标/逐切片指标"],
         risk=[("训练能跑但推理契约不过", "result.json 行数/字段错", "契约前置到训练脚本每次落盘时校验"),
               ("低于 82.0", "纯 DL 未超过树模型锚点", "按总计划 §9.5 回退协议准备 B0 fallback；"
                "同时保留 PD1 为 `local_only` 候选供 E7/E8 继续改进"),
+              ("逐目标指标被总分掩盖", "总分达标但某目标原子 recall 低", "Gate 强制逐目标阈值 + 误判代价矩阵"),
               ("折间差异大", "逐折 delta 方向不一致", "检查折内标准化与早停；报告逐折而非只报总分")],
         stop=["Gate < 82.0 → 冻结当前最强候选为 `PD-pre`，E7/E8 继续改进；"
               "若 E8 结束仍 < 82.0，E10 走回退协议"],
         code=["E6/code/build_pd1.py", "E6/code/gate.py", "src/inference/predictor.py",
               "src/inference/atomic_gate.py"],
-        evidence=["`reports/E6_gate.json`、`reports/E6_atomic_report.json`"],
+        evidence=["`reports/E6_gate.json`、`reports/E6_atomic_report.json`、`reports/E6_tau_search.json`"],
         prereg_extra={
             "primary_metric": "oof_total", "baseline_version": "E1_PD0",
-            "thresholds": {"min_delta": 0.0, "min_effect_floor": 0.0, "oof_total_min": 82.0},
+            "thresholds": {"min_delta": 0.0, "min_effect_floor": 0.0, "oof_total_min": 82.0,
+                           "min_atom_acc": 0.99, "min_atom_recall": 0.98, "min_joint_atom_auc": 0.90},
             "mde_units": 80,
-            "mandatory_checks": ["contract_ok", "atomic_precision_reported", "disk_budget_ok",
-                                 "training_time_log_valid", "checkpoint_resumable", "cpu_inference_ok"],
+            "mandatory_checks": ["per_target_atom_acc_reported",
+                                 "per_target_atom_precision_recall_f1_reported",
+                                 "joint_atom_auc_reported", "tau_t_inner_oof_only",
+                                 "no_atom_continuous_interpolation", "input_no_label_leak_full",
+                                 "cpu_inference_ok"],
         },
     ),
 ]
@@ -954,39 +1208,58 @@ P["E6"] = [
 # ------------------------------------------------------------------ E7
 P["E7"] = [
     dict(
-        pid="P0", title="三段式损失消融与退火策略",
+        pid="P0", title="三段式损失消融（L_aux 归一化 / 边界聚焦 / PERM 截断）",
         nature="损失配方冻结",
         deps=["E6/P2（PD1 基线）"],
-        goal="对 `L_align / L_aux / L_ph` 三组权重与 `λ₁` 退火曲线做完整消融（同结构对照），"
-             "确定唯一损失配方并冻结。",
+        goal="对 `L_align / L_aux / L_ph` 三组权重与 `λ₁` 退火曲线做完整消融，"
+             "并单独消融**归一化 `L_aux`**（训练折 `s_por`/`s_sw`）、**容差边界聚焦权重**"
+             "（`κ∈{0.5,1.0,2.0}`、`σ∈{0.15,0.25,0.35}`，默认关）与 **PERM 官方 log 截断**（`clamp_min(ẑ−z, log10(eps))`）；"
+             "全部为**同结构对照**，确定唯一损失配方并冻结。",
         why=["`资料库/12` §2.3 指出纯对齐损失早期梯度稀疏（大量点落在容忍域外，梯度≈0），"
              "必须靠 aux 提供早期梯度；",
              "评分 `max(0,·)` 截断意味着超过容差阈值的点不再产生梯度收益，"
              "把容量让给\"临界点\"是理论最优——这只能通过损失权重实现；",
-             "配方必须消融确定，不能凭感觉设 λ。"],
-        inputs=["E6/P2 的 PD1 管线（结构冻结）", "`资料库/12` §2.2–2.4"],
+             "配方必须消融确定，不能凭感觉设 λ；",
+             "改进 proposal §4：`L_aux` 若用绝对 Smooth L1，SW 的 99.9 会主导梯度，必须按训练折尺度归一化；"
+             "边界聚焦（κ/σ）与 PERM 截断都必须用同结构对照消融，且**不能只报整体 Total**。"],
+        inputs=["E6/P2 的 PD1 管线（结构冻结）", "`资料库/12` §2.2–2.4",
+                "E1/P0 的训练折 `s_por`/`s_sw`"],
         outputs=["`src/losses/score_aligned.py`（最终配方）",
-                 "`$V4_REPORTS_DIR/E7_loss_ablation.json`",
+                 "`$V4_REPORTS_DIR/E7_loss_ablation.json`（含 `L_aux` 归一化、边界聚焦、PERM 截断三张子表）",
                  "`versions/configs/loss_v1.json`（冻结配置）"],
         steps=["对照实验 1：纯 align vs 纯 aux vs align+aux",
                "对照实验 2：λ₁ ∈ {0.1,0.3,1.0} × 退火曲线 ∈ {常数, 线性到 0.1, 余弦}",
                "对照实验 3：λ₂ ∈ {0.1,0.2,0.3} 对占位 Acc 的影响",
-               "对照实验 4（可选）：加 `L_phys`（物理软约束）并消融其 λ₃",
+               "对照实验 4：`L_aux` 绝对 Smooth L1 vs 训练折尺度归一化 `(·)/s_por`、`(·)/s_sw`（同结构对照）",
+               "对照实验 5：容差边界聚焦 `w=1+κ·exp(−((r−1)²)/(2σ²))`，"
+               "`κ∈{0.5,1.0,2.0}` × `σ∈{0.15,0.25,0.35}`（默认关；缺失 mask=0，原子行单独切片处理）",
+               "对照实验 6：PERM 对齐项 `clamp_min(ẑ−z, log10(eps))` 开/关（同结构对照）",
+               "对照实验 7（可选）：加 `L_phys`（物理软约束）并消融其 λ₃",
                "所有对照在该 outer 折的 **inner-OOF** 上做（省机时可先 fold0 资源预检），胜者跑全 5 折确认",
-               "用**真实评分**而非 loss 值选择配方"],
+               "用**真实评分**而非 loss 值选择配方；每个对照同时报告逐目标与连续切片，禁止只报 Overall Total"],
         params=[("λ₁（aux）", "1.0 → 0.1（线性，前 60% epoch）", "见对照 2", "inner-OOF 选择"),
-                ("λ₂（占位 BCE）", "0.2", "0.1/0.2/0.3", "同上"),
+                ("λ₂（原子 BCE）", "0.2", "0.1/0.2/0.3", "同上"),
+                ("`L_aux` 归一化", "训练折 `s_por`/`s_sw` 归一化", "归一化 / 绝对（对照）", "inner-OOF 选择"),
+                ("边界聚焦 `κ`", "0（默认关）", "0.5/1.0/2.0", "inner-OOF 选择；默认不启用"),
+                ("边界聚焦 `σ`", "—", "0.15/0.25/0.35", "同上"),
+                ("PERM 截断", "`clamp_min(ẑ−z, log10(eps))`", "开/关", "与官方评分器对齐"),
                 ("λ₃（物理）", "0（默认关）", "0/0.02/0.05", "必须消融；`资料库/03` 提醒 KC 只能定性"),
                 ("`alpha`/`beta`", "1e-3 / 20", "1e-3~1e-2 / 10~30", "平滑参数"),
                 ("`huber_beta`", "1.0", "0.5/1.0/2.0", "aux 损失")],
         done=["对齐损失 ≥ 纯 aux 损失（同结构对照，CI 下界 > 0）",
               "三段式权重的完整消融表（含退火曲线）",
-              "最终配方写入 `versions/configs/loss_v1.json` 并冻结",
-              "每个对照都能复算（脚本 + 命令 + 产物 sha256）"],
+              "**归一化 `L_aux`** 消融完成，且证明 SW 99.9 不再主导梯度（逐目标早期 loss 曲线为证）",
+              "**边界聚焦**消融表完整：`κ∈{0.5,1.0,2.0}` × `σ∈{0.15,0.25,0.35}`（默认关，采纳需 CI 下界 > 0）",
+              "**PERM 官方截断**消融完成，且低估尾部与官方评分器一致性通过",
+              "每个对照除被消融项外结构完全相同，且逐目标/逐切片指标齐全（**不得只报 Overall Total**）",
+              "最终配方写入 `versions/configs/loss_v1.json` 并冻结；每个对照都能复算（脚本 + 命令 + 产物 sha256）"],
         forbid=["同时改多个损失项导致无法归因",
                 "用 loss 值而非真实评分选配方",
-                "在看到 outer 折结果后调整 λ"],
+                "在看到 outer 折结果后调整 λ",
+                "只报整体 Total 而隐藏单目标/切片退化",
+                "默认启用边界聚焦（它只是可选消融项）"],
         risk=[("对照实验爆炸", "组合数过多", "分层做：先定性（哪一项有用），再定量（λ 搜 3 档）"),
+              ("边界聚焦过拟合", "inner 提升 outer 下降", "只取平坦区；默认关；报告逐目标与切片"),
               ("物理损失引入偏差", "POR/SW 变好但 PERM 变差", "λ₃ 只在所有目标都不退化时才采纳")],
         stop=["若 align 与 aux 无差异，保留简单配方（align+aux+ph 默认值）并记录"],
         code=["E7/code/ablate_loss.py"],
@@ -995,35 +1268,48 @@ P["E7"] = [
                       "candidate_budget": 8, "multiplicity": "holm"},
     ),
     dict(
-        pid="P1", title="解码与后处理（温度/偏置/收缩）",
+        pid="P1", title="解码与后处理（逐目标期望分 / 敏感性）",
         nature="零模型改动的换分手段",
         deps=["E7/P0"],
-        goal="实现并选择推理期解码手段：逐目标偏置校正、温度/收缩、分位数收缩，"
-             "全部在 inner-OOF 上选定并冻结。",
+        goal="实现并选择推理期解码手段：**逐目标期望分解码**（按 `q` 分箱估计 atom/continuous 两种动作的期望分）、"
+             "逐目标偏置/收缩/分位数收缩，全部在 **inner-OOF** 上选定并冻结，附**敏感性曲线**。",
         why=["解码在**不重训模型**的前提下换分，成本最低、风险最小；",
              "评分对每个目标有独立的最优\"保守/激进\"倾向（例如在容忍带边界附近，"
              "向众数偏移可提高期望分）；",
-             "但解码参数极易过拟合 inner，因此必须做敏感性分析并只取平坦区间。"],
+             "但解码参数极易过拟合 inner，因此必须做敏感性分析并只取平坦区间；",
+             "改进 proposal §7 F2/F3/F4：SW 灰区与 POR 吸附决策不能按 F1，而要按 **inner-OOF 期望总分** "
+             "（可按 q 分箱估计两种动作的期望分再单调化）；后处理只允许在 `[0,100]` 内软裁剪 SW，"
+             "严禁全局压到 `[0,1]`，且**不得改变原子输出**。",
+             "所有解码对照必须是同结构对照，并同时报告逐目标与切片指标，禁止只报 Overall Total。"],
         inputs=["E6/P2 的 PD1 逐行预测（inner-OOF）", "E0 的评分器"],
         outputs=["`src/inference/decode.py`", "`$V4_REPORTS_DIR/E7_decode_search.json`",
                  "`versions/configs/decode_v1.json`"],
         steps=["实现逐目标偏置 `ŷ ← ŷ + b_t`，在 inner-OOF 上搜索 b_t（小范围）",
                "实现收缩 `ŷ ← μ_t + α_t(ŷ − μ_t)`，搜索 α_t ∈ [0.9, 1.1]",
+               "实现**逐目标期望分解码**：按 `q_t` 分箱，估计「输出 atom」与「保留连续」两种动作的期望官方分，"
+               "再在分箱上做单调化（isotonic/单调回归），落成可复算的单调动作表或 τ_t 数组",
                "实现分位数收缩（`资料库/09` §4 思路）：把预测往训练折分位数靠拢",
-               "做参数敏感性热图，只采纳平坦区中点",
+               "做参数**敏感性热图/曲线**，只采纳平坦区中点；报告 inner-OOF 与 outer 的一致性",
                "冻结 `decode_v1.json` 并复算 OOF 确认增益",
-               "验证解码不破坏占位行的精确输出（原子门在解码之后仍生效）"],
+               "验证解码不破坏原子门的精确输出（原子门优先级高于解码），"
+               "且 SW 后处理只在 `[0,100]` 内软裁剪"],
         params=[("偏置 b_t", "0（默认）", "±0.005（POR）/ ±0.02（SW）/ ±0.05（z）", "inner 选择"),
                 ("收缩 α_t", "1.0", "[0.9, 1.1]", "inner 选择"),
+                ("期望分解码", "关（默认恒等）", "开/关 + q 分箱单调表", "inner 选择；按期望总分"),
                 ("分位数收缩", "关", "开/关 + 目标分位", "inner 选择"),
+                ("SW 后处理范围", "`[0,100]` 软裁剪", "冻结", "**禁止** `[0,1]` 全局裁剪"),
                 ("敏感性判据", "最优邻域 ±1 档内 Acc 变化 < 0.005", "冻结", "否则不采纳")],
         done=["解码增益在 inner-OOF 上可复算，且 CI 下界 > 0",
-              "敏感性热图显示所选参数位于平坦区",
+              "敏感性热图/曲线显示所选参数位于平坦区",
+              "**逐目标期望分解码**产出可复算的单调动作表/τ 数组，且有 inner-OOF 期望分证据",
               "占位行仍精确输出常量（原子门优先级高于解码）",
-              "`decode_v1.json` 冻结并被 PD1 管线读取"],
+              "逐目标与连续切片指标齐全（**不得只报 Overall Total**）；同结构对照",
+              "`decode_v1.json` 冻结并被 PD1 管线读取；SW 仍保持单尺度且无 `[0,1]` 裁剪"],
         forbid=["用 outer 折或 A 榜选解码参数",
                 "让解码覆盖原子门的常量输出",
-                "采纳落在敏感性尖峰上的参数"],
+                "采纳落在敏感性尖峰上的参数",
+                "对 SW 做全局 `[0,1]` 裁剪或改变原子输出",
+                "只报整体 Total 而隐藏逐目标/切片变化"],
         risk=[("过拟合 inner", "inner 提升 outer 下降", "只取平坦区；报告内外一致性"),
               ("解码破坏原子精确性", "占位 Acc 下降", "解码在原子门之前/之后的位置做单测固定")],
         stop=["若解码增益 CI 含 0，判 NO-GO 并保持恒等解码"],
@@ -1075,34 +1361,41 @@ P["E8"] = [
         pid="P1", title="井级分支与 transductive 消融（各一次）",
         nature="历史 NO-GO 路线在新条件下的受控重验",
         deps=["E8/P0"],
-        goal="实现 H4 井级 attention-pool 偏置分支；实现推理期 transductive 适配（伪标签/井级统计对齐）；"
-             "**两者都只作消融**，给出明确的采纳/NO-GO 结论。",
+        goal="实现 H4 井级 attention-pool 偏置分支（**辅助、小容量、强正则**，所有校准参数只在 inner-OOF 选）；"
+             "实现推理期 transductive 适配（伪标签/井级统计对齐）；**两者都只作消融（强制）**，给出明确的采纳/NO-GO 结论。",
         why=["工程曲线（CAL/DEVI/AZIM/BIT/CASE）在井内近常数，只提供**井间**区分度"
              "（`资料库/08` §0.1-4），井级分支是唯一合法的井间信号通路；",
              "v1 E8–E11 与 v2 E6 的井级/域适应均为 NO-GO，但那些结论是在**无序列主干、CPU-only**"
              "条件下取得的；E8 在已有序列主干的前提下只重验一次；",
              "transductive 适配需要使用测试井的**输入分布**（合法，标签不可见），"
-             "但必须与实际提升严格区分，不能把\"用了测试输入\"包装成\"训练改进\"。"],
+             "但必须与实际提升严格区分，不能把\"用了测试输入\"包装成\"训练改进\"；",
+             "改进 proposal §6 E6：80 井上井级校准极易过拟合，因此井级分支只能小容量、强正则，"
+             "**必须做开/关消融**，校准参数只能由 inner-OOF 决定。"],
         inputs=["E6/E7 冻结管线", "`资料库/04` §九（地理因素多数不可获得）、`资料库/09` §10"],
         outputs=["`src/models/well_head.py`、`E8/code/well_branch.py`、`E8/code/pseudo_label.py`",
                  "`$V4_REPORTS_DIR/E8_well_branch.json`、`$V4_REPORTS_DIR/E8_transductive.json`"],
         steps=["实现 H4：主干输出做井级 attention-pool → 井向量 → 预测逐目标井级偏置 Δ_t"
-               "→ `ŷ + λ·Δ_t`（λ 由 inner-OOF 选）",
-               "消融井级分支：开/关，报告逐目标与总分 delta",
+               "→ `ŷ + λ·Δ_t`（λ 由 inner-OOF 选）；**容量受限、强正则**（小 hidden、weight decay、dropout）",
+               "**强制消融**井级分支：开/关，报告逐目标与总分 delta + CI + 逐井非退化比例",
                "实现 transductive 适配：用测试井输入做特征分布对齐（如逐井分位数映射），"
                "**禁止使用任何标签**",
                "消融 transductive：开/关，明确标注\"该增益来自推理期使用了测试输入分布\"",
-               "两个方向各自给出采纳/NO-GO 与 CI"],
+               "所有井级偏差/校准参数只在 inner-OOF 上选；两个方向各自给出采纳/NO-GO 与 CI"],
         params=[("井级偏置 λ", "0（默认关）", "inner 搜索 [0, 0.5]", "选中后冻结"),
+                ("井级分支容量", "小（≤主干 1/8 宽）", "冻结上限", "80 井过拟合风险"),
+                ("正则", "强（weight decay + dropout 0.2）", "冻结", "同上"),
                 ("池化方式", "attention-pool", "mean/max/attention", "inner 选择"),
                 ("transductive 方式", "逐井分位数映射", "无/分位数映射/井均值对齐", "仅消融"),
                 ("候选数", "各 2–3", "—", "holm 校正")],
-        done=["两个方向都给出明确结论（采纳或 NO-GO）+ CI",
+        done=["井级分支**开/关消融**完成（强制），两个方向都给出明确结论（采纳或 NO-GO）+ CI",
+              "井级分支容量与正则在预注册上限内，校准参数只在 inner-OOF 选",
               "transductive 结论中显式标注其合法性与局限（使用了测试输入分布）",
               "井级分支若采纳，必须证明不是井身份泄漏（无 `logId` 特征、无逐井拟合标签）"],
         forbid=["使用测试集标签（不存在，任何形式的伪标签都必须来自训练折模型输出）",
                 "把 transductive 适配说成\"训练时改进\"",
-                "用井身份作为特征"],
+                "用井身份作为特征",
+                "跳过井级分支的开/关消融",
+                "用大容量井级分支或在 inner-OOF 之外拟合校准参数"],
         risk=[("井级偏置过拟合 80 井", "inner 提升 outer 下降", "λ 小范围搜索 + 只取平坦区；报告逐井非退化比例"),
               ("transductive 引入分布假设错误", "A 榜崩坏", "只对 top-2 候选做，并做 16 井体检")],
         stop=["任一方向 CI 含 0 → 判 NO-GO，记录证据（这是 v1/v2 同类路线的第二次受控重验）"],
@@ -1113,34 +1406,55 @@ P["E8"] = [
                       "mandatory_checks": ["no_label_leak", "inner_only_selection"]},
     ),
     dict(
-        pid="P2", title="集成（多 seed / 快照 / 多结构）与 Gate",
+        pid="P2", title="集成（EMA/SWA / 快照 / 多结构）与 Gate",
         nature="增益放大：必须扣除同源性",
         deps=["E8/P0–P1"],
-        goal="构建多 seed、快照集成与多结构（U-Net/TCN/PatchTF）集成，报告成员同源性与"
-             "按井行数加权的 paired bootstrap，判定集成是否真增益。",
+        goal="实现并评估 **EMA**（`decay∈{0.99,0.999,0.9995}`，逐 epoch 用真实 `score.py` 在 inner-OOF 评估，"
+             "`ema.pt` 与 `last.pt`/`best.pt` 并存）、**SWA**（仅作对照，BN 统计需谨慎）、"
+             "**同折 top-k（k=2–3）快照集成**与多结构（U-Net/TCN/PatchTF）集成；"
+             "融合权重只在 inner-OOF 上选，报告成员同源性与按井行数加权的 paired bootstrap。",
         why=["`资料库/08` §0.3 第 4 层：多模型 Stacking/加权融合 + 快照集成是标准提分手段；",
              "**同源平均不构成增益**：若成员间预测相关 > 0.99，融合只是降低方差而非提升上限；",
-             "集成的收益必须用统计检验而非点估计确认。"],
+             "集成的收益必须用统计检验而非点估计确认；",
+             "改进 proposal §5 D2/D3：EMA 要用真实评分逐 epoch 评估（不是用 loss 选）；"
+             "SWA 更新 BN 统计有坑，只能作对照臂；快照必须是**同折** top-k，融合权重只能由 inner-OOF 选；"
+             "**增益 CI 含 0 一律 NO-GO**，不得用同源平均包装成\"增益\"。"],
         inputs=["E3/E4/E5/E6/E7 的冻结成员", "E0 的 bootstrap 工具"],
         outputs=["`src/ensemble/blend.py`、`E8/code/ensemble.py`",
+                 "`models/E8/**/ema.pt`、`last.pt`、`best.pt`（EMA 保留）",
                  "`$V4_RUN_ROOT/E8/ensemble/oof.npz`",
-                 "`$V4_REPORTS_DIR/E8_ensemble_report.json`、`$V4_REPORTS_DIR/E8_gate.json`"],
-        steps=["枚举可用成员（多 seed 权重、不同主干的权重、快照 checkpoint）",
-               "计算成员间 OOF 预测相关矩阵，标记同源簇",
+                 "`$V4_REPORTS_DIR/E8_ensemble_report.json`（逐折 delta + CI）、`$V4_REPORTS_DIR/E8_gate.json`"],
+        steps=["实现 EMA：`decay∈{0.99,0.999,0.9995}`，每步更新；**每 epoch 用真实 `score.py` 在 inner-OOF 评估 EMA 权重**，"
+               "保存 `ema.pt`（与 `last.pt`/`best.pt` 并列）；报告 EMA vs best 的逐折 delta 与 CI",
+               "实现 SWA 仅作**对照臂**：谨慎处理 BN 统计（前向重估 BN running stats / 或用 `update_bn`），"
+               "若 BN 处理不当则记录并降级为 NO-GO",
+               "实现**同折 top-k（k=2–3）快照集成**：保存该折 inner-OOF 得分最高的 k 个 checkpoint，"
+               "融合权重只在 inner-OOF 上选",
+               "枚举其它可用成员（多 seed 权重、不同主干的权重）",
+               "计算成员间 OOF 预测相关矩阵，标记同源簇，报告**成员相关性/共同来源**（强制）",
                "实现三种融合：平均、加权（inner-OOF 选权）、线性 stacking（inner-OOF 训）",
-               "与最佳单成员做 paired bootstrap（按井行数加权，1000 次）",
-               "报告：集成 OOF、最佳单成员 OOF、delta、CI、逐折方向",
-               "写 Gate：集成 ≥ 最佳单成员 且 CI 下界 > 0"],
-        params=[("成员数上限", "5", "3–5（内存受限时 2）", "总计划 §3.4.1 收缩规则"),
+               "与最佳单成员做 paired bootstrap（按井行数加权，1000 次），报告逐折 delta 与 CI",
+               "写 Gate：集成 ≥ 最佳单成员 且 CI 下界 > 0；CI 含 0 的策略一律标 NO-GO"],
+        params=[("EMA decay", "0.999", "0.99/0.999/0.9995", "inner-OOF 选择（按真实 score.py）"),
+                ("EMA 评估频率", "每 epoch（inner-OOF 真实评分）", "冻结", "不用 loss 选"),
+                ("SWA", "仅对照臂", "开/关", "BN 统计需谨慎；不当则 NO-GO"),
+                ("快照数 k", "2–3（同折）", "2/3", "inner-OOF 得分 top-k"),
+                ("成员数上限", "5", "3–5（内存受限时 2）", "总计划 §3.4.1 收缩规则"),
                 ("融合权重", "inner-OOF 选择", "平均/加权/stacking", "禁止用 outer 选"),
                 ("同源判据", "相关系数 > 0.99 视为同源", "冻结", "同源成员不计入增益证据")],
-        done=["集成 ≥ 最佳单成员 且 CI 下界 > 0",
-              "成员同源性矩阵与同源簇标注完整",
-              "5 折 delta 方向一致（至少 4/5）",
+        done=["集成 ≥ 最佳单成员 且 CI 下界 > 0；**CI 含 0 的策略记为 NO-GO**，不得作为\"增益\"上报",
+              "EMA（三档 decay）用真实 `score.py` 逐 epoch 在 inner-OOF 评估，`ema.pt` 与 `last.pt`/`best.pt` 并存，"
+              "并报告 EMA vs best 的逐折 delta 与 CI",
+              "SWA 作为对照臂完成并说明 BN 统计处理；若不当必须标 NO-GO",
+              "同折 top-k 快照集成完成，融合权重只在 inner-OOF 选",
+              "**成员相关性/共同来源报告完整**（相关矩阵 + 同源簇标注）",
+              "5 折 delta 方向一致（至少 4/5）；`E8_ensemble_report.json` 含逐折 delta 与 CI",
               "`E8_gate.json` 全 mandatory 通过"],
         forbid=["用同源模型平均制造假增益",
-                "用 outer 折选融合权重",
-                "成员数超过磁盘/内存可承受范围"],
+                "把 CI 含 0 的增益包装成\"有效\"",
+                "用 outer 折选融合权重/EMA decay",
+                "成员数超过磁盘/内存可承受范围",
+                "在不说明 BN 统计处理的情况下声称 SWA 有效"],
         risk=[("集成无增益", "CI 含 0", "判 NO-GO，保留最佳单成员作为最终候选"),
               ("stacking 过拟合 inner", "inner 好 outer 差", "限制 stacking 自由度（只用线性 + 强正则）")],
         stop=["集成 CI 上界 ≤ 0 → 保留最佳单成员，记录 NO-GO"],
@@ -1605,24 +1919,15 @@ def render(e: str, p: dict) -> str:
         "notes": "",
     }
     extra = dict(p["prereg_extra"])
-    # 按 primary_metric 推断 gate_type 并写入模板（与 src/validation/gates.py 语义一致）
+    # gate_type 取 src/validation/gates.py 的唯一事实源（不再复制 boolean 清单）
     _pm = extra.get("primary_metric", base["primary_metric"])
-    if _pm == "confirm_non_inferiority":
-        _gt = "non_inferior"
-    elif _pm in ("env_hard_checks_passed", "guardrail_pass", "no_high_risk_leak",
-                 "clean_dir_reproduce", "submission_recorded", "archive_complete",
-                 "retrospective_complete", "constant_baseline_anchor",
-                 "data_card_recomputable", "contract_selftest_passed") \
-            or _pm.endswith(("_ok", "_passed", "_reported")):
-        _gt = "boolean"
-    else:
-        _gt = "delta"
-    base["gate_type"] = _gt
+    base["gate_type"] = infer_gate_type(_pm)
     # mandatory_checks 取并集：模板 6 项核心 + 本 P 追加项
     core = list(base["mandatory_checks"])
     for c in extra.pop("mandatory_checks", []):
         if c not in core:
             core.append(c)
+    base["mandatory_checks"] = core
     # thresholds 必须**深合并**（extra 里的阈值不得把 primary_threshold_key 覆盖掉）
     th = dict(base["thresholds"])
     extra_th = dict(extra.pop("thresholds", {}) or {})

@@ -12,7 +12,7 @@
 
 ## 1. 目标
 
-构建并缓存 `F1 = 13 条曲线 + DEPTH 原始值 + 13+1 缺失位 + 4 深度编码 = 32 维` 行级张量与三目标标签，落盘为按井分片，并验证内存占用符合 16 GiB 预算。
+构建并缓存 `F1 = 13 条曲线 + DEPTH 原始值 + 13+1 缺失位 + 4 深度编码 = 32 维` 行级张量与三目标标签，落盘为按井分片，并验证内存占用符合 16 GiB 预算；同时在**每个训练折内**统计连续头需要的稳健尺度（`s_por`、`s_sw`、SW 仿射 `sw_mu/sw_sigma`、`por_max`）并写入 scaler JSON/manifest，保证推理可反变换。
 
 ## 2. 为什么需要这一步
 
@@ -28,17 +28,20 @@
 ## 4. 输出契约
 
 - `src/features/basic.py`（`build_row_features`/`build_labels`/`decode_predictions`）
-- `src/data/row_dataset.py`（折内拼接 + 标准化）
-- `$V4_REPORTS_DIR/E1_row_features.json`（维度、缺失率、内存峰值、耗时）
+- `src/data/row_dataset.py`（折内拼接 + 标准化 + SW/POR 连续头反变换接口）
+- `$V4_REPORTS_DIR/E1_row_features.json`（维度、缺失率、内存峰值、耗时、逐折稳健尺度参数）
+- `versions/scalers/E1_fold{k}.json`（`s_por`/`s_sw`/`sw_mu`/`sw_sigma`/`por_max`，**只在训练折 fit**）
 
 ## 5. 执行步骤
 
 1. 实现 `build_row_features`：14 原始 + 14 缺失位 + 缺失比例 + 相对深度 + 深度步长 + 深度序号
-2. 实现 `build_labels`：POR/SW 原尺度、PERM 转 log10、三目标 mask、联合占位标签
+2. 实现 `build_labels`：POR/SW 原尺度、PERM 转 log10、三目标 mask、联合占位标签，并按目标记录 `y_atom[:,t] = (y==占位常量) & ~missing`
 3. 实现 `RowScaler`：**只在训练折 fit** 的中位数填补 + 均值/标准差标准化，输出 JSON 参数
-4. 实现折内数据装配：outer 训练折做 train、outer 验证折做推理，保证行级对齐
-5. 实测内存：单折激活内存峰值与常驻内存，写入报告
-6. 缓存体积核对：`raw`+`labels` 合计应远小于 0.2 GB
+4. 统计连续头稳健尺度：`s_por`/`s_sw` = 训练折有效标签的 IQR（或 std），`sw_mu = median(valid sw)`、`sw_sigma = IQR(valid sw)/1.349`、`por_max = 1.2×max(valid POR)`，全部写入 scaler JSON 与 manifest
+5. 实现折内数据装配：outer 训练折做 train、outer 验证折做推理，保证行级对齐
+6. 实测内存：单折激活内存峰值与常驻内存，写入报告
+7. 写切片单测：构造 `POR=0`、`POR<0.1`、`POR≈11.34`（中位）的行，验证连续头反变换/参数化路径能表示这些值；`SW` 侧验证 `(x−sw_mu)/sw_sigma` 与反变换互为逆
+8. 缓存体积核对：`raw`+`labels` 合计应远小于 0.2 GB
 
 ## 6. 参数与配置
 
@@ -47,13 +50,18 @@
 | 特征维度 | 32 | 冻结（F1） | 含 4 个深度编码列 |
 | 标准化 | 中位数填补 + 零均值单位方差 | 冻结 | 参数仅在训练折 fit |
 | PERM 变换 | log10, clip[-6,6] | 冻结（F1） | `constants.PERM_LOG_MIN/MAX` |
+| `s_por` / `s_sw` | 训练折有效标签的 IQR（备选 std） | 冻结 | 写入 scaler JSON，禁止跨折 |
+| `sw_mu` / `sw_sigma` | `median` / `IQR/1.349`（训练折有效 SW） | 冻结 | 输出反变换 `sw_cont = sw_mu + sw_sigma·head_out` |
+| `por_max` | `1.2 × max(valid POR)`（训练折，≈39.8） | 冻结 | 供 `por_cont = por_max·sigmoid(g)` |
 | 分片格式 | npz(compressed), float32 | 冻结 | 原子写：tmp → rename |
 
 ## 7. 完成判据
 
 - 特征/标签逐行对齐：`X.shape[0] == y.shape[0] == mask.shape[0]` 对全部 90 井成立
 - 折内装配后训练/验证行的井集合与 `folds.json` 完全一致（无井级泄漏）
-- `RowScaler` 参数可序列化为 JSON 并在推理时复现
+- `RowScaler` 与连续头尺度参数可序列化为 JSON 并在推理时复现（含 SW 仿射反变换）
+- 训练折稳健尺度只由训练折有效标签决定；测试井与验证折不参与 fit（单测断言）
+- `POR=0` 与 `POR<0.1` 切片单测通过（连续头参数化能输出 ~0）
 - 常驻内存 < 6 GiB、缓存 < 0.2 GB（实测写入报告）
 
 ## 8. 禁止事项
@@ -61,6 +69,8 @@
 - 在全部 80 井上 fit 标准化参数（必须折内 fit）
 - 把井身份（`logId`）或折号作为特征
 - 把占位行从训练集中剔除
+- 把 SW 当 `[0,1]` 尺度或做 ×100 换算（SW 是单一百分数尺度）
+- 用验证折/测试井标签估计 `s_por`/`s_sw`/`sw_mu`/`sw_sigma`/`por_max`
 
 ## 9. 风险与对策
 
@@ -139,7 +149,8 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
     "disk_budget_ok",
     "training_time_log_valid",
     "checkpoint_resumable",
-    "no_label_leak"
+    "no_label_leak",
+    "row_pipeline_ok"
   ],
   "decisions_locked": [],
   "notes": ""

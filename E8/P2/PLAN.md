@@ -1,4 +1,4 @@
-# E8/P2 集成（多 seed / 快照 / 多结构）与 Gate
+# E8/P2 集成（EMA/SWA / 快照 / 多结构）与 Gate
 
 > 所属阶段：[E8](../PLAN.md)　|　总计划：[v4/PLAN.md](../../PLAN.md)　|　索引：[资料引用索引](../../资料引用索引.md)
 
@@ -12,13 +12,14 @@
 
 ## 1. 目标
 
-构建多 seed、快照集成与多结构（U-Net/TCN/PatchTF）集成，报告成员同源性与按井行数加权的 paired bootstrap，判定集成是否真增益。
+实现并评估 **EMA**（`decay∈{0.99,0.999,0.9995}`，逐 epoch 用真实 `score.py` 在 inner-OOF 评估，`ema.pt` 与 `last.pt`/`best.pt` 并存）、**SWA**（仅作对照，BN 统计需谨慎）、**同折 top-k（k=2–3）快照集成**与多结构（U-Net/TCN/PatchTF）集成；融合权重只在 inner-OOF 上选，报告成员同源性与按井行数加权的 paired bootstrap。
 
 ## 2. 为什么需要这一步
 
 1. `资料库/08` §0.3 第 4 层：多模型 Stacking/加权融合 + 快照集成是标准提分手段；
 2. **同源平均不构成增益**：若成员间预测相关 > 0.99，融合只是降低方差而非提升上限；
-3. 集成的收益必须用统计检验而非点估计确认。
+3. 集成的收益必须用统计检验而非点估计确认；
+4. 改进 proposal §5 D2/D3：EMA 要用真实评分逐 epoch 评估（不是用 loss 选）；SWA 更新 BN 统计有坑，只能作对照臂；快照必须是**同折** top-k，融合权重只能由 inner-OOF 选；**增益 CI 含 0 一律 NO-GO**，不得用同源平均包装成"增益"。
 
 ## 3. 输入契约
 
@@ -28,38 +29,50 @@
 ## 4. 输出契约
 
 - `src/ensemble/blend.py`、`E8/code/ensemble.py`
+- `models/E8/**/ema.pt`、`last.pt`、`best.pt`（EMA 保留）
 - `$V4_RUN_ROOT/E8/ensemble/oof.npz`
-- `$V4_REPORTS_DIR/E8_ensemble_report.json`、`$V4_REPORTS_DIR/E8_gate.json`
+- `$V4_REPORTS_DIR/E8_ensemble_report.json`（逐折 delta + CI）、`$V4_REPORTS_DIR/E8_gate.json`
 
 ## 5. 执行步骤
 
-1. 枚举可用成员（多 seed 权重、不同主干的权重、快照 checkpoint）
-2. 计算成员间 OOF 预测相关矩阵，标记同源簇
-3. 实现三种融合：平均、加权（inner-OOF 选权）、线性 stacking（inner-OOF 训）
-4. 与最佳单成员做 paired bootstrap（按井行数加权，1000 次）
-5. 报告：集成 OOF、最佳单成员 OOF、delta、CI、逐折方向
-6. 写 Gate：集成 ≥ 最佳单成员 且 CI 下界 > 0
+1. 实现 EMA：`decay∈{0.99,0.999,0.9995}`，每步更新；**每 epoch 用真实 `score.py` 在 inner-OOF 评估 EMA 权重**，保存 `ema.pt`（与 `last.pt`/`best.pt` 并列）；报告 EMA vs best 的逐折 delta 与 CI
+2. 实现 SWA 仅作**对照臂**：谨慎处理 BN 统计（前向重估 BN running stats / 或用 `update_bn`），若 BN 处理不当则记录并降级为 NO-GO
+3. 实现**同折 top-k（k=2–3）快照集成**：保存该折 inner-OOF 得分最高的 k 个 checkpoint，融合权重只在 inner-OOF 上选
+4. 枚举其它可用成员（多 seed 权重、不同主干的权重）
+5. 计算成员间 OOF 预测相关矩阵，标记同源簇，报告**成员相关性/共同来源**（强制）
+6. 实现三种融合：平均、加权（inner-OOF 选权）、线性 stacking（inner-OOF 训）
+7. 与最佳单成员做 paired bootstrap（按井行数加权，1000 次），报告逐折 delta 与 CI
+8. 写 Gate：集成 ≥ 最佳单成员 且 CI 下界 > 0；CI 含 0 的策略一律标 NO-GO
 
 ## 6. 参数与配置
 
 | 参数 | 默认值 | 搜索范围/说明 | 选择位置 |
 |---|---|---|---|
+| EMA decay | 0.999 | 0.99/0.999/0.9995 | inner-OOF 选择（按真实 score.py） |
+| EMA 评估频率 | 每 epoch（inner-OOF 真实评分） | 冻结 | 不用 loss 选 |
+| SWA | 仅对照臂 | 开/关 | BN 统计需谨慎；不当则 NO-GO |
+| 快照数 k | 2–3（同折） | 2/3 | inner-OOF 得分 top-k |
 | 成员数上限 | 5 | 3–5（内存受限时 2） | 总计划 §3.4.1 收缩规则 |
 | 融合权重 | inner-OOF 选择 | 平均/加权/stacking | 禁止用 outer 选 |
 | 同源判据 | 相关系数 > 0.99 视为同源 | 冻结 | 同源成员不计入增益证据 |
 
 ## 7. 完成判据
 
-- 集成 ≥ 最佳单成员 且 CI 下界 > 0
-- 成员同源性矩阵与同源簇标注完整
-- 5 折 delta 方向一致（至少 4/5）
+- 集成 ≥ 最佳单成员 且 CI 下界 > 0；**CI 含 0 的策略记为 NO-GO**，不得作为"增益"上报
+- EMA（三档 decay）用真实 `score.py` 逐 epoch 在 inner-OOF 评估，`ema.pt` 与 `last.pt`/`best.pt` 并存，并报告 EMA vs best 的逐折 delta 与 CI
+- SWA 作为对照臂完成并说明 BN 统计处理；若不当必须标 NO-GO
+- 同折 top-k 快照集成完成，融合权重只在 inner-OOF 选
+- **成员相关性/共同来源报告完整**（相关矩阵 + 同源簇标注）
+- 5 折 delta 方向一致（至少 4/5）；`E8_ensemble_report.json` 含逐折 delta 与 CI
 - `E8_gate.json` 全 mandatory 通过
 
 ## 8. 禁止事项
 
 - 用同源模型平均制造假增益
-- 用 outer 折选融合权重
+- 把 CI 含 0 的增益包装成"有效"
+- 用 outer 折选融合权重/EMA decay
 - 成员数超过磁盘/内存可承受范围
+- 在不说明 BN 统计处理的情况下声称 SWA 有效
 
 ## 9. 风险与对策
 

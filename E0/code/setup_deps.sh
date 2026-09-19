@@ -7,10 +7,20 @@ DRY=0
 [[ "${1:-}" == "--dry-run" ]] && DRY=1
 
 cd "$(dirname "$0")/../.."   # -> v4/
+DATA_ROOT="${V4_DATA_ROOT:-/data}"
 REPORTS_DIR="${V4_REPORTS_DIR:-/data/v4/reports}"
 CACHE_ROOT="${V4_CACHE_ROOT:-/data/v4/cache}"
 mkdir -p "$REPORTS_DIR" 2>/dev/null || REPORTS_DIR="reports"
 mkdir -p "$REPORTS_DIR"
+
+# R3 修复：磁盘体检的权威路径必须是 data root（云端 /data 的 30 GB 配额），
+# 不能默认检查 `/`。本机开发环境若 /data 与 $V4_DATA_ROOT 都不存在，则降级到
+# repo 目录，并明确打印**实际使用**的路径（而不是崩溃）。
+if [[ ! -d "$DATA_ROOT" ]]; then
+  echo "WARN: DATA_ROOT='$DATA_ROOT' 不存在（本机开发环境？）——磁盘体检降级到 repo 目录。"
+  DATA_ROOT="$PWD"
+fi
+echo "data root:  $DATA_ROOT    (E0_disk_budget.json::level 的口径)"
 echo "reports dir: $REPORTS_DIR"
 
 echo "== v4 setup_deps =="
@@ -19,15 +29,20 @@ echo "python: $(python3 -V 2>&1)  ($(command -v python3))"
 # 0) 环境与磁盘先体检（缺 torch 时 check_env 会以非 0 退出，此处只做信息采集）
 python3 E0/code/check_env.py --profile base --json "$REPORTS_DIR/E0_env.json" || true
 python3 src/data/disk_guard.py --min-free-gb 8 \
+        --data-root "$DATA_ROOT" --path "$DATA_ROOT" --path "$CACHE_ROOT" \
         --report "$CACHE_ROOT" \
         --json "$REPORTS_DIR/E0_disk_budget.json" || true
 
-FREE_GB=$(python3 - <<'PY'
-import shutil
-print(round(shutil.disk_usage('/').free / 1024**3, 2))
+FREE_GB=$(DATA_ROOT="$DATA_ROOT" python3 - <<'PY'
+import os, shutil
+p = os.environ.get("DATA_ROOT") or "/"
+try:
+    print(round(shutil.disk_usage(p).free / 1024**3, 2))
+except OSError:
+    print("nan")   # 不阻塞：磁盘信息采集失败时按"未知"处理
 PY
 )
-echo "free disk: ${FREE_GB} GiB"
+echo "free disk on $DATA_ROOT: ${FREE_GB} GiB"
 
 if python3 -c "import sys; sys.exit(0 if float('${FREE_GB}') < 8 else 1)"; then
   echo "!! free < 8 GiB —— 按 PLAN.md §3.4.1 的安全规则：不安装任何额外包，仅使用镜像自带 torch+numpy。"
@@ -71,7 +86,9 @@ python3 -m pip cache purge || true
 python3 -m pip freeze > "$REPORTS_DIR/cloud_frozen.txt"
 cp -f "$REPORTS_DIR/cloud_frozen.txt" versions/locks/cloud_frozen.txt 2>/dev/null || true
 python3 E0/code/check_env.py --profile base --json "$REPORTS_DIR/E0_env.json" || true
-python3 src/data/disk_guard.py --min-free-gb 8 --json "$REPORTS_DIR/E0_disk_budget.json" || true
+python3 src/data/disk_guard.py --min-free-gb 8 \
+        --data-root "$DATA_ROOT" --path "$DATA_ROOT" --path "$CACHE_ROOT" \
+        --json "$REPORTS_DIR/E0_disk_budget.json" || true
 
 echo "== done =="
-df -h / | tail -1
+df -h "$DATA_ROOT" / 2>/dev/null | tail -n +1 || true

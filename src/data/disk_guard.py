@@ -25,6 +25,17 @@
     with disk_guard(capacity_hook=save_fn):  # 上下文管理器，抛出前先回调保存
         ...
 
+命令行
+------
+    python3 src/data/disk_guard.py --min-free-gb 8 \
+        --data-root /data --path /data --path /code/workspace \
+        --report "/data,/code/workspace" --json reports/E0_disk_budget.json
+
+`--path` 可重复（默认 `/`）；`--data-root`（缺省回退 `$V4_DATA_ROOT`）是**权威**路径：
+JSON 顶层 `level/free_gb/...` 描述它，`paths` 列出每个被测挂载点，`worst_level` 是全部
+挂载点中最差的 level（`abort` < `save_and_exit` < `cleanup` < `ok`）。退出码只看 primary
+（data root）的 level，因此下游 `disk_budget_ok` 读到的就是 `/data` 配额而非根文件系统。
+
 只依赖标准库（本机无 torch 也能跑）。
 """
 from __future__ import annotations
@@ -37,6 +48,9 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 GB = 1024**3
+
+# level 严重度：数值越小越严重（abort 最差）。用于计算 worst_level。
+LEVEL_SEVERITY = {"abort": 0, "save_and_exit": 1, "cleanup": 2, "ok": 3}
 
 # ---------------------------------------------------------------- 全局登记
 _CLEANUP_CANDIDATES: list[Path] = []
@@ -117,6 +131,40 @@ def disk_state(path: Path | str = "/", min_gb: float = 8.0,
     elif free_gb < min_gb:
         state.level = "cleanup"
     return state
+
+
+def measure_path(path: Path | str, min_gb: float = 8.0,
+                 cleanup_gb: float = 5.0, abort_gb: float = 3.0) -> DiskState:
+    """测量 `path` 所在文件系统。
+
+    与 `disk_state` 的唯一差别：当 `path` 本身不存在时（例如本机开发环境没有 /data），
+    退回到**最近的已存在祖先目录**测量，并在 `actions` 中记录实际测量的是哪个目录，
+    而不是直接抛 FileNotFoundError。返回的 `state.path` 始终是调用方请求的路径。
+    """
+    requested = Path(path)
+    probe = requested
+    while not probe.exists():
+        parent = probe.parent
+        if parent == probe:
+            break
+        probe = parent
+    if not probe.exists():
+        raise FileNotFoundError(
+            f"neither {requested} nor any ancestor exists; cannot measure disk usage"
+        )
+    state = disk_state(probe, min_gb=min_gb, cleanup_gb=cleanup_gb, abort_gb=abort_gb)
+    state.path = str(requested)          # 报告请求的路径，而非探测用的祖先目录
+    if probe != requested:
+        state.actions.append(f"path_missing: measured nearest existing ancestor {probe}")
+    return state
+
+
+def worst_level(levels: Iterable[str]) -> str:
+    """返回一组 level 中最严重的一个（abort < save_and_exit < cleanup < ok）。"""
+    levels = list(levels)
+    if not levels:
+        return "ok"
+    return min(levels, key=lambda lv: LEVEL_SEVERITY.get(lv, 99))
 
 
 def cleanup(verbose: bool = False) -> list[str]:
@@ -237,7 +285,13 @@ def _main() -> int:
     import json
 
     ap = argparse.ArgumentParser(description="v4 disk guard (30 GB cloud budget)")
-    ap.add_argument("--path", default="/")
+    ap.add_argument("--path", action="append", default=None, dest="paths",
+                    help="要检查的挂载点；可多次传入（例如 --path /data --path /code/workspace）。"
+                         "不传时默认只检查 /。")
+    ap.add_argument("--data-root", default=None, dest="data_root",
+                    help="权威数据根（云端通常是 /data，即 $V4_DATA_ROOT）。给定后顶层 "
+                         "level/free_gb/total_gb/used_gb/actions 描述该路径所在文件系统；"
+                         "缺省时回退到环境变量 $V4_DATA_ROOT，再缺省则用第一个 --path（或 /）。")
     ap.add_argument("--min-free-gb", type=float, default=8.0)
     ap.add_argument("--json", default=None)
     ap.add_argument("--cleanup", action="store_true", help="只清理，不做阈值判定")
@@ -249,8 +303,43 @@ def _main() -> int:
         removed = cleanup(verbose=True)
         print(f"removed {len(removed)} path(s)")
 
-    st = disk_state(args.path, min_gb=args.min_free_gb)
-    payload = st.as_dict()
+    # 权威 data root：显式 --data-root > $V4_DATA_ROOT > None
+    data_root = args.data_root or os.environ.get("V4_DATA_ROOT") or None
+
+    # 待检查路径：data root 优先，随后是 --path；去重保序
+    requested: list[str] = []
+    if data_root:
+        requested.append(data_root)
+    if args.paths:
+        requested.extend(args.paths)
+    if not requested:
+        requested = ["/"]
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for raw in requested:
+        key = os.path.normpath(str(Path(raw).expanduser()))
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(raw)
+
+    states = [measure_path(p, min_gb=args.min_free_gb) for p in ordered]
+
+    # 顶层字段描述 primary（data root）；找不到时退回第一个路径
+    primary = states[0]
+    if data_root:
+        dr = os.path.normpath(str(Path(data_root).expanduser()))
+        for st in states:
+            if os.path.normpath(str(Path(st.path).expanduser())) == dr:
+                primary = st
+                break
+
+    payload = primary.as_dict()
+    payload["paths"] = [s.as_dict() for s in states]
+    payload["worst_level"] = worst_level(s.level for s in states)
+    payload["primary_path"] = primary.path
+    payload["data_root_checked"] = bool(data_root)
     if args.report:
         sizes = {}
         for p in args.report.split(","):
@@ -265,7 +354,8 @@ def _main() -> int:
         out = Path(args.json)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return 0 if st.level == "ok" else 2
+    # 退出码只看 primary（data root）的 level，与 disk_budget_ok 的口径一致
+    return 0 if primary.level == "ok" else 2
 
 
 if __name__ == "__main__":

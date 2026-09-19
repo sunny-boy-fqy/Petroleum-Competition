@@ -3,6 +3,7 @@
   "stage": "E6",
   "p_stage": "P2",
   "created_at": "<ISO8601，写盘时填写>",
+  "gate_type": "delta",
   "primary_metric": "oof_total",
   "primary_threshold_key": "min_delta",
   "baseline_version": "E1_PD0",
@@ -11,7 +12,10 @@
   "thresholds": {
     "min_delta": 0.0,
     "min_effect_floor": 0.0,
-    "oof_total_min": 82.0
+    "oof_total_min": 82.0,
+    "min_atom_acc": 0.99,
+    "min_atom_recall": 0.98,
+    "min_joint_atom_auc": 0.9
   },
   "alpha": 0.05,
   "multiplicity": "none",
@@ -28,7 +32,14 @@
     "disk_budget_ok",
     "training_time_log_valid",
     "checkpoint_resumable",
-    "no_label_leak"
+    "no_label_leak",
+    "per_target_atom_acc_reported",
+    "per_target_atom_precision_recall_f1_reported",
+    "joint_atom_auc_reported",
+    "tau_t_inner_oof_only",
+    "no_atom_continuous_interpolation",
+    "input_no_label_leak_full",
+    "cpu_inference_ok"
   ],
   "decisions_locked": [],
   "notes": ""

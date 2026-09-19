@@ -1,8 +1,8 @@
-# E6/P0 联合常量状态头（H0）
+# E6/P0 逐目标原子头 + 辅助 joint 头（两阶段训练）
 
 > 所属阶段：[E6](../PLAN.md)　|　总计划：[v4/PLAN.md](../../PLAN.md)　|　索引：[资料引用索引](../../资料引用索引.md)
 
-> **性质**：保护屏障：66.7% 的白送分靠它守住　|　**依赖**：E5/P2（三个目标头定型）
+> **性质**：保护屏障：66.7% 的白送分 + 单目标原子行都靠逐目标原子头守住　|　**依赖**：E5/P2（三个连续头定型）
 >
 > **状态**：⏸ 待执行　
 
@@ -12,57 +12,74 @@
 
 ## 1. 目标
 
-训练联合占位状态分类头（BCE 监督 `POR=0.1 ∧ PERM=0.01 ∧ SW=99.9`），评估 AUC 与逐目标原子 precision/recall/F1。
+训练**逐目标原子头** `q_por/q_perm/q_sw`（主保护）+ **辅助** `q_joint`（可选高置信硬门禁，默认关），并做**两阶段训练**：stage 1 训练主干 + 原子头（`L_atom + λ_joint·L_joint` + 极小连续 fallback 0.05）；stage 2 冻结原子头（或 `q_head_lr_mult=0.05–0.1`）训练连续头（按切片加权，**权重永不为 0**）。评估逐目标 AUC / 原子 Acc/Precision/Recall/F1 与 joint atom AUC。
 
 ## 2. 为什么需要这一步
 
 1. 487,225 行（66.719%）是联合常量占位，占约 66.72 分的白送分；
 2. v1 的原子门已被证明可从输入预测（E7 的 +0.2015 主要来自此），因此应把"是否输出常量"做成**显式可学习决策**，而不是让回归头勉强逼近；
-3. 本项目不做 B0 patch 隔离（用户决策 D3），H0 是**唯一**的占位保护屏障，因此它的质量直接决定管线是否安全。
+3. 本项目不做 B0 patch 隔离（用户决策 D3），原子头是**唯一**的占位保护屏障，因此它的质量直接决定管线是否安全；
+4. 改进 proposal §1/§2：**单个 joint 头不够**——SW 单目标原子 31,030 行、PERM 7,373 行、POR 157 行并非 joint；joint 头对它们漏保护，又会误伤 joint 行中的非原子目标，且无法满足按目标验收的 Gate；
+5. 改进 proposal §5 D1：两步训练能避免连续损失把刚学好的原子边界冲掉；非 joint 原子行加权比整行过采样更精确，避免不同目标互相干扰。
 
 ## 3. 输入契约
 
 - E3/E4 主干逐行表示或 E1 行级特征
-- E0 的占位标签
+- E0 的占位标签与三目标 mask
 
 ## 4. 输出契约
 
-- `src/models/state_head.py`、`$V4_RUN_ROOT/E6/state/{foldk}.pt`
-- `$V4_REPORTS_DIR/E6_atomic_report.json`（AUC/PR 曲线/逐目标原子指标）
+- `src/models/state_head.py`（`q_joint + q_por/q_perm/q_sw` 五个头）、`$V4_RUN_ROOT/E6/state/{foldk}.pt`（含 stage 1/2 元数据）
+- `$V4_REPORTS_DIR/E6_atomic_report.json`（逐目标 AUC / Acc / Precision / Recall / F1、joint atom AUC、两阶段曲线）
 
 ## 5. 执行步骤
 
-1. 实现 H0：`Linear(d→1)`，可用"逐行 + 井内平均池化"拼接增强井级信息
-2. 用 BCE 训练（占位/有效/缺测三类的处理：缺测行不参与）
-3. 报告 AUC 与 PR-AUC（占位类不平衡，PR 更重要）
-4. 报告逐目标原子 precision/recall/F1（在 τ=0.5 与最优 τ 两处）
-5. 做 label-shuffle 阴性对照，确认 AUC 不是来自泄漏
+1. 实现原子头：`q_t = sigmoid(Linear(d→1))`（`t∈{por,perm,sw}`）+ `q_joint = sigmoid(Linear(d→1))`；标签 `y_atom[:,t] = (y[:,t]==占位值[t]) & ~missing[:,t]`、`y_joint = y_atom.all(1) & ~missing.any(1)`
+2. 实现 **stage 1**：训练主干 + 原子头，损失 `L_atom + λ_joint·L_joint`（外加极小连续 fallback 0.05）；监控 per-target atomic Acc/Precision/Recall
+3. 实现 per-target 非 joint 原子行加权：`w_t = 1 + α·y_atom[:,t]·(¬y_joint)`，`L_atom_t = Σ(BCE(q_t,y_atom_t)·w_t·mask_t)/Σ(w_t·mask_t)`
+4. 实现 **stage 2**：冻结原子头（或 `q_head_lr_mult=0.05–0.1`），训练连续头；按切片加权：joint 行 0.1–0.3、非 joint 原子行 0.1–0.3（作为 fallback）、有效连续行 1.0，**永不置 0**
+5. 总损失：`L = L_cont + λ_joint·L_joint + λ_atom·L_atom`，默认 `λ_atom=0.5`、`λ_joint=0.2`，per-target `pos_weight` 1.0（搜 1.0/1.5/2.0），非 joint 原子行权重 `α` 1.0（搜 1.0/2.0/3.0）
+6. 用 BCE 训练（缺测行不参与）；报告 AUC、PR-AUC 与 joint atom AUC/AP
+7. 报告**逐目标**原子 Acc/Precision/Recall/F1（τ=0.5 与最优 τ 两处）
+8. 做 label-shuffle 阴性对照 + 全量输入泄漏回归（`input_no_label_leak_full`），确认指标不是来自泄漏
 
 ## 6. 参数与配置
 
 | 参数 | 默认值 | 搜索范围/说明 | 选择位置 |
 |---|---|---|---|
-| H0 输入 | 逐行表示（默认） | 逐行/逐行+井级池化 | inner 选择 |
+| 头结构 | `q_joint + q_por/q_perm/q_sw` | 冻结 | 逐目标原子是主保护 |
+| `λ_atom` | 0.5 | 0.2/0.5/1.0 | inner 选择 |
+| `λ_joint` | 0.2 | 0.1/0.2/0.5 | inner 选择 |
+| per-target `pos_weight` | 1.0 | 1.0/1.5/2.0 | inner 选择 |
+| 非 joint 原子行权重 `α` | 1.0 | 1.0/2.0/3.0 | inner 选择 |
+| `q_head_lr_mult` | 0.05–0.1（stage 2） | 0（冻结）/0.05/0.1 | inner 选择 |
+| stage 2 切片权重 | joint 0.1–0.3 / 非 joint 原子 0.1–0.3 / 有效 1.0 | 冻结 | **永不为 0** |
 | 正负样本 | 全量（占位 66.7%） | 全量/过采样有效 | 过采样需消融 |
-| `pos_weight` | 1.0 | 1.0/1.5/2.0 | inner 选择 |
 
 ## 7. 完成判据
 
-- AUC ≥ 0.97 且 PR-AUC 报告完整
-- label-shuffle 对照下 AUC ≈ 0.5（证明非泄漏）
-- 逐目标原子 precision/recall/F1 全部上报（`atomic_precision_reported`）
+- 逐目标原子 Acc **≥ 0.99**、recall **≥ 0.98**，precision/F1 全部上报；`state_auc ≥ 0.97` 且 PR-AUC 报告完整
+- **joint atom AUC/AP** 单独上报（`joint_atom_auc_reported`）
+- label-shuffle 对照下 AUC ≈ 0.5（证明非泄漏）；`input_no_label_leak_full` 为 true
+- 两阶段训练记录完整：stage 2 后原子 Acc 不下降（冻结或低 lr 生效）
+- 连续头切片权重非 0 且写入配置；`pos_weight`/`α`/`λ_atom`/`λ_joint` 均只在 inner-OOF 选
 
 ## 8. 禁止事项
 
-- 用测试集或验证折标签训练 H0
-- 把 H0 当作"裁剪器"直接覆盖回归输出而不经 τ 判定
+- 用测试集或验证折标签训练原子头
+- 把原子头当作"裁剪器"直接覆盖回归输出而不经 τ 判定
+- 用单个 joint 头覆盖三目标（必须逐目标原子头）
+- 把连续头切片权重设为 0（原子误判时连续头必须能 fallback）
+- 在 stage 2 让原子头以全 lr 继续更新（会冲掉原子边界）
 
 ## 9. 风险与对策
 
 | 风险信号 | 早期表现 | 对策 |
 |---|---|---|
-| H0 学不到占位 | AUC < 0.9 | 检查特征是否包含足够区分信息；加井级池化 |
-| H0 过拟合 | inner AUC 高 outer 低 | 减容量 + dropout + 折内早停 |
+| 逐目标原子头互相干扰 | 某目标 recall 上升、另两个下降 | 独立 loss 权重 + per-target sample weight；必要时先不共享原子头 |
+| 原子头学不到占位 | AUC < 0.9 | 检查特征是否包含足够区分信息；加井级池化 |
+| 原子头过拟合 | inner AUC 高 outer 低 | 减容量 + dropout + 折内早停 |
+| 两阶段第二段遗忘原子头 | stage 2 后 atom Acc 下降 | 冻结或极低 lr；inner-OOF 监控 atom Acc；必要时联合微调 |
 
 ## 10. 停止规则
 
@@ -116,7 +133,9 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
   "thresholds": {
     "min_delta": 0.0,
     "min_effect_floor": 0.0,
-    "min_auc": 0.97
+    "min_auc": 0.97,
+    "min_atom_acc": 0.99,
+    "min_atom_recall": 0.98
   },
   "alpha": 0.05,
   "multiplicity": "none",
@@ -133,7 +152,13 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
     "disk_budget_ok",
     "training_time_log_valid",
     "checkpoint_resumable",
-    "no_label_leak"
+    "no_label_leak",
+    "per_target_atom_acc_reported",
+    "per_target_atom_precision_recall_f1_reported",
+    "joint_atom_auc_reported",
+    "tau_t_inner_oof_only",
+    "no_atom_continuous_interpolation",
+    "input_no_label_leak_full"
   ],
   "decisions_locked": [],
   "notes": ""

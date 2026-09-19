@@ -33,9 +33,9 @@
 
 ## 6. P 级子计划
 
-- [P0 物理与交会特征](P0/PLAN.md)
-- [P1 窗口与井级特征](P1/PLAN.md)
-- [P2 增强与吞吐标定](P2/PLAN.md)
+- [P0 物理与交会特征（F_phys）](P0/PLAN.md)
+- [P1 窗口与井级特征（F_win / F_well）+ 内存纪律](P1/PLAN.md)
+- [P2 数据增强与吞吐标定](P2/PLAN.md)
 
 ## 7. 完成判据（Gate）
 

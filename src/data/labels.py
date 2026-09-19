@@ -101,12 +101,17 @@ def sw_decode(q_placeholder: Any, f_valid: Any, small_branch: bool | None = None
               scale: float | None = None) -> Any:
     """SW 混合解码。
 
-    **默认（E0-R2 起）**：SW 是单一标签尺度，故取 `SW = q·99.9 + (1−q)·f_valid`，
-    其中 `f_valid` 已是标签尺度的有效分支输出。
-    仅当显式 `small_branch=True`（且 `constants.SW_SMALL_BRANCH=True`）时，
-    才把 `f_valid` 视为 [0,1] 并乘以 `SW_SMALL_BRANCH_SCALE`（保留旧路径仅供对照；默认关闭）。
+    **默认（E0-R2 起，R3-C1 统一口径）**：SW 是**单一标签尺度（百分数）**，故取
+    `SW = q·99.9 + (1−q)·f_valid`，其中 `f_valid` 已是标签尺度的有效分支输出。
 
-    注意：E6 的提交路径使用**硬切换**（q>τ 直接输出 99.9）；本函数用于训练期监督与诊断。
+    ⚠️ **deprecated 对照路径（永久关闭）**：`small_branch=True` 分支假设 `f_valid` 处于
+    小数区间并乘以 `SW_SMALL_BRANCH_SCALE`。该假设（"SW 占位 99.9 与有效值归一化到小数区间
+    两种尺度混用"）已被 E0 实测**证伪**：80 口训练井有效 SW 为 min 8.305 / median 82.805 /
+    max 99.9，**小于 1 的行数为 0**，且 `constants.SW_SMALL_BRANCH=False` 是常量硬编码。
+    该分支仅用于复现历史对照，**任何训练/推理/提交路径都不得启用**。
+
+    注意：E6 的提交路径使用**逐目标硬切换**（`q_sw > τ_sw` 直接输出精确 99.9，见
+    `inference/atomic_gate.py`）；本函数只用于旧式联合分支的训练期监督与诊断。
     """
     use_small = C.SW_SMALL_BRANCH if small_branch is None else small_branch
     sc = C.SW_SMALL_BRANCH_SCALE if scale is None else scale

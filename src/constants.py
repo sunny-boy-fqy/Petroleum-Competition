@@ -33,6 +33,14 @@ MISSING_LT: float = -1000.0
 PLACEHOLDER: dict[str, float] = {"POR": 0.1, "PERM": 0.01, "SW": 99.9}
 PLACEHOLDER_ABS_TOL: float = 1e-9
 
+# ---------------------------------------------------------------- 原子哨兵表（唯一事实源）
+# 三目标的常量哨兵值；这些行是**真实监督目标**（既不删除也不掩码），
+# 由模型侧"原子头 q_t"负责把它们从连续头手里抢回来。
+# 顺序全局固定为 (POR, PERM, SW)，q_atom 的列序即此顺序。
+ATOM_VALUES: dict[str, float] = {"POR": 0.1, "PERM": 0.01, "SW": 99.9}
+TARGETS: tuple[str, ...] = ("POR", "PERM", "SW")
+TARGET_WEIGHTS: tuple[float, ...] = (0.30, 0.35, 0.35)   # 官方 Total 权重（同 SCORE_WEIGHTS）
+
 # 评分权重与容差（rules.md §7.3/§7.4）
 SCORE_WEIGHTS: dict[str, float] = {"POR": 0.30, "PERM": 0.35, "SW": 0.35}
 DELTA_POR: float = 0.08
@@ -41,16 +49,46 @@ EPS: float = 1e-3          # 资料库/12 §2.4 提示 2：取 1e-3，不用 1e-
 PERM_LOG_MIN: float = -6.0
 PERM_LOG_MAX: float = 6.0
 
-# ---------------------------------------------------------------- SW 尺度（E0-R2 修正）
-# **此前假设错误**：文档曾写"SW 占位 99.9（百分数）、有效值 [0,1]（小数）"，属双尺度。
-# 80 口训练井实测（非缺测且非联合占位行）：SW min=8.305, median=82.804, max=99.9，
-# SW<1 的行数为 **11**（占有效行 6.8e-5）——即 SW 与 POR/PERM 一样是**单一标签尺度（百分数）**。
-# 因此取消"×100 双尺度换算"这一前提，H3/SW 头直接输出标签尺度。
+# ---------------------------------------------------------------- 连续头参数化（E1-R3 冻结）
+# POR : por = por_max * sigmoid(g)，por_max = POR_MAX_BUFFER * valid_por_max。
+#       por_max 是 **buffer（不可学习）**：输出天然非负、可精确趋近 0（真实 0.0 存在），
+#       且上界留有 20% 缓冲。**严禁 `0.1 + softplus(g)`** —— 那会把下界锁死在 0.1。
+POR_MAX_BUFFER: float = 1.2
+POR_VALID_MAX: float = 33.177     # 训练折有效 POR 最大值（por_max = 1.2 * 该值 ≈ 39.8）
+# PERM: perm_z = 6 * tanh(g)，log10 空间夹到 [-6, 6]，严格保证 PERM > 0。
+# SW  : sw = sw_mu + sw_sigma * g（训练折仿射反归一化），sw 为标签尺度（百分数）。
+
+# ---------------------------------------------------------------- SW 尺度（E0-R2 冻结结论）
+# **唯一权威结论**：SW 是**单一标签尺度（百分数）**。
+#   80 口训练井实测有效 SW：min=8.305, median=82.805, max=99.9；
+#   有效行中 SW<1 的行数为 **0**。
+# "SW 双尺度（占位 99.9 = 百分数、有效值 [0,1] = 小数）"是**已被数据证伪的假设**，
+# 任何文档/代码若仍这样断言都是错的，必须删除；**永远不得把 SW 裁剪到 [0,1]**。
+# SW_SMALL_BRANCH 是这条被证伪路径的**遗留对照开关，永久关闭（False）**；
+# SW_SMALL_BRANCH_SCALE 仅当该开关被显式打开时才有意义（保留仅为兼容旧接口）。
 SW_PLACEHOLDER: float = 99.9
-SW_LABEL_RANGE: tuple[float, float] = (0.0, 100.0)   # 标签尺度上界（实测有效值 8.3–99.9）
-SW_MIN_OBSERVED: float = 8.305                        # 实测有效行最小值（E0 复算）
-SW_SMALL_BRANCH: bool = False                         # 是否启用 [0,1] 小值分支（默认关闭）
+SW_LABEL_RANGE: tuple[float, float] = (0.0, 100.0)   # 标签尺度软上界（实测有效 8.305–99.9）
+SW_VALID_MIN: float = 8.305                          # 实测有效行最小值（E0 复算）
+SW_VALID_MEDIAN: float = 82.805                      # 实测有效行中位数（E0 复算）
+SW_MIN_OBSERVED: float = SW_VALID_MIN                # 兼容旧名（= SW_VALID_MIN）
+SW_SMALL_BRANCH: bool = False                        # 遗留对照开关，永久 False
 SW_SMALL_BRANCH_SCALE: float = 100.0                  # 仅当 SW_SMALL_BRANCH=True 时用于换算
+
+
+def sw_to_norm(sw: float, mu: float = SW_VALID_MEDIAN, sigma: float = 20.0) -> float:
+    """训练折仿射归一化：`z = (sw − mu) / sigma`（纯 python）。
+
+    `mu`/`sigma` **必须**来自训练折的有效 SW 统计（见
+    `features.basic.fit_target_scalers`），并写入 checkpoint manifest / scaler JSON。
+    """
+    if float(sigma) == 0.0:
+        raise ZeroDivisionError("sw_to_norm: sigma must be non-zero")
+    return (float(sw) - float(mu)) / float(sigma)
+
+
+def sw_from_norm(z: float, mu: float = SW_VALID_MEDIAN, sigma: float = 20.0) -> float:
+    """`sw_to_norm` 的逆：`sw = mu + sigma * z`（纯 python，与前者严格互逆）。"""
+    return float(z) * float(sigma) + float(mu)
 
 # ---------------------------------------------------------------- 提交契约
 EXPECTED_N_TEST_WELLS: int = 10

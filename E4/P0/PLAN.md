@@ -12,13 +12,14 @@
 
 ## 1. 目标
 
-实现 PatchTST 式通道独立 Patch Transformer（patch=32/stride=16、d=256、6 层、8 头、相对位置编码），与 E3 的 CNN 主干在**同数据同折**下可比。
+实现 PatchTST 式**通道独立 + 相对位置编码**的 Patch Transformer，patch size/stride/overlap 只在 inner-OOF 上搜索，与 E3 的 CNN 主干在**同数据同折**下可比；80 井小数据下**优先小 `d` / 小 `layers`**。
 
 ## 2. 为什么需要这一步
 
 1. `资料库/08` §0.3 第 3 层与 §7.5：把深度序列切成 patch 后做通道独立建模，是长序列的低成本高效方案（复杂度从 O(n²) 降到 O((n/P)²)）；
 2. CNN 擅长局部形态，注意力擅长长程依赖，两者互补——但必须先证明 Transformer 单体能打平/超过 CNN，才谈融合；
-3. `资料库/08` §1.2 指出整井 n≈10⁴ 时原始自注意力不可接受，patch 化是必要前提。
+3. `资料库/08` §1.2 指出整井 n≈10⁴ 时原始自注意力不可接受，patch 化是必要前提；
+4. 改进 proposal §6：80 井极易过拟合，PatchTF 必须优先小 `d`/小 `layers`；patch/stride/overlap 与重叠 chunk 推理都只能在 inner-OOF 上定。
 
 ## 3. 输入契约
 
@@ -29,33 +30,38 @@
 
 - `src/models/patchtf.py`
 - `models/E4/patchtf_fold{k}.pt`
-- `$V4_REPORTS_DIR/E4_patchtf.json`（与 E3 的对照结果）
+- `$V4_REPORTS_DIR/E4_patchtf.json`（与 E3 的对照结果 + patch/stride/overlap 搜索表）
 
 ## 5. 执行步骤
 
-1. 实现 patch 切分与线性投影（P=32, stride=16, d_model=256）
+1. 实现 patch 切分与线性投影（默认 P=32, stride=16, d_model=128, 4 层，小容量起步）
 2. 实现通道独立：每条曲线单独作为 token 序列（共享权重），最后沿通道做聚合
-3. 注意力用 PyTorch 2.4 原生 `F.scaled_dot_product_attention`（自动选择 Flash/Memory-Efficient/Math 后端）
-4. 相对位置编码 + Pre-LN + 残差 + FFN(GELU)，dropout 0.1
-5. 输出上采样回逐行长度（patched 输出按 stride overlap-add 还原）
-6. inner-OOF 筛查（fold0 仅资源预检），胜者跑全 5 折
+3. **保留相对位置编码**并做消融（有/无）
+4. 注意力用 PyTorch 2.4 原生 `F.scaled_dot_product_attention`（自动选择 Flash/Memory-Efficient/Math 后端）
+5. 输出上采样回逐行长度（patched 输出按 stride overlap-add 还原），并实现**重叠 chunk 推理 + 加权拼接**
+6. patch size/stride/overlap 只在 inner-OOF 上搜索（fold0 仅资源预检），胜者跑全 5 折
 
 ## 6. 参数与配置
 
 | 参数 | 默认值 | 搜索范围/说明 | 选择位置 |
 |---|---|---|---|
-| `patch_len` | 32 | 16/32/64 | 与 stride 联动 |
-| `stride` | 16 | 8/16/32 | overlap = patch−stride |
-| `d_model` | 256 | 128/256/512 | 显存充足 |
-| `n_layers` | 6 | 4/6/8 | 同上 |
+| `patch_len` | 32 | 16/32/64 | inner-OOF 搜索 |
+| `stride` | 16 | 8/16/32 | overlap = patch−stride，inner-OOF 搜索 |
+| `d_model` | 128 | 64/128/256 | 80 井优先小 d |
+| `n_layers` | 4 | 2/4/6 | 80 井优先小 layers |
 | `n_heads` | 8 | 4/8 | d_model 必须整除 |
 | 通道独立 | 是 | 是/否 | NO 则退化为多头联合建模，作对照 |
+| 相对位置编码 | 开 | 开/关 | 消融证明有贡献或记录 NO-GO |
+| chunk 拼接权重 | 三角窗 | 三角/汉宁/等权 | inner-OOF 选，防接缝跳变 |
 | `dropout` | 0.1 | 0.0/0.1/0.2 | 80 井易过拟合 |
 
 ## 7. 完成判据
 
 - patch 还原后输出长度与输入严格一致（overlap-add 权重归一）
 - 与 E3 在同折同数据下可比（同 chunk、同特征、同头）
+- 通道独立与相对位置编码保留且各自有消融结论
+- patch/stride/overlap 搜索表完整，全部只在 inner-OOF 上选
+- 重叠 chunk 推理完成，整段推理与拼接推理逐点差在容差内（无接缝跳变）
 - 注意力只使用 2.4 已有签名；无编译扩展依赖
 - inner-OOF 筛查结果与资源记录完整（fold0 预检标 exploratory=true）
 
@@ -64,6 +70,8 @@
 - 把曲线轴当图像轴做 2D 卷积（曲线轴相邻无物理含义，`资料库/08` §1.3）
 - 依赖 flash-attn/xformers
 - 用 2.5+ 的 `torch.nn.attention` API
+- 用 outer 折选 patch/stride/overlap
+- 在小数据上直接开大 `d`/`layers` 而不先做容量消融
 
 ## 9. 风险与对策
 

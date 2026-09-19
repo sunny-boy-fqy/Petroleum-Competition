@@ -28,7 +28,7 @@
 ## 4. 输出契约
 
 - `$V4_REPORTS_DIR/E0_env.json`
-- `$V4_REPORTS_DIR/E0_disk_budget.json`
+- `$V4_REPORTS_DIR/E0_disk_budget.json`（**按挂载点**报告：`paths` + `worst_level` + `primary_path` + `data_root_checked`）
 - `versions/locks/cloud_frozen.txt`（镜像构建后 `pip freeze` 快照）
 - `$V4_LOG_DIR/train_env_*.log`（stdout 全量日志）
 
@@ -36,9 +36,9 @@
 
 1. `bash /code/workspace/v4/run_train.sh --mode env`
 2. 读日志确认 `hard failures: 0`，逐项核对 torch/cuda/gpu/bf16/disk 五行
-3. `df -h / /data /code/workspace` 记录三个挂载点的容量与是否同盘
+3. `df -h / /data /code/workspace` 记录三个挂载点的容量与是否同盘，并写入 `E0_disk_budget.json::paths`（Gate 的 `disk_budget_ok` 只看 DATA-ROOT 级别）
 4. `du -sh /usr /opt /root 2>/dev/null` 记录镜像本体占用，推算项目可用空间
-5. 若可用 < 12 GB，把 `contingency_applied=true` 与收缩项写入 `E0_disk_budget.json`
+5. 若 **DATA-ROOT（`$V4_DATA_ROOT` = `/data`）** 可用 < 12 GB，把 `contingency_applied=true` 与收缩项写入 `E0_disk_budget.json`（`worst_level`/`primary_path`/`data_root_checked` 一并落盘）
 6. 把 `E0_env.json` 的 `deps.versions` 与 `versions/locks/cloud.txt` 逐项比对，不一致则更新 lock 并提交
 
 ## 6. 参数与配置
@@ -46,14 +46,14 @@
 | 参数 | 默认值 | 搜索范围/说明 | 选择位置 |
 |---|---|---|---|
 | `--min-free-gb` | 8.0 | 8–12 | 磁盘硬门禁；实测后若过紧则上调 |
-| `--allow-non-a100` | false | — | 仅本机开发时开启（把 GPU 检查降级为 warn） |
+| `--allow-non-a100` | false | — | 仅本机开发时开启：**只放宽 GPU/torch 检查**，不放宽依赖检查 |
 | `NUM_WORKERS` | 4 | 2–6 | 16 GiB 内存下的安全值，见总计划 §3.1-3 |
 
 ## 7. 完成判据
 
-- `check_env.py` 输出 **hard failures: 0**（判据是「所有 hard 级检查全过」，不是固定项数；本机 `--allow-non-a100` 模式下为 15 项检查 / 5 项 hard）
-- `E0_disk_budget.json` 含 `total_gb/used_gb/free_gb/level`，且 `level=="ok"`
-- `E0_env.json` 含全部 9 个可选依赖的 `available/versions`
+- `check_env.py` 输出 **hard failures: 0**（判据是「**所有 hard 级检查全过**」，**不是固定项数**，也不因 `--allow-non-a100` 而放宽依赖检查——该开关只放宽 GPU/torch 检查）；非主路径可选依赖（`onnx` / `onnxruntime`）失败时写入顶层 `degraded_paths` 并降级为 warn，不阻塞训练
+- `E0_disk_budget.json` **按挂载点**报告（`paths` + `worst_level` + `primary_path` + `data_root_checked`），且 Gate 的 `disk_budget_ok` 读取 **DATA-ROOT（`$V4_DATA_ROOT` = `/data`）** 级别——不是 `/`
+- `E0_env.json` 含全部可选依赖的 `available/versions` 与 `degraded_paths`
 - `cloud_frozen.txt` 已生成并与 `versions/locks/cloud.txt` 一致或已更新
 
 ## 8. 禁止事项
@@ -146,7 +146,8 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
     "disk_budget_ok",
     "training_time_log_valid",
     "checkpoint_resumable",
-    "no_label_leak"
+    "no_label_leak",
+    "env_hard_checks_passed"
   ],
   "decisions_locked": [],
   "notes": ""

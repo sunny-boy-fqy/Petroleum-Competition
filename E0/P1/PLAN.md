@@ -18,7 +18,7 @@
 
 1. 口径是唯一事实源：解析错一列，后面所有分数都不可比；
 2. **实测发现 3 口训练井表头非官方 17 列**（`42f2870b` 20 列含 K/U/CGR、`b7eb1274` 21 列含 TH/K/U/CGR、`c7611b01` 16 列缺 CASE），共 27,080 行（3.71%），且都在 80 井折内、三目标齐全——按列位置解析会错位或丢行；
-3. **目标值域必须实测而非假设**：E0-R1 曾误以为 SW 是 `99.9`（百分数）+ `[0,1]`（小数）双尺度，实测有效 SW 为 min 8.305 / median 82.805 / max 99.9、SW<1 的行数为 0 → 实为单一标签尺度（审查 B2/R2-B4）；
+3. **目标值域必须实测而非假设**：E0-R1 曾误以为 SW 是 `99.9`（百分数）+ `[0,1]`（小数）双尺度；E0-R2 实测有效 SW 为 min 8.305 / median 82.805 / max 99.9、**`SW<1` 的行数为 0**，→ **双尺度假设已证伪**，SW 是单一百分数标签尺度，遗留对照路径 `SW_SMALL_BRANCH` **永久关闭**（禁止任何 ×100 换算或 `[0,1]` 归一化；仅允许 `[0,100]` 软裁剪）；
 4. 开发过程中已实际触发一次 numpy 越界切片静默截断（`arr[:,15:18]` 在 17 列数组上返回 2 列，丢掉 SW 整列），必须用断言防回归。
 
 ## 3. 输入契约
@@ -159,7 +159,10 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
     "disk_budget_ok",
     "training_time_log_valid",
     "checkpoint_resumable",
-    "no_label_leak"
+    "no_label_leak",
+    "data_card_recomputable",
+    "row_counts_match",
+    "folds_fingerprint_present"
   ],
   "decisions_locked": [],
   "notes": ""

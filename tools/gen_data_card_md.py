@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """由 `reports/E0_data_card.json` 生成 `E0/docs/data_card.md` 的统计表。
 
-**为什么**：二审 R2-B4 发现手写的统计表与 JSON/实测不一致（POR<1: 587 vs 576、
-PERM min: 0.000 vs 0.01、SW<1: 11 vs 0、直方图完全不符）。
-本工具用 marker 注入，保证"文档数字 = JSON 数字"。
+**为什么**：二审 R2-B4 发现手写的统计表与 JSON/实测不一致
+（POR 小于 1 的行数 587 vs 576、PERM min 0.000 vs 0.01、SW 小于 1 的行数曾被误写为 11 而实测为 0、
+直方图完全不符）。本工具用 marker 注入，保证"文档数字 = JSON 数字"。
+
+**R3-C1**：全仓统一 SW 口径为"单一标签尺度（百分数，实测 8.305–99.9，小于 1 的行数为 0）"，
+本文档不再复制任何历史错误数字，全部由 JSON 生成。
 
     python3 v4/tools/gen_data_card_md.py            # 就地更新 md
     python3 v4/tools/gen_data_card_md.py --check    # 只校验是否一致
@@ -73,8 +76,18 @@ def build(card: dict) -> str:
     L.append("")
     cache = card.get("shard_cache") or {}
     L.append(f"分片缓存：built={cache.get('built')}，"
-             f"{cache.get('mb', '—')} MB，input_cols_ok={cache.get('input_cols_ok')}。")
+             f"{cache.get('mb', '—')} MB，input_cols_ok={cache.get('input_cols_ok')}，"
+             f"wells={cache.get('n_wells', '—')}。")
     L.append("")
+    # R3-C3 / R3-M5：cache root 必须是**可复现**证据路径，且列出 manifest 便于下游核验
+    if cache:
+        L.append(f"- cache root（可复现形式）：`{cache.get('cache_root', '—')}`"
+                 f"（绝对路径 `{cache.get('cache_root_abs', '—')}`，"
+                 f"portable={cache.get('cache_root_portable', '—')}）")
+        L.append(f"- cache manifest（可复现形式）：`{cache.get('manifest_portable', '—')}`"
+                 f"（绝对路径 `{cache.get('manifest', '—')}`）——"
+                 f"云端对应 `$V4_CACHE_ROOT/manifest.json`；status.json 中 E0/P1 的 evidence 指向它")
+        L.append("")
     L.append(END)
     return "\n".join(L)
 

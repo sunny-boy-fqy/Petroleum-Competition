@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "created_at": "2026-09-19T12:50:38.600520+00:00",
-  "note": "v4 候选注册表（唯一事实源）。未登记的候选不得提交。status ∈ local_only / shortlisted / submitted / frozen_best / rejected。一旦 submitted 不得覆盖，修改必须新建 candidate_id 并写 parent。",
+  "note": "v4 候选注册表（唯一事实源）。未登记的候选不得提交。status ∈ local_only / shortlisted / submitted / frozen_best / rejected。一旦 submitted 不得覆盖，修改必须新建 candidate_id 并写 parent。 R3/proposal：`atomic` 已改为**逐目标**原子指标（por/perm/sw 的 acc/precision/recall/F1）+ `q_joint` 指标 + `tau`/`joint_guard`/`no_interpolation`；新增 `scalers`（POR/SW/PERM 的折内参数，fitted_on=train_fold_only）与 `train_strategy`（两阶段 / EMA / SWA / top-k 快照）。",
   "fields": {
     "candidate_id": "唯一 id，建议 v4-<stage>-<method>",
     "stage": "产出阶段（E1..E10）",
@@ -30,17 +30,64 @@
       "por_acc": 0.0,
       "perm_acc": 0.0,
       "sw_acc": 0.0,
+      "por_precision": 0.0,
+      "perm_precision": 0.0,
+      "sw_precision": 0.0,
+      "por_recall": 0.0,
+      "perm_recall": 0.0,
+      "sw_recall": 0.0,
+      "por_f1": 0.0,
+      "perm_f1": 0.0,
+      "sw_f1": 0.0,
+      "joint_atom_acc": 0.0,
+      "joint_atom_auc": 0.0,
+      "joint_atom_ap": 0.0,
       "tau": [
         0.0,
         0.0,
         0.0
-      ]
+      ],
+      "tau_selected_on": "inner_oof_official_total",
+      "tau_plateau_midpoint": true,
+      "joint_guard": {
+        "enabled": false,
+        "tau_high": null,
+        "inner_oof_delta": null,
+        "ci_low": null
+      },
+      "no_interpolation": true
     },
     "a_board_score": null,
     "a_board_delta_vs_b0": null,
     "status": "local_only",
     "parent": null,
-    "notes": ""
+    "notes": "",
+    "scalers": {
+      "por_max": 0.0,
+      "por_median": 0.0,
+      "sw_mu": 0.0,
+      "sw_sigma": 0.0,
+      "perm_z_median": 0.0,
+      "s_por": 0.0,
+      "s_sw": 0.0,
+      "fitted_on": "train_fold_only"
+    },
+    "train_strategy": {
+      "two_stage": true,
+      "stage1": "atomic heads (+辅助 joint)",
+      "stage2": "continuous heads (q heads frozen or lr_mult 0.05-0.1)",
+      "ema": {
+        "enabled": false,
+        "decay": null
+      },
+      "swa": {
+        "enabled": false
+      },
+      "snapshot_topk": {
+        "k": 0,
+        "fusion_on": "inner_oof"
+      }
+    }
   },
   "candidates": [
     {
@@ -82,7 +129,33 @@
       "a_board_delta_vs_b0": null,
       "status": "local_only",
       "parent": null,
-      "notes": "常数基线 (0.1, 0.01, 99.9)。逐目标 Acc 为 80 井 drop 口径实测（E0 复算，全精度）；仅用于参照，不参与候选竞争。"
+      "notes": "常数基线 (0.1, 0.01, 99.9)。逐目标 Acc 为 80 井 drop 口径实测（E0 复算，全精度）；仅用于参照，不参与候选竞争。",
+      "scalers": {
+        "por_max": 0.0,
+        "por_median": 0.0,
+        "sw_mu": 0.0,
+        "sw_sigma": 0.0,
+        "perm_z_median": 0.0,
+        "s_por": 0.0,
+        "s_sw": 0.0,
+        "fitted_on": "train_fold_only"
+      },
+      "train_strategy": {
+        "two_stage": true,
+        "stage1": "atomic heads (+辅助 joint)",
+        "stage2": "continuous heads (q heads frozen or lr_mult 0.05-0.1)",
+        "ema": {
+          "enabled": false,
+          "decay": null
+        },
+        "swa": {
+          "enabled": false
+        },
+        "snapshot_topk": {
+          "k": 0,
+          "fusion_on": "inner_oof"
+        }
+      }
     }
   ],
   "registry_rules": [

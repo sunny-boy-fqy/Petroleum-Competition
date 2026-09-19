@@ -56,6 +56,7 @@
 - 干净目录下 `python3 predict.py --use-version CONST --data_dir ./data --output result.json` 在一次运行内产出 10 井 / 95,948 行且 `contract_ok=true`（实测 ≈1.4 s，单核 CPU）
 - `predict.py` 在**无 torch** 环境可运行；`--list-versions` 正确区分可用/未训练版本
 - `versions/registry.json` 建立且被 `predict.py` 读取（`src/versioning/registry.py`）
+- E0 **本地契约 Gate 12/12（含 cache）**全部 mandatory 通过（10 项原检查 + `shard_cache_built` + `shard_cache_input_cols_ok`，见 `reports/E0_local_contract_gate.json`）
 
 ## 8. 禁止事项
 
@@ -145,7 +146,9 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
     "disk_budget_ok",
     "training_time_log_valid",
     "checkpoint_resumable",
-    "no_label_leak"
+    "no_label_leak",
+    "contract_selftest",
+    "no_torch_required"
   ],
   "decisions_locked": [],
   "notes": ""

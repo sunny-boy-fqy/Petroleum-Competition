@@ -135,7 +135,8 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
     "disk_budget_ok",
     "training_time_log_valid",
     "checkpoint_resumable",
-    "no_label_leak"
+    "no_label_leak",
+    "guardrail_evaluated"
   ],
   "decisions_locked": [],
   "notes": ""

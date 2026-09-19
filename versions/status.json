@@ -4,8 +4,8 @@
   "note": "v4 执行状态台账（唯一事实源）。status ∈ pending / in_progress / done / no_go / blocked。任何状态变更必须同时更新 evidence 字段。",
   "project": {
     "version": "v4",
-    "phase": "E1",
-    "summary": "E0 本地契约 Gate 10/10 PASS（云端 Gate 待 P0 实机）；计划全部完成（46 份 / 6,425 行，由 tools/plan_stats.py 实测）；独立审查 B1–B6/H1–H5/M1–M10 已修复并回归验证；E1 训练代码待写",
+    "phase": "E0",
+    "summary": "E0 本地契约 Gate 12/12 PASS（云端 Gate 待 P0 实机）；计划全部完成（46 份 / 6,781 行，由 tools/plan_stats.py 实测）；三审 R3-C1..C3/H1..H5/M1..M5 已修复并回归验证；改进 proposal 已落进 PLAN.md / E6 与 src/",
     "last_updated": "2026-09-19T21:10:00+00:00"
   },
   "stages": [
@@ -33,12 +33,15 @@
             "reports/E0_data_card.json",
             "E0/docs/data_card.md",
             "versions/folds_sha256.json",
-            "reports/E0_folds.json"
+            "reports/E0_folds.json",
+            "$V4_CACHE_ROOT/manifest.json",
+            "reports/E0_score_check.json"
           ],
           "findings": [
             "3 口训练井 schema 非规范：17,426 行多列（含 CASE）+ 9,654 行缺 CASE",
             "输入列泄漏曾使 inputs[:,13]==POR（80 井全中），已修复并加 input_no_label_leak 回归",
-            "分片缓存已纳入 E0 产出（32.4 MB，90 井输入列校验通过）"
+            "分片缓存已纳入 E0 产出（32.39 MB，90 井输入列校验通过；cache_root 已改为可复现形式，不再是 /tmp 临时路径）",
+            "缓存证据持久化：本地证据 `cache_root` 记为可复现形式（repo 相对），云端为 `$V4_CACHE_ROOT`（= /data/v4/cache），manifest 见 `$V4_CACHE_ROOT/manifest.json`"
           ]
         },
         {
@@ -77,15 +80,17 @@
         "local": {
           "id": "E0_local_contract_gate",
           "passed": true,
-          "mandatory_passed": 10,
-          "mandatory_total": 10,
-          "report": "reports/E0_local_contract_gate.json"
+          "mandatory_passed": 12,
+          "mandatory_total": 12,
+          "report": "reports/E0_local_contract_gate.json",
+          "note": "12 项 = 原 10 项 + `shard_cache_built` + `shard_cache_input_cols_ok`；由 tools/plan_stats.py 从报告实测，禁止手写。"
         },
         "cloud": {
           "id": "E0_cloud_gate",
           "passed": false,
           "status": "blocked_pending_cloud_run",
-          "report": "reports/E0_cloud_gate.json"
+          "report": "reports/E0_cloud_gate.json",
+          "disk_budget_source": "E0_disk_budget.json::level（现已由 --data-root 指向 $V4_DATA_ROOT，即 /data 的 30 GB 配额，而不是 /）"
         }
       },
       "note": "本地契约 Gate 已通过（reports/E0_local_contract_gate.json）；云端 Gate（env+disk）状态 blocked_pending_cloud_run，需在平台 A100 任务执行 run_train.sh --mode env。因此 E0 阶段整体仍为 in_progress。"
@@ -93,7 +98,7 @@
     {
       "stage": "E1",
       "title": "纯 DL 行级基线",
-      "status": "in_progress",
+      "status": "pending",
       "p": [
         {
           "id": "P0",
@@ -122,7 +127,8 @@
           "oof_total_min": 78.0
         },
         "report": null
-      }
+      },
+      "note": "E1 尚未开始：两个 P 均为 pending，代码待写。阶段状态必须与 P 状态一致（R3-H4），不得在 P 全 pending 时标 in_progress。"
     },
     {
       "stage": "E2",
@@ -367,6 +373,35 @@
       "H4_check_env": "fixed (V4_DATA_ROOT + CUDA assert + 9 deps + non-zero exit)",
       "H5_disk": "fixed (cleanup-then-hard-fail semantics + allow_soft)",
       "M1-M10": "fixed (32-dim docs, POR init, score_check, folds path, registry, empty dirs removed, ghost files listed, pip requirements, dead code)"
+    },
+    "review_r3": {
+      "report": "reports/V4_PLAN_REVIEW_3.md",
+      "resolved": {
+        "C1_sw_scale_residue": "fixed（全仓统一单一标签尺度；SW<1=0；生成器已改，E0/docs/data_card.md 由脚本生成）",
+        "C2_plan_line_sync": "fixed（plan_stats 改为逐条带上下文断言；sync 复用同一份正则；check_status 校验阶段/P 分项）",
+        "C3_gate_count_and_cache_root": "fixed（统一 12/12；cache_root 改可复现形式；status 补 $V4_CACHE_ROOT/manifest.json）",
+        "H1_gate_direction_and_field_mapping": "fixed（min_*/max_* 分组 + 指标字段映射 + E9_P2/E10 单测）",
+        "H2_disk_budget_data_root": "fixed（disk_guard --data-root/--path，E0_disk_budget.json 含 paths/worst_level/primary_path）",
+        "H3_proposal_not_landed": "fixed（proposal 已落进 PLAN.md / E6 / src/）",
+        "H4_status_phase_semantics": "fixed（project.phase=E0；E1=pending；check_status 增加语义检查）",
+        "H5_e0_evidence_copyback": "fixed（run_e0 回拷全部 reports/E0_*.json）",
+        "M1_check_env_folds_fallback": "fixed（v1_well_folds.json）",
+        "M2_optional_deps_degradable": "fixed（onnx/onnxruntime -> warn + degraded_paths）",
+        "M3_test_coverage": "fixed（tests/test_plan_stats.py、test_platform_scripts.py、test_gates.py 扩充、test_atomic_gate.py）",
+        "M4_check_status_weak": "fixed（增加行数分项/Gate 项数/阶段语义/缓存证据检查）",
+        "M5_e0_p1_cache_evidence": "fixed（evidence 补 $V4_CACHE_ROOT/manifest.json）"
+      }
+    },
+    "proposal": {
+      "report": "reports/V4_PLAN_IMPROVEMENT_PROPOSAL.md",
+      "landed": [
+        "PLAN.md §5.1/§5.3/§6.4：q_joint + q_por/q_perm/q_sw 逐目标原子头 + 逐目标硬切换 τ_t",
+        "PLAN.md §5.2.1：U-Net padding 伪影 / TCN 非因果 / PatchTF overlap / 门控融合 / 平滑不跨原子边界 / 井级小容量",
+        "PLAN.md §5.4：masked_mean NaN / PERM log 截断 / L_aux 尺度归一化 / 边界聚焦 / λ_atom/λ_joint",
+        "PLAN.md §8.2/§10：逐目标原子 Acc/P/R/F1、τ_t、误判代价、EMA/SWA/快照 CI 判据与风险",
+        "E1/E5/E6/E7/E8/E3/E4 的 P 级计划（由 docs/gen_p_details.py 生成）",
+        "src/models/row_mlp.py、src/losses/score_aligned.py、src/features/basic.py、src/inference/atomic_gate.py"
+      ]
     }
   }
 }
