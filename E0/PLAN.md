@@ -4,15 +4,20 @@
 
 > 阶段性质：**契约冻结阶段。不训练任何模型。**
 >
-> **执行状态（2026-09-19）：已完成。** E0 Gate **6/6 mandatory PASS**（`reports/E0_gate.json`）。
+> **执行状态（2026-09-19）：本地契约层已完成；E0 阶段整体 `in_progress`（云端 Gate 待 P0）。**
+> - **E0 本地契约 Gate：10/10 mandatory PASS**（`reports/E0_local_contract_gate.json`）
+> - **E0 云端 Gate：`blocked_pending_cloud_run`**（`reports/E0_cloud_gate.json`）——需在平台 A100 任务执行 `run_train.sh --mode env` 产出 `E0_env.json` 与 `E0_disk_budget.json`
+> - E0-R2 修复了独立审查发现的输入列泄漏（`inputs[:,13]` 曾是 POR）、SW 尺度误判与非规范井描述错误；新增 `input_no_label_leak`、`score_total_consistent`、`missing_mode_is_drop`、`target_scale_reported` 四项 mandatory check
+>
 > 已复算并冻结的事实：
 > - 训练 **80 井 / 730,268 行**；测试 **10 井 / 95,948 行**（= 契约值）
 > - 标签状态：缺测 **6,700** / 联合常量占位 **487,225（66.719%）** / 有效 **236,343**
 > - 常数基线 **70.490735**（`drop` 口径）命中公开锚点 70.4907 ±1e-4；`mask` 口径为 69.843218
+> - 逐目标 Acc：POR 0.6735824 / PERM 0.7072023 / SW 0.7294624（总分恒等式 0 误差）
 > - 折指纹 `f7c2c58bd035294f0e0d80a9103c366877836249fcd6db42269269c85d94b87e`（80 井 / 5 折，每折 16 井）
 > - 提交契约自检：6 个负样例全部被拒绝；`CONST` 端到端 10 井 / 95,948 行 / 1.4 s（单核 CPU）
-> - **两个硬发现**：①3 口训练井 schema 非规范（20/21/16 列，27,080 行，3.71%），必须按表头名解析；
->   ②评分分母口径为「逐目标排除缺测」（`drop`），选错会系统性低 0.65 分
+> - 分片缓存：**32.4 MB**，90 井输入列校验通过
+> - 输入规范：**13 条曲线 + DEPTH 分离**（14 条曲线的写法已全部修正）
 >
 > 详见 [`E0/docs/data_card.md`](docs/data_card.md) 与 [`versions/status.json`](../versions/status.json)。
 > 唯一**未完成**的 P 是 **P0（云端环境与磁盘实测）**，需 A100 训练任务实机运行。

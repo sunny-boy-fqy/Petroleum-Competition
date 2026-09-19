@@ -9,7 +9,9 @@ from pathlib import Path
 
 V4 = Path(__file__).resolve().parents[2]
 
-E0_STATUS = """> **执行状态（2026-09-19）：已完成。** E0 Gate **6/6 mandatory PASS**（`reports/E0_gate.json`）。
+E0_STATUS = """> **执行状态（2026-09-19）：本地契约层已完成；阶段整体 `in_progress`（云端 Gate 待 P0）。**
+> **E0 本地契约 Gate：10/10 mandatory PASS**（`reports/E0_local_contract_gate.json`）；
+> **E0 云端 Gate：`blocked_pending_cloud_run`**（`reports/E0_cloud_gate.json`，需 A100 任务跑 `run_train.sh --mode env`）。
 > 已复算并冻结的事实：
 > - 训练 **80 井 / 730,268 行**；测试 **10 井 / 95,948 行**（= 契约值）
 > - 标签状态：缺测 **6,700** / 联合常量占位 **487,225（66.719%）** / 有效 **236,343**
@@ -28,6 +30,16 @@ ANCHOR = "> 本目录是最小可执行单元"
 def main() -> None:
     f = V4 / "E0" / "PLAN.md"
     s = f.read_text(encoding="utf-8")
+    # 状态块一旦写入即视为人工维护内容；如需刷新用 --force
+    import sys as _sys
+    force = "--force" in _sys.argv
+    if force and "> **执行状态（2026-09-19）" in s:
+        a = s.index("> **执行状态（2026-09-19）")
+        b = s.index("> 详见 [`E0/docs/data_card.md`]", a)
+        s = s[:a] + E0_STATUS + "\n>\n" + s[b:]
+        f.write_text(s, encoding="utf-8")
+        print("E0/PLAN.md: status refreshed (--force)")
+        return
     if "执行状态（2026-09-19）" not in s:
         old = "> 阶段性质：**契约冻结阶段。不训练任何模型。**"
         assert old in s
