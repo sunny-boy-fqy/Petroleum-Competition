@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "stage": "E0",
-  "created_at": "2026-09-19T12:39:43.733155+00:00",
+  "created_at": "2026-09-19T12:55:06.088956+00:00",
   "constants": {
     "columns": [
       "DEPTH",
@@ -40,13 +40,14 @@
     "delta_por": 0.08,
     "delta_sw": 0.05,
     "eps": 0.001,
-    "sw_dual_scale": {
+    "sw_scale": {
       "placeholder": 99.9,
-      "valid_range": [
+      "label_range": [
         0.0,
-        1.0
+        100.0
       ],
-      "valid_scale": 100.0
+      "small_branch_enabled": false,
+      "note": "E0-R2 修正：SW 为单一标签尺度（实测有效值 8.305–99.9），非双尺度"
     }
   },
   "train": {
@@ -137,17 +138,230 @@
     "non_monotonic_depth_rows": 0,
     "duplicate_depth_rows": 0,
     "malformed_rows": 0,
-    "noncanonical_schema_wells": [],
+    "noncanonical_schema_wells": [
+      {
+        "well_id": "d122f5424b9e4984a8f701d16c2d5b58",
+        "n_header_cols": 14,
+        "missing_columns": [
+          "POR",
+          "PERM",
+          "SW"
+        ],
+        "extra_columns": [],
+        "n_rows": 11831
+      },
+      {
+        "well_id": "d31c7c00187a45a18d99ff4aeb6f41f8",
+        "n_header_cols": 14,
+        "missing_columns": [
+          "POR",
+          "PERM",
+          "SW"
+        ],
+        "extra_columns": [],
+        "n_rows": 10253
+      },
+      {
+        "well_id": "d328607c7e2345f8abde4f0a88914f10",
+        "n_header_cols": 14,
+        "missing_columns": [
+          "POR",
+          "PERM",
+          "SW"
+        ],
+        "extra_columns": [],
+        "n_rows": 4494
+      },
+      {
+        "well_id": "d37f8e2e6f5a49e1b73faa1f63f16234",
+        "n_header_cols": 14,
+        "missing_columns": [
+          "POR",
+          "PERM",
+          "SW"
+        ],
+        "extra_columns": [],
+        "n_rows": 9515
+      },
+      {
+        "well_id": "d7292fe3563740af861cc555d9e56ccf",
+        "n_header_cols": 14,
+        "missing_columns": [
+          "POR",
+          "PERM",
+          "SW"
+        ],
+        "extra_columns": [],
+        "n_rows": 11671
+      },
+      {
+        "well_id": "d86db495824a4488b29d7748f0f7918b",
+        "n_header_cols": 14,
+        "missing_columns": [
+          "POR",
+          "PERM",
+          "SW"
+        ],
+        "extra_columns": [],
+        "n_rows": 8937
+      },
+      {
+        "well_id": "dfcebd460a6245f785d2bffeadab22bf",
+        "n_header_cols": 14,
+        "missing_columns": [
+          "POR",
+          "PERM",
+          "SW"
+        ],
+        "extra_columns": [],
+        "n_rows": 9793
+      },
+      {
+        "well_id": "e06301737a614f69bbf23ffec7fadf6d",
+        "n_header_cols": 14,
+        "missing_columns": [
+          "POR",
+          "PERM",
+          "SW"
+        ],
+        "extra_columns": [],
+        "n_rows": 9908
+      },
+      {
+        "well_id": "e0c83283f68842d485491214ae4b19b9",
+        "n_header_cols": 14,
+        "missing_columns": [
+          "POR",
+          "PERM",
+          "SW"
+        ],
+        "extra_columns": [],
+        "n_rows": 10194
+      },
+      {
+        "well_id": "e212a1accdf94193a3b8f8955d6432d8",
+        "n_header_cols": 14,
+        "missing_columns": [
+          "POR",
+          "PERM",
+          "SW"
+        ],
+        "extra_columns": [],
+        "n_rows": 9352
+      }
+    ],
     "optional_curve_well_counts": {},
     "expected_rows": 95948,
     "rows_match_contract": true
+  },
+  "target_stats": {
+    "POR": {
+      "non_missing": {
+        "n": 723567,
+        "min": 0.0,
+        "p01": 0.1,
+        "median": 0.1,
+        "p99": 20.82833999999997,
+        "max": 33.177
+      },
+      "valid_rows_only": {
+        "n": 236331,
+        "min": 0.0,
+        "p01": 1.742,
+        "median": 11.339,
+        "p99": 22.55070000000001,
+        "max": 33.177,
+        "n_lt_1": 576
+      }
+    },
+    "PERM": {
+      "non_missing": {
+        "n": 723557,
+        "min": 0.01,
+        "p01": 0.01,
+        "median": 0.01,
+        "p99": 33.245,
+        "max": 1064.683
+      },
+      "valid_rows_only": {
+        "n": 236331,
+        "min": 0.01,
+        "p01": 0.01,
+        "median": 0.834,
+        "p99": 54.99640000000037,
+        "max": 1064.683,
+        "n_lt_1": 122716
+      }
+    },
+    "SW": {
+      "non_missing": {
+        "n": 723557,
+        "min": 8.305,
+        "p01": 41.97556,
+        "median": 99.9,
+        "p99": 99.9,
+        "max": 99.9
+      },
+      "valid_rows_only": {
+        "n": 236331,
+        "min": 8.305,
+        "p01": 32.0133,
+        "median": 82.805,
+        "p99": 99.9,
+        "max": 99.9,
+        "n_lt_1": 0
+      }
+    }
+  },
+  "sw_scale": {
+    "n": 236331,
+    "min": 8.305,
+    "median": 82.805,
+    "max": 99.9,
+    "p01": 32.0133,
+    "p99": 99.9,
+    "n_lt_1": 0,
+    "n_lt_10": 5,
+    "label_scale": "percent_0_100",
+    "small_branch_enabled": false
+  },
+  "score_consistency": {
+    "total_from_weights": 70.49073500477093,
+    "total_reported": 70.49073500477093,
+    "consistent": true,
+    "missing_mode_frozen": "drop"
+  },
+  "input_leak_regression": {
+    "checked_wells": 18,
+    "violations": [],
+    "n_curves": 13,
+    "passed": true
+  },
+  "shard_cache": {
+    "built": true,
+    "cache_root": "/tmp/v4final",
+    "counts": {
+      "train_wells": 80,
+      "test_wells": 10,
+      "train_rows": 730268,
+      "test_rows": 95948,
+      "placeholder_rows": 487225,
+      "missing_rows": 6700,
+      "valid_rows": 236343
+    },
+    "manifest": "/tmp/v4final/manifest.json",
+    "bytes": 32394873,
+    "input_col_check_violations": [],
+    "input_col_check_passed": true
   },
   "folds": {
     "path": "/home/fangqiyu/projects/Petroleum-Competition/v4/versions/reference/v1_well_folds.json",
     "exists": true,
     "sha256": "f7c2c58bd035294f0e0d80a9103c366877836249fcd6db42269269c85d94b87e",
     "bytes": 10249,
-    "n_folds": null
+    "n_folds": 5,
+    "n_wells": 80,
+    "seed": 42
   },
   "constant_baseline": {
     "anchor_expected": 70.4907,

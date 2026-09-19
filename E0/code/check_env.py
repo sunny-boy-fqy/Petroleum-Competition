@@ -99,6 +99,15 @@ def check_torch(rep: Report, allow_non_a100: bool) -> dict:
         f"torch {torch.__version__} (expected {EXPECTED_TORCH})",
     )
 
+    cuda_ver = getattr(torch.version, "cuda", None)
+    want_cuda = ".".join(str(x) for x in EXPECTED_CUDA_MAJOR_MINOR)
+    if cuda_ver:
+        got_mm = ".".join(str(cuda_ver).split(".")[:2])
+        rep.add("cuda_version", got_mm == want_cuda, level,
+                f"torch.version.cuda={cuda_ver} (expected {want_cuda} driver)")
+    else:
+        rep.add("cuda_version", False, level, "torch.version.cuda is None (CPU-only wheel?)")
+
     cuda_avail = torch.cuda.is_available()
     info["cuda_available"] = cuda_avail
     rep.add("cuda_available", cuda_avail, level, f"torch.cuda.is_available()={cuda_avail}")
@@ -126,6 +135,9 @@ def check_py_deps(rep: Report, allow_non_a100: bool) -> dict:
         "scipy": "1.13.1",
         "sklearn": "1.5.2",
         "pyarrow": "17.0.0",
+        "einops": "0.8.0",
+        "onnx": "1.16.2",
+        "onnxruntime": "1.18.1",
     }
     for mod, want in expected.items():
         try:
@@ -176,11 +188,28 @@ def check_disk(rep: Report, path: Path, min_free_gb: float) -> dict:
 
 
 def check_repo(rep: Report, root: Path) -> dict:
-    """数据与折引用是否就位（本机也应通过）。"""
+    """数据与折引用是否就位。
+
+    H4 修正：支持云端布局（代码在 /code/workspace/v4、数据在 /data/v4/data）。
+    解析顺序：$V4_DATA_ROOT/v4/data -> <v4>/../data；折文件用 src/validation/folds.py 的解析器。
+    本机（无 V4_DATA_ROOT）仍走 <v4>/../data。
+    """
     info = {}
-    train_dir = root.parent / "data" / "train"
-    test_dir = root.parent / "data" / "test"
-    folds = root.parent / "v1" / "src" / "well_folds.json"
+    import os as _os
+    droot = _os.environ.get("V4_DATA_ROOT")
+    if droot:
+        train_dir = Path(droot) / "v4" / "data" / "train"
+        test_dir = Path(droot) / "v4" / "data" / "test"
+    else:
+        train_dir = root.parent / "data" / "train"
+        test_dir = root.parent / "data" / "test"
+    info["data_root_env"] = droot
+    sys.path.insert(0, str(root))
+    try:
+        from src.validation.folds import find_folds_file  # noqa: PLC0415
+        folds = find_folds_file(root)
+    except Exception:
+        folds = root / "versions" / "reference" / "well_folds.json"
     n_train = len(list(train_dir.glob("*.txt"))) if train_dir.is_dir() else 0
     n_test = len(list(test_dir.glob("*.txt"))) if test_dir.is_dir() else 0
     info.update({"n_train_files": n_train, "n_test_files": n_test, "folds_exists": folds.is_file()})

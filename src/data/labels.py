@@ -74,38 +74,49 @@ def state_labels(targets: Any) -> Any:
 
 
 # ---------------------------------------------------------------- SW 尺度
-def sw_valid_to_label(sw_small: Any) -> Any:
-    """把 [0,1] 的有效分支输出换算为与标签同尺度的百分数。"""
+def sw_scale_report(sw: Any) -> dict:
+    """报告 SW 的实测范围（用于数据卡与单测），证明它是单一标签尺度。"""
     if HAS_NUMPY:
-        return np.asarray(sw_small, dtype="float64") * C.SW_VALID_SCALE
-    return [float(v) * C.SW_VALID_SCALE for v in sw_small]
+        v = np.asarray(sw, dtype="float64")
+        v = v[np.isfinite(v)]
+        if v.size == 0:
+            return {"n": 0}
+        return {
+            "n": int(v.size), "min": float(v.min()), "median": float(np.median(v)),
+            "max": float(v.max()), "p01": float(np.percentile(v, 1)),
+            "p99": float(np.percentile(v, 99)),
+            "n_lt_1": int((v < 1).sum()), "n_lt_10": int((v < 10).sum()),
+            "label_scale": "percent_0_100",
+            "small_branch_enabled": C.SW_SMALL_BRANCH,
+        }
+    vals = sorted(float(x) for x in sw if float(x) == float(x))
+    if not vals:
+        return {"n": 0}
+    return {"n": len(vals), "min": vals[0], "median": vals[len(vals) // 2], "max": vals[-1],
+            "label_scale": "percent_0_100", "small_branch_enabled": C.SW_SMALL_BRANCH}
 
 
-def sw_label_to_valid(sw_label: Any) -> Any:
-    """把标签尺度的有效值换算回 [0,1]（仅用于有效分支的分析/监督）。"""
-    if HAS_NUMPY:
-        return np.asarray(sw_label, dtype="float64") / C.SW_VALID_SCALE
-    return [float(v) / C.SW_VALID_SCALE for v in sw_label]
+def sw_decode(q_placeholder: Any, f_valid: Any, small_branch: bool | None = None,
+              scale: float | None = None) -> Any:
+    """SW 混合解码。
 
+    **默认（E0-R2 起）**：SW 是单一标签尺度，故取 `SW = q·99.9 + (1−q)·f_valid`，
+    其中 `f_valid` 已是标签尺度的有效分支输出。
+    仅当显式 `small_branch=True`（且 `constants.SW_SMALL_BRANCH=True`）时，
+    才把 `f_valid` 视为 [0,1] 并乘以 `SW_SMALL_BRANCH_SCALE`（保留旧双尺度路径以备对照）。
 
-def sw_decode(q_placeholder: Any, f_valid_logit: Any, scale: float | None = None) -> Any:
-    """SW 双分支混合解码：q*99.9 + (1-q)*sigmoid(f)*100。
-
-    注意：这是**连续**混合；E6 的实际提交路径使用**硬切换**（q>τ 时直接输出 99.9），
-    混合式仅用于训练期监督与诊断对比。
+    注意：E6 的提交路径使用**硬切换**（q>τ 直接输出 99.9）；本函数用于训练期监督与诊断。
     """
-    s = C.SW_VALID_SCALE if scale is None else scale
+    use_small = C.SW_SMALL_BRANCH if small_branch is None else small_branch
+    sc = C.SW_SMALL_BRANCH_SCALE if scale is None else scale
     if HAS_NUMPY:
         q = np.asarray(q_placeholder, dtype="float64")
-        f = np.asarray(f_valid_logit, dtype="float64")
-        valid = 1.0 / (1.0 + np.exp(-f)) * s
+        f = np.asarray(f_valid, dtype="float64")
+        valid = f * sc if use_small else f
         return q * C.SW_PLACEHOLDER + (1.0 - q) * valid
-    import math
-
     return [
-        float(qq) * C.SW_PLACEHOLDER
-        + (1.0 - float(qq)) * (1.0 / (1.0 + math.exp(-float(ff)))) * s
-        for qq, ff in zip(q_placeholder, f_valid_logit)
+        float(qq) * C.SW_PLACEHOLDER + (1.0 - float(qq)) * (float(ff) * sc if use_small else float(ff))
+        for qq, ff in zip(q_placeholder, f_valid)
     ]
 
 

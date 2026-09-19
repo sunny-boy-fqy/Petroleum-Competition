@@ -13,10 +13,14 @@ COLUMNS: tuple[str, ...] = (
     "DEVI", "AZIM", "BIT", "CASE",          # 14 输入曲线（DEPTH 为深度基准）
     "POR", "PERM", "SW",                     # 3 目标
 )
-INPUT_COLUMNS: tuple[str, ...] = COLUMNS[:14]
+# E0-R2 修正：DEPTH 是深度基准、单独使用；**13 条曲线**才是模型输入通道。
+# 此前写 COLUMNS[:14]（含 DEPTH，共 14 列）与解析器的 arr[:,1:15] 叠加，
+# 会让第 14 个"输入"落在 POR 标签上（80 口井全部泄漏），并让测试井只有 13 列。
+DEPTH_COLUMN: str = "DEPTH"
+INPUT_COLUMNS: tuple[str, ...] = COLUMNS[1:14]        # GR..CASE，共 13
 TARGET_COLUMNS: tuple[str, ...] = ("POR", "PERM", "SW")
-N_INPUT = 14
-N_TARGET = 3
+N_INPUT = len(INPUT_COLUMNS)                          # 13
+N_TARGET = len(TARGET_COLUMNS)                        # 3
 
 # ---------------------------------------------------------------- 哨兵
 # 项目冻结工作假设（沿用 v2/reports/E0_data_card.json）：
@@ -37,13 +41,16 @@ EPS: float = 1e-3          # 资料库/12 §2.4 提示 2：取 1e-3，不用 1e-
 PERM_LOG_MIN: float = -6.0
 PERM_LOG_MAX: float = 6.0
 
-# ---------------------------------------------------------------- SW 双尺度
-# 关键坑：训练标签中 SW 占位为 99.9（百分数），有效值为 [0,1]（小数）。
-# 契约：模型有效分支必须输出 [0,1] 小数，占位分支输出 99.9。
-# 评分按原始标签尺度进行，故输出到 result.json 时 SW 保持与标签同尺度。
+# ---------------------------------------------------------------- SW 尺度（E0-R2 修正）
+# **此前假设错误**：文档曾写"SW 占位 99.9（百分数）、有效值 [0,1]（小数）"，属双尺度。
+# 80 口训练井实测（非缺测且非联合占位行）：SW min=8.305, median=82.804, max=99.9，
+# SW<1 的行数为 **11**（占有效行 6.8e-5）——即 SW 与 POR/PERM 一样是**单一标签尺度（百分数）**。
+# 因此取消"×100 双尺度换算"这一前提，H3/SW 头直接输出标签尺度。
 SW_PLACEHOLDER: float = 99.9
-SW_VALID_RANGE: tuple[float, float] = (0.0, 1.0)
-SW_VALID_SCALE: float = 100.0   # 有效分支 sigma(f) * SW_VALID_SCALE 才与 99.9 同尺度
+SW_LABEL_RANGE: tuple[float, float] = (0.0, 100.0)   # 标签尺度上界（实测有效值 8.3–99.9）
+SW_MIN_OBSERVED: float = 8.305                        # 实测有效行最小值（E0 复算）
+SW_SMALL_BRANCH: bool = False                         # 是否启用 [0,1] 小值分支（默认关闭）
+SW_SMALL_BRANCH_SCALE: float = 100.0                  # 仅当 SW_SMALL_BRANCH=True 时用于换算
 
 # ---------------------------------------------------------------- 提交契约
 EXPECTED_N_TEST_WELLS: int = 10

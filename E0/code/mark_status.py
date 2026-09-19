@@ -22,13 +22,6 @@ E0_STATUS = """> **执行状态（2026-09-19）：已完成。** E0 Gate **6/6 m
 > 详见 [`E0/docs/data_card.md`](docs/data_card.md) 与 [`versions/status.json`](../versions/status.json)。
 > 唯一**未完成**的 P 是 **P0（云端环境与磁盘实测）**，需 A100 训练任务实机运行。"""
 
-P_STATUS = {
-    "P0": "> **状态：待云端执行**（本机无 GPU / 无 torch，无法替代）。需在平台训练任务以 A100 + 预装镜像运行 `run_train.sh --mode env`。",
-    "P1": "> **状态：已完成（2026-09-19）。** 证据：`reports/E0_data_card.json`、`E0/docs/data_card.md`、`versions/folds_sha256.json`、`artifacts/E0/folds.json`。",
-    "P2": "> **状态：已完成（2026-09-19）。** 证据：`src/score.py`、`reports/E0_data_card.json::constant_baseline`（drop=70.490735，mask=69.843218）。",
-    "P3": "> **状态：已完成（2026-09-19）。** 证据：`predict.py`、`src/inference/contract.py`、`reports/E0_contract_tests.json`、`versions/candidates.json`。",
-}
-
 ANCHOR = "> 本目录是最小可执行单元"
 
 
@@ -44,16 +37,12 @@ def main() -> None:
     else:
         print("E0/PLAN.md: status already present")
 
-    for pid, txt in P_STATUS.items():
+    # P 级状态由 docs/gen_p_details.py 的 `status` 字段生成（唯一来源），此处不再重复插入
+    for pid in ("P0", "P1", "P2", "P3"):
         g = V4 / "E0" / pid / "PLAN.md"
         t = g.read_text(encoding="utf-8")
-        if txt in t:
-            print(f"E0/{pid}/PLAN.md: already marked")
-            continue
-        assert ANCHOR in t, g
-        t = t.replace(ANCHOR, txt + "\n>\n" + ANCHOR, 1)
-        g.write_text(t, encoding="utf-8")
-        print(f"E0/{pid}/PLAN.md: marked")
+        print(f"E0/{pid}/PLAN.md: status line = "
+              f"{'present' if '**状态**' in t else 'MISSING -> 请运行 gen_p_details.py'}")
 
 
 if __name__ == "__main__":

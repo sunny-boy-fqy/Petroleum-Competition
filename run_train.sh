@@ -71,12 +71,25 @@ df -h "$DATA_ROOT" | tee -a "$LOG" || true
 
 run_env() {
   log "--- [env] 环境与磁盘自检"
-  python3 "$HERE/E0/code/check_env.py" --json "$REPORTS_DIR/E0_env.json" \
-    | tee -a "$LOG" || log "!! check_env 未全过（见上），继续但请注意 hard failure"
+  if python3 "$HERE/E0/code/check_env.py" --json "$REPORTS_DIR/E0_env.json" \
+       | tee -a "$LOG"; then
+    log "[env] check_env 通过（hard failures: 0）"
+  else
+    log "!! [env] check_env 有 HARD FAILURE（见上）。按 E0/P0 契约，训练不得继续。"
+    log "!! 若你确认要在此环境继续（例如临时缺 GPU），请显式设置 V4_ALLOW_ENV_FAILURE=1。"
+    if [[ "${V4_ALLOW_ENV_FAILURE:-0}" != "1" ]]; then
+      exit 11
+    fi
+  fi
   log "--- [env] 额外轻量依赖（--no-cache-dir，绝不触碰 torch）"
   bash "$HERE/E0/code/setup_deps.sh" 2>&1 | tee -a "$LOG" || log "!! setup_deps 失败（可继续，代码有降级路径）"
-  python3 "$HERE/src/data/disk_guard.py" --min-free-gb 8 \
-    --report "$HERE,$DATA_ROOT" --json "$REPORTS_DIR/E0_disk_budget.json" 2>&1 | tee -a "$LOG" || true
+  if python3 "$HERE/src/data/disk_guard.py" --min-free-gb 8 \
+       --report "$HERE,$DATA_ROOT" --json "$REPORTS_DIR/E0_disk_budget.json" 2>&1 | tee -a "$LOG"; then
+    log "[env] 磁盘余量 ok（>= 8 GiB）"
+  else
+    log "!! [env] 磁盘余量不足 8 GiB（见上）。请先清理 /data/v4/cache 或旧 checkpoint。"
+    [[ "${V4_ALLOW_ENV_FAILURE:-0}" == "1" ]] || exit 12
+  fi
 }
 
 run_data() {

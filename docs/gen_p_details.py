@@ -35,6 +35,7 @@ P: dict[str, list[dict]] = {}
 P["E0"] = [
     dict(
         pid="P0", title="环境与磁盘实测（云端第一次运行）",
+        status="blocked",
         nature="契约前置：不产出模型，只产出**环境事实**",
         deps=["无（这是全项目第一步）"],
         goal="在云端实机确认 CUDA 12.6 / PyTorch 2.4.0 / Python 3.11 / A100 sm_80 / bf16 可用，"
@@ -81,33 +82,40 @@ P["E0"] = [
     ),
     dict(
         pid="P1", title="数据卡、哨兵规则与标签三状态",
+        status="done",
         nature="契约冻结：产出**唯一事实源**的数据卡",
         deps=["E0/P0（环境可用）"],
-        goal="用自写解析器读取 90 口井，冻结缺失哨兵规则、标签三状态判据与 SW 双尺度常量，"
+        goal="用自写解析器读取 90 口井，冻结缺失哨兵规则、标签三状态判据与目标值域统计，"
              "产出数据卡、按井折导出与指纹；**必须查清 3 口非规范 schema 井的正确解析方式**。",
         why=["口径是唯一事实源：解析错一列，后面所有分数都不可比；",
              "**实测发现 3 口训练井表头非官方 17 列**（`42f2870b` 20 列含 K/U/CGR、`b7eb1274` 21 列含 TH/K/U/CGR、`c7611b01` 16 列缺 CASE），共 27,080 行（3.71%），且都在 80 井折内、三目标齐全——按列位置解析会错位或丢行；",
-             "**SW 同一列混用 99.9（百分数）与 [0,1]（小数）两种尺度**，混淆会造成约 10 分静默损失；",
+             "**目标值域必须实测而非假设**：E0-R1 曾误以为 SW 是 `99.9`（百分数）+ `[0,1]`（小数）双尺度，实测有效 SW 为 min 8.305 / median 82.805 / max 99.9、SW<1 仅 11 行 → 实为单一标签尺度（审查 B2）；",
              "开发过程中已实际触发一次 numpy 越界切片静默截断（`arr[:,15:18]` 在 17 列数组上返回 2 列，丢掉 SW 整列），必须用断言防回归。"],
         inputs=["`$V4_DATA_ROOT/v4/data/train/*.txt`（80 井，含表头/单位/数据三段）",
                 "`$V4_DATA_ROOT/v4/data/test/*.txt`（10 井，无标签）",
                 "`rules.md` §5.1–5.3", "`资料库/12` §3.1（占位分布）"],
-        outputs=["`$V4_REPORTS_DIR/E0_data_card.json`（计数/状态/深度诊断/schema 异常清单）",
-                 "`artifacts/E0/folds.json`（outer 5 折 + 每折 inner 3 折）",
+        outputs=["`$V4_REPORTS_DIR/E0_data_card.json`（计数/状态/深度诊断/schema 异常清单/目标分布统计/泄漏回归）",
+                 "`$V4_REPORTS_DIR/E0_folds.json`（outer 5 折 + 每折 inner 3 折）",
                  "`versions/folds_sha256.json`（折指纹）",
                  "`$V4_CACHE_ROOT/raw/<split>/<well>.npz`、`labels/<well>.npz`（按井分片）"],
-        steps=["`python3 E0/code/run_all.py`（默认从 `V4_DATA_ROOT` 取数据）",
+        steps=["`python3 E0/code/run_all.py --with-cache`（默认从 `V4_DATA_ROOT` 取数据；"
+               "`--with-cache` 同时产出 E1 需要的 raw/labels 分片与 cache/manifest.json）",
                "核对 `train_rows`=730,268、`test_rows`=95,948、`state_counts`={missing:6700, placeholder:487225, valid:236343}",
                "核对 `noncanonical_schema_wells` 恰好 3 口，且 `missing_columns`/`extra_columns` 与实测一致",
                "核对 `folds_sha256`=f7c2c58bd035294f0e0d80a9103c366877836249fcd6db42269269c85d94b87e 且 fold_sizes 各 16 井",
                "`python3 tools/verify_reference.py` 必须输出 `RESULT: OK`",
+               "核对 `target_stats` 的 SW 有效切片（min 8.305 / median 82.805）与 `sw_scale` 字段",
+               "核对 `input_leak_regression.passed == true`（90 井 13 列输入、输入与目标不相交）",
+               "核对 `score_consistency.consistent == true`（总分恒等式）",
                "用 `V4_DATA_ROOT` 指向云端 `/data` 再跑一次，确认路径契约生效"],
         params=[("缺失哨兵", "{-99999, -9999, NaN, 任何 < -1000}", "冻结，不可改", "`src/constants.py::SENTINELS/MISSING_LT`"),
                 ("占位常量", "(POR=0.1, PERM=0.01, SW=99.9)", "冻结", "`constants.PLACEHOLDER`"),
                 ("占位判等容差", "1e-9（绝对）", "冻结", "防止浮点写成 0.1000000001 时误判"),
                 ("折数", "5（outer）/ 3（inner）", "冻结", "与 v1 同折以保证历史锚点可比")],
         done=["`E0_data_card.json` 全部计数与上表一致（逐项 equality，不是近似）",
-              "3 口畸形井在三目标上**零丢失**，且 `CASE` 缺失以 NaN + 缺失指示位表示",
+              "3 口畸形井在三目标上**零丢失**；仅 `c7611b01` 的 CASE 记为 NaN + 缺失位，"
+              "另两口的多余曲线记入 `extra_columns`",
+              "`input_leak_regression.passed == true` 且 `score_consistency.consistent == true`",
               "`folds.json` 的 80 井与数据目录文件名集合**完全一致**（不重不漏）",
               "`verify_reference.py` 输出 `RESULT: OK`"],
         forbid=["按固定列位置解析（必须按表头名映射）",
@@ -122,13 +130,16 @@ P["E0"] = [
               "发现新的 schema 变体（>5 种）时，暂停并重新设计解析契约"],
         code=["src/data/parse.py", "src/data/labels.py", "src/data/dataset.py",
               "src/validation/folds.py", "E0/code/run_all.py", "tools/verify_reference.py"],
-        evidence=["`E0/docs/data_card.md`（含 3 口井的实测表）"],
+        evidence=["`E0/docs/data_card.md`（含 3 口井实测表与泄漏事故复盘）",
+                  "`reports/E0_data_card.json`", "`reports/E0_folds.json`",
+                  "`versions/folds_sha256.json`"],
         prereg_extra={"primary_metric": "data_card_recomputable",
                       "mandatory_checks": ["data_card_recomputable", "row_counts_match",
                                            "folds_fingerprint_present"]},
     ),
     dict(
         pid="P2", title="官方评分器复算与分母口径冻结",
+        status="done",
         nature="度量工具冻结：评分器错了，后面全部结论作废",
         deps=["E0/P1（数据卡与标签状态）"],
         goal="按 `rules.md` §7.3 实现三目标评分器，用全常量 (0.1, 0.01, 99.9) 复算，"
@@ -166,13 +177,15 @@ P["E0"] = [
               ("PERM 出现 0 或负值", "log10 报错或 -inf", "`max(·, eps)` + ŷ>0 由模型层保证")],
         stop=["锚点未命中时禁止进入 E1；必须先修正评分器或数据卡"],
         code=["src/score.py", "E0/code/run_all.py"],
-        evidence=["`reports/E0_data_card.json::constant_baseline`"],
+        evidence=["`reports/E0_score_check.json`（两种口径 + 逐目标 + 恒等式校验）",
+                  "`reports/E0_data_card.json::constant_baseline`"],
         prereg_extra={"primary_metric": "constant_baseline_anchor",
                       "thresholds": {"abs_tolerance": 1e-4},
                       "mandatory_checks": ["constant_baseline_anchor_hit"]},
     ),
     dict(
         pid="P3", title="提交契约、版本路由与干净目录冒烟",
+        status="done",
         nature="交付契约冻结：格式错误 = 零分风险",
         deps=["E0/P1（数据）、E0/P2（评分）"],
         goal="实现官方 CLI 的 `predict.py`、`result.json` 结构校验、候选注册表与 manifest，"
@@ -212,7 +225,8 @@ P["E0"] = [
               ("浮点序列化差异", "两次运行 sha256 不同", "固定小数位与序列化参数，E10 做两次运行一致性校验")],
         stop=["契约自检未全绿，禁止任何候选进入 `submitted` 状态"],
         code=["predict.py", "src/inference/contract.py", "src/versioning/registry.py"],
-        evidence=["`reports/E0_contract_tests.json`"],
+        evidence=["`reports/E0_contract_tests.json`（6 负样例全拒绝）",
+                  "`versions/registry.json`", "`versions/candidates.json`"],
         prereg_extra={"primary_metric": "contract_selftest_passed",
                       "mandatory_checks": ["contract_selftest", "no_torch_required"]},
     ),
@@ -224,7 +238,7 @@ P["E1"] = [
         pid="P0", title="行级输入管线与分片缓存",
         nature="数据管线：为 E1–E8 共用，必须先冻结",
         deps=["E0/P1（分片写入）、E0/P2（评分）"],
-        goal="构建并缓存 `F1 = F_raw(14) + F_miss(14+1) + F_depth(3) = 32 维` 行级张量与三目标标签，"
+        goal="构建并缓存 `F1 = 13 条曲线 + DEPTH 原始值 + 13+1 缺失位 + 4 深度编码 = 32 维` 行级张量与三目标标签，"
              "落盘为按井分片，并验证内存占用符合 16 GiB 预算。",
         why=["输入管线的正确性决定后面所有对比是否有意义：特征与标签必须逐行对齐；",
              "16 GiB 系统内存是真正的瓶颈，必须把\"按井分片 + 按需读取\"固化为管线，否则 E3 一开始就 OOM；",
@@ -451,7 +465,7 @@ P["E2"] = [
         code=["src/data/augment.py", "E2/code/throughput.py"],
         evidence=["`reports/E2_throughput.json`"],
         prereg_extra={"primary_metric": "target_acc", "thresholds": {"min_delta": 0.0},
-                      "candidate_budget": 2},
+                      "candidate_budget": 2, "multiplicity": "holm"},
     ),
 ]
 
@@ -757,35 +771,39 @@ P["E5"] = [
                       "candidate_budget": 5, "multiplicity": "holm"},
     ),
     dict(
-        pid="P2", title="SW 双峰精修（占位 99.9 vs 有效 [0,1]）",
+        pid="P2", title="SW 单尺度精修（占位 99.9 与有效 8.3–99.9 同尺度）",
         nature="单目标攻坚：SW（权重 35%，结构最特殊）",
         deps=["E5/P1"],
-        goal="实现 SW 的双分支混合输出（`q̂·99.9 + (1-q̂)·σ(f)·100`），用 BCE 监督占位分支，"
-             "并验证双尺度换算正确；提升 SW 连续切片准确率。",
-        why=["SW 的两个峰（99.9 与 [0,1]）相距上百个标准差，单头线性回归会在峰间震荡（`资料库/12` §3.4）；",
-             "**同一列两种尺度**是最容易造成约 10 分静默损失的坑：有效分支必须 ×100 才与占位分支同尺度；",
-             "`资料库/12` §3.4 指出在 `q̂` 灰色地带（0.3–0.5）向 99.9 偏移可换期望分——这是该指标允许的\"下注\"。"],
+        goal="实现 SW 的占位/有效双分支混合输出（`q̂·99.9 + (1−q̂)·f_valid`，**同一标签尺度**），"
+             "用 BCE 监督占位分支，并验证不引入任何尺度换算；提升 SW 连续切片准确率。",
+        why=["占位峰（99.9）与有效峰（实测 8.3–99.9，中位 82.8）**同尺度但分布形状完全不同**，"
+             "单头线性回归仍会被占位尖峰拉扯（`资料库/12` §3.4 的双峰会震荡结论在结构上成立）；",
+             "**E0-R2 修正**：SW 不是 `[0,1]` 双尺度（审查 B2 实测 SW<1 仅 11 行）——"
+             "因此**禁止**任何 ×100 换算；`constants.SW_SMALL_BRANCH=False`，"
+             "有效分支直接用标签尺度监督；",
+             "`资料库/12` §3.4 指出在 `q̂` 灰色地带向 99.9 偏移可换期望分——这是该指标允许的\"下注\"。"],
         inputs=["E3/E4 冻结主干表示", "E1/P1 的 SW 基线 OOF"],
         outputs=["`E5/code/head_sw.py`", "`$V4_RUN_ROOT/E5/sw/oof.npz`",
                  "`$V4_REPORTS_DIR/E5_sw.json`"],
-        steps=["实现双分支：`q̂=sigmoid(g0)`（可与 H0 共享或独立）、`f` 为有效分支 logit、"
-               "输出 `q̂·99.9 + (1-q̂)·sigmoid(f)·100`",
-               "单测锁定尺度：把 (q̂=0, f=0) 的输出与 0.5×100=50 比较；把 (q̂=1, f=任意) 的输出与 99.9 比较",
+        steps=["实现双分支：`q̂=sigmoid(g0)`（可与 H0 共享或独立）、`f` 为**标签尺度**的有效分支输出、"
+               "混合 `q̂·99.9 + (1−q̂)·f`",
+               "单测锁定尺度：`q̂=1` 时输出必须精确 99.9；`q̂=0` 时输出等于 `f`（**不做任何倍数换算**）；"
+               "并断言 `constants.SW_SMALL_BRANCH is False`",
                "试验灰色地带偏移策略（在 inner-OOF 上选阈值）",
-               "报告 SW 两个切片的 Acc：占位行、[0,1] 有效行",
+               "报告 SW 两个切片的 Acc：占位行、有效行（实测 8.3–99.9）",
                "确认**绝不做全局 [0,1] 裁剪**（会掉约 23 分）"],
-        params=[("有效分支激活", "sigmoid × 100", "冻结", "`constants.SW_VALID_SCALE`"),
+        params=[("有效分支输出", "标签尺度（**不乘 100**）", "冻结", "`constants.SW_SMALL_BRANCH=False`"),
                 ("占位分支", "常数 99.9", "冻结", "不参与梯度（只作为混合常量）"),
                 ("灰色地带阈值", "0.3–0.5 内选", "inner 选择", "向 99.9 下注"),
                 ("候选数", "3–4", "—", "holm 校正")],
-        done=["双尺度单测通过（锁定 ×100 换算）",
+        done=["尺度单测通过（`q̂=1 → 99.9`；`q̂=0 → 输出等于有效分支，无倍数换算）",
               "SW 有效行与占位行的 Acc 均报告；有效行 Acc 提升且 CI 下界 > 0",
               "契约校验通过：SW 输出不被裁剪，且与标签尺度一致",
               "占位行 SW Acc ≥ 0.99"],
         forbid=["全局裁剪 SW 到 [0,1]（`资料库/12` §0 结论 2：直接损失约 23 分）",
-                "在有效分支输出百分数后再乘 100（重复换算）",
+                "对有效分支做 ×100 换算（E0-R2 已证伪双尺度假设）",
                 "用占位行样本训练有效分支"],
-        risk=[("尺度换算错误", "SW Acc 掉约 10 分", "双尺度单测 + 契约层断言"),
+        risk=[("误用双尺度换算", "SW 有效段预测整体偏大 100 倍", "单测断言 SW_SMALL_BRANCH=False + 契约层范围检查"),
               ("双分支失衡", "占位/有效一侧塌陷", "分别报告两切片 Acc；调整 λ₂"),
               ("灰色地带过拟合", "inner 提升 outer 下降", "阈值只在 inner 选并报告敏感性")],
         stop=["SW 有效行连续 3 次无正增量 → 该方向停止，转 E6"],
@@ -1439,7 +1457,13 @@ def render(e: str, p: dict) -> str:
     L.append(f"# {e}/{p['pid']} {p['title']}\n")
     L.append(f"> 所属阶段：[{e}](../PLAN.md)　|　总计划：[v4/PLAN.md](../../PLAN.md)　|　"
              f"索引：[资料引用索引](../../资料引用索引.md)\n")
-    L.append(f"> **性质**：{p['nature']}　|　**依赖**：{'、'.join(p['deps'])}\n")
+    L.append(f"> **性质**：{p['nature']}　|　**依赖**：{'、'.join(p['deps'])}")
+    L.append(">")
+    status = p.get("status", "pending")
+    mark = {"done": "✅ 已完成", "pending": "⏸ 待执行", "blocked": "⛔ 阻塞",
+            "in_progress": "▶ 进行中", "no_go": "❌ NO-GO"}.get(status, status)
+    L.append(f"> **状态**：{mark}　{('　证据：' + '、'.join(p['evidence'])) if status == 'done' else ''}")
+    L.append("")
     L.append("> 本目录是最小可执行单元：`code/` 放本 P 专属脚本，`docs/` 放本 P 的结论与证据。\n")
     L.append("---\n")
 
@@ -1513,6 +1537,18 @@ def render(e: str, p: dict) -> str:
     L.append("```")
     L.append("")
 
+    L.append("## 12.5 选择协议（H1：inner-OOF only）\n")
+    L.append("**所有超参/阈值/早停/结构选择只允许用 inner 折**（`$V4_REPORTS_DIR/E0_folds.json::inner`）。")
+    L.append("")
+    L.append("| 用途 | 允许的数据 | 禁止 |")
+    L.append("|---|---|---|")
+    L.append("| 超参/阈值/λ/τ/集成权重选择 | 该 outer 折的 inner-OOF | outer 验证折标签 |")
+    L.append("| 早停 | inner-OOF 的真实 `score.py` 分数 | outer 折分数、loss 值 |")
+    L.append("| 结构/特征筛查（省机时） | 可先用 fold0 做**资源预检** | 预检结论不得进入 Gate 数值 |")
+    L.append("")
+    L.append("> 若某步骤确实只能看 outer 折（例如最终 OOF 汇总），该步骤**不得**反过来影响任何选择；")
+    L.append("预检性质的 fold0 结果必须在报告中标 `exploratory=true`、`selection_score_only=true`。")
+    L.append("")
     L.append("## 13. Gate 预注册要点\n")
     L.append(f"预注册文件：`v4/reports/{e}_{p['pid']}_gate_prereg.json`（实验**前**写入，"
              "之后不得改阈值，只能新建修订号）。"
@@ -1523,18 +1559,54 @@ def render(e: str, p: dict) -> str:
         "gate_id": f"{e}_{p['pid']}_gate",
         "stage": e,
         "p_stage": p["pid"],
-        "candidate_budget": 1,
+        "created_at": "<ISO8601，写盘时填写>",
+        "primary_metric": "oof_total",
+        "primary_threshold_key": "min_delta",
+        "baseline_version": "<已冻结候选或 CONST>",
+        "baseline_artifact": "<基线 OOF 路径>",
+        "baseline_manifest_sha256": "<sha256>",
+        "thresholds": {"min_delta": 0.0, "min_effect_floor": 0.0},
         "alpha": 0.05,
+        "multiplicity": "none",
+        "candidate_budget": 1,
         "bootstrap_iters": 1000,
         "bootstrap_unit": "well_row_weighted_cluster",
+        "pilot_std": None,
+        "mde_units": 80,
+        "min_detectable_effect": None,
+        "planned_task_training_h": 1.0,
+        "mandatory_checks": [
+            "contract_ok", "atomic_precision_reported", "disk_budget_ok",
+            "training_time_log_valid", "checkpoint_resumable", "no_label_leak",
+        ],
         "decisions_locked": [],
+        "notes": "",
     }
-    base.update(p["prereg_extra"])
+    extra = dict(p["prereg_extra"])
+    # mandatory_checks 取并集：模板 6 项核心 + 本 P 追加项
+    core = list(base["mandatory_checks"])
+    for c in extra.pop("mandatory_checks", []):
+        if c not in core:
+            core.append(c)
+    # thresholds 必须**深合并**（extra 里的阈值不得把 primary_threshold_key 覆盖掉）
+    th = dict(base["thresholds"])
+    extra_th = dict(extra.pop("thresholds", {}) or {})
+    if "primary_threshold_key" in extra:
+        # 本 P 指定了主阈值键名 -> 必须在合并后的表里存在
+        key = extra["primary_threshold_key"]
+        if key not in extra_th and key not in th:
+            extra_th[key] = 0.0
+    th.update(extra_th)
+    base.update(extra)
+    base["thresholds"] = th
     L.append(_json.dumps(base, ensure_ascii=False, indent=2))
     L.append("```")
     L.append("")
-    L.append("> 所有 Gate 的 `mandatory_checks` 必须包含 `contract_ok`、`atomic_precision_reported`、"
-             "`disk_budget_ok`、`training_time_log_valid`（本 P 的 `prereg_extra` 已按 P 的性质补齐）。")
+    L.append("> 模板已内置 6 项核心 `mandatory_checks`；写入实际预注册文件时：")
+    L.append("> `created_at` 填当前时间；`baseline_version`/`baseline_artifact`/"
+             "`baseline_manifest_sha256` 指向**已冻结**的基线；"
+             "`planned_task_training_h` 必须 >0（软预算，单任务建议 ≤100h）。")
+    L.append("> 校验器：`python3 v4/src/validation/gates.py --prereg <file>`（缺字段即失败）。")
     return "\n".join(L) + "\n"
 
 

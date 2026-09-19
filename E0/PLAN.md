@@ -42,7 +42,7 @@
 - `reports/E0_env.json`、`reports/E0_disk_budget.json`
 - `reports/E0_score_check.json`（常数基线 70.4907）
 - `reports/E0_gate.json`、`reports/E0_gate_prereg.json`
-- `artifacts/E0/folds.json`、`versions/folds_sha256.json`
+- `$V4_REPORTS_DIR/E0_folds.json`、`versions/folds_sha256.json`
 
 ## 5. 代码归属
 

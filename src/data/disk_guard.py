@@ -11,8 +11,11 @@
 --------------------
     free >= 8 GB  ->  ok，什么都不做
     5 <= free < 8 ->  cleanup：删除 last_prev.pt、cache/tmp/*、旧特征版本目录
-    free < 5 GB   ->  save_and_exit：调用方保存 last.pt 与日志后优雅退出（可用 --resume 续训）
-    free < 3 GB   ->  abort：立即抛 DiskBudgetError，绝不继续写盘
+                      **cleanup 后重新测量**；若仍 < 8 GB，默认**抛 DiskBudgetError**
+                      （与文档"8 GB 硬门禁"一致）；若调用方显式传
+                      `allow_soft=True`，则仅记录 `risk_accepted` 并继续。
+    free < 5 GB   ->  save_and_exit：先回调 capacity_hook 保存 last.pt，再抛错（可用 --resume 续训）
+    free < 3 GB   ->  abort：不回调 hook，立即抛 DiskBudgetError，绝不继续写盘
 
 接口
 ----
@@ -158,6 +161,7 @@ def assert_disk_headroom(
     path: Path | str = "/",
     capacity_hook: Callable[[], None] | None = None,
     verbose: bool = True,
+    allow_soft: bool = False,
 ) -> DiskState:
     """在训练循环的关键位置调用。
 
@@ -176,6 +180,18 @@ def assert_disk_headroom(
         st = disk_state(path, min_gb=min_gb)
         if st.level == "ok":
             return st
+        if allow_soft:
+            # 显式接受风险：cleanup 后仍低于 min_gb，但高于 save_and_exit 阈值
+            st.actions.append("risk_accepted: still below min_gb after cleanup")
+            if verbose:
+                print(f"[disk_guard] WARNING: free={st.free_gb:.2f} GB still < {min_gb} GB "
+                      f"(risk_accepted=True)")
+            return st
+        raise DiskBudgetError(
+            f"disk free={st.free_gb:.2f} GB on {st.path} 仍低于硬门禁 {min_gb} GB "
+            f"（cleanup 已删除 {len(st.actions)} 项）。请清理 cache/ 与旧 checkpoint 后重试；"
+            "如确需继续，请显式传 allow_soft=True 并在 Gate 中记录 risk_accepted。"
+        )
 
     if st.level in ("save_and_exit", "abort"):
         if st.level == "save_and_exit" and capacity_hook is not None:

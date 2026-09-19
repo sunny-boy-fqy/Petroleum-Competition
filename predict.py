@@ -29,25 +29,13 @@ from src import constants as C                      # noqa: E402
 from src.data import parse as P                     # noqa: E402
 from src.inference import contract as CT            # noqa: E402
 from src.portability import describe                # noqa: E402
+from src.versioning import registry as REG          # noqa: E402
 
 
 # ---------------------------------------------------------------- 版本表
 def _versions() -> dict[str, dict]:
-    """可运行版本表。`available=False` 的版本会明确报错。"""
-    return {
-        "CONST": {
-            "available": True,
-            "type": "baseline",
-            "desc": "常数基线 (POR=0.1, PERM=0.01, SW=99.9)，仅用于契约自检",
-            "oof_total": C.CONSTANT_BASELINE_OOF,
-        },
-        "PD1": {
-            "available": False,
-            "type": "pipeline",
-            "desc": "纯 DL 完整管线（E6 产出）",
-            "oof_total": None,
-        },
-    }
+    """可运行版本表：来自 `versions/registry.json`（审查 M5：不再硬编码）。"""
+    return REG.versions()
 
 
 DEFAULT_VERSION = "PD1"
@@ -94,13 +82,9 @@ def build_payload(version: str, data_dir: Path, model_name: str | None = None) -
 
 def cmd_list_versions() -> int:
     vs = _versions()
-    print(f"{'version':<10} {'available':<10} {'type':<10} OOF      description")
-    print("-" * 78)
-    for k, v in vs.items():
-        oof = "-" if v["oof_total"] is None else f"{v['oof_total']:.6f}"
-        print(f"{k:<10} {str(v['available']):<10} {v['type']:<10} {oof:<8} {v['desc']}")
-    print("-" * 78)
-    print(f"default: {DEFAULT_VERSION}")
+    for line in REG.list_lines():
+        print(line)
+    print(f"default: {DEFAULT_VERSION}  (可用: {REG.available_versions()})")
     return 0
 
 

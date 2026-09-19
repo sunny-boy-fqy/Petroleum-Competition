@@ -49,14 +49,15 @@ v4/
 │   │   └── predictor.py          统一推理器
 │   ├── validation/
 │   │   ├── folds.py              按井折读取 + inner 折 + 加权 cluster bootstrap
-│   │   └── gates.py              Gate 预注册校验与聚合判定
-│   ├── versioning/registry.py    候选注册表读写
+│   │   └── gates.py              Gate 预注册校验与聚合判定（已实现）
+│   ├── versioning/registry.py    版本注册表读写（predict.py 的版本来源）
 │   └── ensemble/blend.py         集成融合（E8）
 │
 ├── E0/ … E11/                12 个阶段，每层含 PLAN.md + P*/{PLAN.md,code/,docs/}
 │
 ├── versions/                 事实源
 │   ├── registry.json            可运行版本注册表
+│   ├── prereg_templates/        33 份 Gate 预注册模板（通过 gates.py 校验）
 │   ├── candidates.json          **候选注册表（唯一事实源）**
 │   ├── status.json              **阶段/P 执行状态台账**
 │   ├── folds_sha256.json        折指纹
@@ -71,9 +72,11 @@ v4/
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
 │   ├── bootstrap_data.sh         部署数据到 /data（校验 sha256 + 行数 + 3 口畸形井）
-│   └── verify_reference.py       校验冻结折文件与数据指纹
+│   ├── verify_reference.py       校验冻结折文件与数据指纹
+│   ├── check_consistency.py      候选注册表与评分口径自洽校验
+│   └── check_status.py           状态台账与实物一致性校验
 │
-├── artifacts/E0/folds.json   outer + inner 折导出（本地生成，可重算）
+├── artifacts/E0/folds.json   outer + inner 折导出（本地便利副本，可重算；权威副本在 $V4_REPORTS_DIR/E0_folds.json）
 ├── dist/                     [gitignore] 数据包与清单（上传云盘用）
 ├── cache/ runs/ logs/ tb/    [gitignore] 云端在 /data/v4/ 下；本机默认在此
 ├── experiments/ models/ submission/  [gitignore] 候选产物与权重
@@ -108,6 +111,15 @@ v4/
 环境变量契约见 `configs/paths.yaml` 与 `docs/platform_setup.md` §二。
 
 ---
+
+## 三之二、已实现 vs 计划中（避免"幽灵文件"）
+
+| 类别 | 已实现 | 计划中（未实现，不在仓库） |
+|---|---|---|
+| `src/` | constants, portability, score, data/{parse,labels,dataset,disk_guard}, features/basic, losses/score_aligned, models/row_mlp, inference/contract, validation/{folds,gates}, versioning/registry | features/{physics,window,well}, models/{unet1d,tcn,patchtf,heads,mmoe,state_head}, inference/{atomic_gate,predictor,decode}, ensemble/blend, losses 的物理项 |
+| 根目录 | predict.py, run_train.sh, requirements.txt | train.py, configs/v4.yaml（当前为 `configs/paths.yaml`） |
+| 产物 | reports/E0_*.json（7 份）、versions/registry.json、versions/candidates.json、versions/status.json、versions/folds_sha256.json、versions/prereg_templates/（33 份） | 各阶段的 E*.json |
+| `run_train.sh` | `env` / `data` / `e0` 可用 | `smoke` / `stage` 需 E1 代码（当前会明确报错） |
 
 ## 四、文件数量核对（截至 E0 完成时）
 

@@ -25,19 +25,18 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import constants as C
 from ..portability import HAS_NUMPY
 
-N_RAW = 14
-N_MISS = 14
-N_EXTRA = 4  # missing_ratio, rel_depth, depth_step, depth_index_norm
-N_FEATURES = N_RAW + N_MISS + N_EXTRA  # 32
+N_RAW_CURVES = len(C.INPUT_COLUMNS)      # 13（GR..CASE，E0-R2 修正：DEPTH 不计入曲线）
+N_RAW = N_RAW_CURVES + 1                 # 14 = 13 条曲线 + DEPTH 原始值
+N_MISS = N_RAW_CURVES + 1                # 14 = 逐曲线缺失位 + DEPTH 缺失位
+N_EXTRA = 4                              # missing_ratio, rel_depth, depth_step, depth_index_norm
+N_FEATURES = N_RAW + N_MISS + N_EXTRA    # 32
 
-FEATURE_NAMES: tuple[str, ...] = (
-    "GR", "PE", "SP", "CAL", "AC", "DEN", "CNL", "RXO", "RT", "DEVI", "AZIM", "BIT", "CASE",
-    "DEPTH_RAW",
-) + tuple(f"{c}_miss" for c in
-          ("GR", "PE", "SP", "CAL", "AC", "DEN", "CNL", "RXO", "RT", "DEVI", "AZIM", "BIT",
-           "CASE", "DEPTH_RAW")) + (
+FEATURE_NAMES: tuple[str, ...] = tuple(C.INPUT_COLUMNS) + ("DEPTH_RAW",) + tuple(
+    f"{c}_miss" for c in C.INPUT_COLUMNS
+) + ("DEPTH_miss",) + (
     "miss_ratio", "rel_depth", "depth_step", "depth_index_norm",
 )
 
@@ -54,12 +53,24 @@ def build_row_features(inputs: np.ndarray, missing: np.ndarray,
     depth  : (n,) float32
     """
     n = inputs.shape[0]
+    if inputs.shape[1] != N_RAW_CURVES:
+        raise AssertionError(
+            f"build_row_features expects {N_RAW_CURVES} curves, got {inputs.shape[1]}"
+        )
+    if missing.shape[1] != N_RAW_CURVES:
+        raise AssertionError(
+            f"missing mask must have {N_RAW_CURVES} columns, got {missing.shape[1]}"
+        )
     X = np.empty((n, N_FEATURES), dtype="float32")
-    X[:, 0:N_RAW] = inputs
-    X[:, N_RAW:N_RAW + N_MISS] = missing.astype("float32")
-
-    # 缺失比例：input 曲线 + depth
+    # 前 13 列：曲线原始值；第 14 列：DEPTH 原始值（深度是有物理含义的通道）
+    X[:, 0:N_RAW_CURVES] = inputs
+    X[:, N_RAW_CURVES] = depth
+    # 缺失位：13 条曲线 + DEPTH
     depth_miss = (~np.isfinite(depth)).astype("int8")
+    X[:, N_RAW:N_RAW + N_RAW_CURVES] = missing.astype("float32")
+    X[:, N_RAW + N_RAW_CURVES] = depth_miss.astype("float32")
+
+    # 缺失比例：13 条曲线 + depth
     miss_all = np.concatenate([missing, depth_miss[:, None]], axis=1)
     X[:, N_RAW + N_MISS] = miss_all.mean(axis=1).astype("float32")
 

@@ -5,14 +5,14 @@
   "project": {
     "version": "v4",
     "phase": "E1",
-    "summary": "E0 口径层已完成并通过 Gate 6/6（P0 环境实测待云端）；计划文档全部完成（总计划 661 行 + 12 阶段 + 33 个 P 级详细计划，合计 10,336 行）；E1 训练代码待写",
+    "summary": "E0 本地契约 Gate 10/10 PASS（云端 Gate 待 P0 实机）；计划全部完成（46 份 / 9,750 行）；独立审查 B1–B6 已修复并回归验证；E1 训练代码待写",
     "last_updated": "2026-09-19T20:40:00+00:00"
   },
   "stages": [
     {
       "stage": "E0",
       "title": "数据、评测与提交契约",
-      "status": "done_local_pending_cloud_env",
+      "status": "in_progress",
       "p": [
         {
           "id": "P0",
@@ -33,11 +33,12 @@
             "reports/E0_data_card.json",
             "E0/docs/data_card.md",
             "versions/folds_sha256.json",
-            "artifacts/E0/folds.json"
+            "reports/E0_folds.json"
           ],
           "findings": [
-            "3 口训练井 schema 非规范（20/21/16 列，27,080 行，3.71%）",
-            "numpy 越界切片静默截断曾导致 SW 整列丢失"
+            "3 口训练井 schema 非规范：17,426 行多列（含 CASE）+ 9,654 行缺 CASE",
+            "输入列泄漏曾使 inputs[:,13]==POR（80 井全中），已修复并加 input_no_label_leak 回归",
+            "分片缓存已纳入 E0 产出（32.4 MB，90 井输入列校验通过）"
           ]
         },
         {
@@ -46,10 +47,13 @@
           "status": "done",
           "evidence": [
             "src/score.py",
+            "reports/E0_score_check.json",
             "reports/E0_data_card.json::constant_baseline"
           ],
           "findings": [
-            "drop 口径 70.490735 命中锚点 70.4907；mask 口径 69.843218（低 0.65）"
+            "drop 口径 70.490735 命中锚点；mask 口径 69.843218（低 0.65）",
+            "逐目标 acc: POR 0.6735824 / PERM 0.7072023 / SW 0.7294624",
+            "总分恒等式 100·Σw·acc 与 total 完全一致（0.00e+00 差）"
           ]
         },
         {
@@ -59,6 +63,8 @@
           "evidence": [
             "predict.py",
             "src/inference/contract.py",
+            "src/versioning/registry.py",
+            "versions/registry.json",
             "reports/E0_contract_tests.json",
             "versions/candidates.json"
           ],
@@ -68,12 +74,21 @@
         }
       ],
       "gate": {
-        "id": "E0_gate",
-        "passed": true,
-        "mandatory_passed": 6,
-        "mandatory_total": 6,
-        "report": "reports/E0_gate.json"
-      }
+        "local": {
+          "id": "E0_local_contract_gate",
+          "passed": true,
+          "mandatory_passed": 10,
+          "mandatory_total": 10,
+          "report": "reports/E0_local_contract_gate.json"
+        },
+        "cloud": {
+          "id": "E0_cloud_gate",
+          "passed": false,
+          "status": "blocked_pending_cloud_run",
+          "report": "reports/E0_cloud_gate.json"
+        }
+      },
+      "note": "本地契约 Gate 已通过（reports/E0_local_contract_gate.json）；云端 Gate（env+disk）状态 blocked_pending_cloud_run，需在平台 A100 任务执行 run_train.sh --mode env。因此 E0 阶段整体仍为 in_progress。"
     },
     {
       "stage": "E1",
@@ -336,5 +351,22 @@
       "reason": "E1 训练前必须预注册（代码已支持写入）",
       "owner": "E1/P1"
     }
-  ]
+  ],
+  "review": {
+    "report": "reports/V4_PLAN_REVIEW.md",
+    "resolved": {
+      "B1_input_leak": "fixed + regression (input_no_label_leak, 90 wells)",
+      "B2_sw_scale": "fixed (SW single label scale; SW_SMALL_BRANCH=False)",
+      "B3_schema_doc": "fixed (only c7611b01 lacks CASE)",
+      "B4_gate_split": "fixed (local vs cloud gate)",
+      "B5_registry_scores": "fixed + tools/check_consistency.py",
+      "B6_cache_step": "fixed (run_all --with-cache, 32.4 MB)",
+      "H1_inner_oof": "fixed (P plans section 12.5)",
+      "H2_prereg": "fixed (33 templates validated; src/validation/gates.py implemented)",
+      "H3_counts": "fixed (counts by script; status enum validated)",
+      "H4_check_env": "fixed (V4_DATA_ROOT + CUDA assert + 9 deps + non-zero exit)",
+      "H5_disk": "fixed (cleanup-then-hard-fail semantics + allow_soft)",
+      "M1-M10": "fixed (32-dim docs, POR init, score_check, folds path, registry, empty dirs removed, ghost files listed, pip requirements, dead code)"
+    }
+  }
 }

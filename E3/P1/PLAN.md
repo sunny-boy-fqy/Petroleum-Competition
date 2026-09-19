@@ -3,6 +3,8 @@
 > 所属阶段：[E3](../PLAN.md)　|　总计划：[v4/PLAN.md](../../PLAN.md)　|　索引：[资料引用索引](../../资料引用索引.md)
 
 > **性质**：主线模型实现：本计划的核心赌注　|　**依赖**：E3/P0
+>
+> **状态**：⏸ 待执行　
 
 > 本目录是最小可执行单元：`code/` 放本 P 专属脚本，`docs/` 放本 P 的结论与证据。
 
@@ -97,6 +99,19 @@ bash /code/workspace/v4/run_train.sh --mode stage --stage E3
 python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
 ```
 
+## 12.5 选择协议（H1：inner-OOF only）
+
+**所有超参/阈值/早停/结构选择只允许用 inner 折**（`$V4_REPORTS_DIR/E0_folds.json::inner`）。
+
+| 用途 | 允许的数据 | 禁止 |
+|---|---|---|
+| 超参/阈值/λ/τ/集成权重选择 | 该 outer 折的 inner-OOF | outer 验证折标签 |
+| 早停 | inner-OOF 的真实 `score.py` 分数 | outer 折分数、loss 值 |
+| 结构/特征筛查（省机时） | 可先用 fold0 做**资源预检** | 预检结论不得进入 Gate 数值 |
+
+> 若某步骤确实只能看 outer 折（例如最终 OOF 汇总），该步骤**不得**反过来影响任何选择；
+预检性质的 fold0 结果必须在报告中标 `exploratory=true`、`selection_score_only=true`。
+
 ## 13. Gate 预注册要点
 
 预注册文件：`v4/reports/E3_P1_gate_prereg.json`（实验**前**写入，之后不得改阈值，只能新建修订号）。完整模板见 [`docs/gate_template.md`](../../docs/gate_template.md)。
@@ -106,19 +121,38 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
   "gate_id": "E3_P1_gate",
   "stage": "E3",
   "p_stage": "P1",
-  "candidate_budget": 1,
+  "created_at": "<ISO8601，写盘时填写>",
+  "primary_metric": "seq_train_ok",
+  "primary_threshold_key": "min_delta",
+  "baseline_version": "<已冻结候选或 CONST>",
+  "baseline_artifact": "<基线 OOF 路径>",
+  "baseline_manifest_sha256": "<sha256>",
+  "thresholds": {
+    "min_delta": 0.0,
+    "min_effect_floor": 0.0
+  },
   "alpha": 0.05,
+  "multiplicity": "none",
+  "candidate_budget": 1,
   "bootstrap_iters": 1000,
   "bootstrap_unit": "well_row_weighted_cluster",
-  "decisions_locked": [],
-  "primary_metric": "seq_train_ok",
+  "pilot_std": null,
+  "mde_units": 80,
+  "min_detectable_effect": null,
+  "planned_task_training_h": 1.0,
   "mandatory_checks": [
-    "seq_train_ok",
+    "contract_ok",
+    "atomic_precision_reported",
     "disk_budget_ok",
+    "training_time_log_valid",
     "checkpoint_resumable",
-    "training_time_log_valid"
-  ]
+    "no_label_leak"
+  ],
+  "decisions_locked": [],
+  "notes": ""
 }
 ```
 
-> 所有 Gate 的 `mandatory_checks` 必须包含 `contract_ok`、`atomic_precision_reported`、`disk_budget_ok`、`training_time_log_valid`（本 P 的 `prereg_extra` 已按 P 的性质补齐）。
+> 模板已内置 6 项核心 `mandatory_checks`；写入实际预注册文件时：
+> `created_at` 填当前时间；`baseline_version`/`baseline_artifact`/`baseline_manifest_sha256` 指向**已冻结**的基线；`planned_task_training_h` 必须 >0（软预算，单任务建议 ≤100h）。
+> 校验器：`python3 v4/src/validation/gates.py --prereg <file>`（缺字段即失败）。

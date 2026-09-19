@@ -5,14 +5,16 @@
     第 2 行：单位（丢弃）
     第 3 行起：逗号分隔数据，0.1 m 采样
 
-⚠️ **E0 实测的关键事实（本机复算，2026-09-19）**：本地 80 口训练井中
+⚠️ **E0 实测的关键事实（本机复算，2026-09-19；E0-R2 修正）**：本地 80 口训练井中
 **有 3 口井的表头与官方 17 列不一致**，共 27,080 行：
 
-| 井（前 8 位） | 列数 | 差异 |
-|---|---:|---|
-| `42f2870b` | 20 | 多 `K, U, CGR`；**缺 `CASE`** |
-| `b7eb1274` | 21 | 多 `TH, K, U, CGR`；**缺 `CASE`** |
-| `c7611b01` | 16 | **缺 `CASE`** |
+| 井（前 8 位） | 列数 | 差异 | 行数 |
+|---|---:|---|---:|
+| `42f2870b` | 20 | 多 `K, U, CGR`（**含 CASE**） | 7,879 |
+| `b7eb1274` | 21 | 多 `TH, K, U, CGR`（**含 CASE**） | 9,547 |
+| `c7611b01` | 16 | **唯一缺 `CASE`** | 9,654 |
+
+即：**17,426 行是"多列"，9,654 行是"缺 CASE"**（此前文档误写为"3 口井都缺 CASE"，已修正）。
 
 因此 **绝不能按列位置解析**（按位置会把 GR 之后的曲线整体错位，
 或直接丢弃这 27,080 行）。本模块改为：
@@ -63,6 +65,19 @@ class WellRecord:
     meta: dict[str, Any] = field(default_factory=dict)
 
 
+# 规范列布局（**唯一事实源**，禁止在别处硬编码列号）
+#   0                     : DEPTH（深度基准，单独使用，不进入 13 条输入曲线）
+#   1 .. N_CURVES         : 13 条输入曲线（GR, PE, SP, CAL, AC, DEN, CNL, RXO, RT,
+#                           DEVI, AZIM, BIT, CASE）
+#   N_CURVES+1 .. n_out-1 : 目标列（POR, PERM, SW）
+N_CURVES = len(C.INPUT_COLUMNS)          # 13
+N_TARGETS = len(C.TARGET_COLUMNS)        # 3
+IDX_DEPTH = 0
+IDX_CURVE_START = 1
+IDX_CURVE_STOP = IDX_CURVE_START + N_CURVES          # 14（开区间）
+IDX_TARGET_START = -N_TARGETS                        # 相对末尾
+
+
 def _to_float(tok: str) -> float:
     t = tok.strip()
     if not t:
@@ -102,7 +117,10 @@ def parse_well(path: str | Path, with_targets: bool = True) -> WellRecord:
         idx = {h: i for i, h in enumerate(header)}
         n_hdr = len(header)
 
-        wanted = list(C.COLUMNS) if with_targets else list(C.INPUT_COLUMNS)
+        # **列布局必须与 with_targets 无关**：输出恒为规范 17 列
+        # （0=DEPTH, 1..13=13 条曲线, 14..16=POR/PERM/SW）。
+        # 测试文件没有目标列 -> 对应位置填 NaN；这样训练/测试的输入通道位置完全一致。
+        wanted = list(C.COLUMNS)
         missing_cols = tuple(c for c in wanted if c not in idx)
         extra_cols = tuple(h for h in header if h not in C.COLUMNS)
 
@@ -117,7 +135,6 @@ def parse_well(path: str | Path, with_targets: bool = True) -> WellRecord:
         n_out = len(wanted)
         rows: list[list[float]] = []
         malformed = 0
-        take = [idx[c] for c in wanted if c in idx]
         for raw in reader:
             if not raw or (len(raw) == 1 and not raw[0].strip()):
                 continue
@@ -143,16 +160,30 @@ def parse_well(path: str | Path, with_targets: bool = True) -> WellRecord:
     if got_cols != n_out:
         raise AssertionError(f"{p.name}: internal column count {got_cols} != expected {n_out}")
 
-    depth = arr[:, 0] if HAS_NUMPY else [r[0] for r in arr]
-    inputs = arr[:, 1:15] if HAS_NUMPY else [r[1:15] for r in arr]
+    # ---- 列布局（E0-R2 修正：此前 inputs 取 arr[:,1:15] 会把第 14 个输入
+    #      落在 POR 标签上，造成 80 口井全部标签泄漏；测试井则只有 13 列）
+    depth = arr[:, IDX_DEPTH] if HAS_NUMPY else [r[IDX_DEPTH] for r in arr]
+    inputs = (arr[:, IDX_CURVE_START:IDX_CURVE_STOP] if HAS_NUMPY
+              else [r[IDX_CURVE_START:IDX_CURVE_STOP] for r in arr])
+    n_in = inputs.shape[1] if HAS_NUMPY else len(inputs[0])
+    if n_in != N_CURVES:
+        raise AssertionError(
+            f"{p.name}: inputs must have {N_CURVES} curves, got {n_in}"
+        )
+
     targets = None
     n_missing = n_ph = n_valid = 0
     if with_targets:
-        # 规范列顺序：0=DEPTH, 1..14 = 14 条输入曲线, 最后 3 列 = POR, PERM, SW
-        t0 = n_out - len(C.TARGET_COLUMNS)
+        t0 = n_out - N_TARGETS
+        # 硬断言：目标列必须完全落在输入曲线区间之外（防止再次泄漏）
+        if not (t0 >= IDX_CURVE_STOP):
+            raise AssertionError(
+                f"{p.name}: target start {t0} overlaps curve range "
+                f"[{IDX_CURVE_START},{IDX_CURVE_STOP})"
+            )
         targets = arr[:, t0:n_out] if HAS_NUMPY else [r[t0:n_out] for r in arr]
-        if (targets.shape[1] if HAS_NUMPY else len(targets[0])) != 3:
-            raise AssertionError(f"{p.name}: targets must have 3 columns")
+        if (targets.shape[1] if HAS_NUMPY else len(targets[0])) != N_TARGETS:
+            raise AssertionError(f"{p.name}: targets must have {N_TARGETS} columns")
         for i in range(n_rows):
             t = targets[i]
             if all(is_missing(float(t[k])) for k in range(3)):
