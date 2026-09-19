@@ -127,14 +127,27 @@ V4_DATA_ROOT=/data bash /code/workspace/v4/tools/bootstrap_data.sh
 
 > 数据只需部署**一次**；`/data` 持久保留，后续任务直接用。
 
-### 步骤 3：推送代码
+### 步骤 3：推送代码（**每次开跑前都必须做**）
+
+远程仓库与 SSH 认证**已经配置完成**，不需要再 `git init` / `git remote add`：
+
+| 项 | 值 |
+|---|---|
+| remote | `origin` = `git@github.com:sunny-boy-fqy/Petroleum-Competition.git` |
+| 认证 | SSH key（`~/.ssh/id_rsa`）；已验证 `ssh -T git@github.com` 返回 `Hi sunny-boy-fqy!` |
+| 分支 | **`master`**（平台任务的"分支"字段必须填 `master`，不是 `main`） |
 
 ```bash
-cd <项目根>/v4
-git init && git add -A && git commit -m "v4: plan + E0 contract layer + platform scripts"
-git remote add origin <你的仓库地址>
-git push -u origin main
+cd /home/fangqiyu/projects/Petroleum-Competition/v4
+git status --short          # 应为空（干净工作树）
+git push origin master      # 换机器/首次时用 git push -u origin master
+git log --oneline -1        # 记下这个 revision —— 平台任务跑的就是它
 ```
+
+> **协议（agent 必须遵守）**：每次让用户在平台上开跑训练/评测任务前，agent 给出的操作
+> 清单**必须包含**上面这条 `git push`，并写明待推送的 revision。平台只克隆**已 push** 的
+> 代码，漏掉这一步时任务会静默跑在旧代码上（日志里看不出来）—— 这是本流程最容易错、
+> 也最难察觉的一步。见 `PLAN.md` §3.1「代码同步协议」。
 
 ---
 
@@ -144,7 +157,7 @@ git push -u origin main
 |---|---|
 | 任务名称 | `v4-E0-env-check` / `v4-E1-row-baseline` / … |
 | 代码来源 | **Git 仓库** |
-| 仓库地址 / 分支 | `<你的仓库地址>` / `main` |
+| 仓库地址 / 分支 | `git@github.com:sunny-boy-fqy/Petroleum-Competition.git` / **`master`** |
 | **启动命令**（≤500 字符） | `bash /code/workspace/v4/run_train.sh --mode all` |
 | 资源配置 | **Nvidia A100 \* 1**（80 GB 显存），4000m vCPU / 16 GiB 内存 |
 | 镜像 | 【我的镜像】→ `v4-train-py311-torch271-cu128`（步骤 1 构建）；未构建则先用官方 PyTorch 2.7.1 / CUDA 12.8 / Python 3.11 镜像 |

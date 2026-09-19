@@ -973,6 +973,44 @@ class TestFrozenPins(unittest.TestCase):
             self.assertNotIn("nvidia", out.split("would run:")[-1])
 
 
+class TestPushProtocolIsDocumented(unittest.TestCase):
+    """用户已完成 remote + SSH 配置（2026-09-19）：文档里必须常驻"开跑前先 push"的协议。
+
+    起因：平台只克隆**已 push** 的代码，而 agent 曾在给出云端开跑清单时漏掉 push ——
+    任务会静默跑在旧代码上，日志里完全看不出来。这条回归防止文档被后续重构悄悄改掉。
+    """
+
+    REMOTE = "git@github.com:sunny-boy-fqy/Petroleum-Competition.git"
+
+    def test_every_entry_doc_carries_the_push_step(self):
+        for rel in ("README.md", "docs/platform_setup.md", "docs/training_tasks.md", "PLAN.md"):
+            src = _read(rel)
+            self.assertIn("git push", src, f"{rel} 必须保留开跑前的 push 步骤")
+            self.assertIn(self.REMOTE, src, f"{rel} 必须写明已配置的 remote")
+            self.assertIn("master", src, f"{rel} 必须写明分支是 master（平台任务要填它）")
+
+    def test_plan_records_the_sync_protocol(self):
+        src = _read("PLAN.md")
+        self.assertIn("代码同步协议", src)
+        self.assertIn("`git push`", src)
+        self.assertIn("ssh", src.lower())
+
+    def test_no_placeholder_remote_or_main_branch_left(self):
+        for rel in ("docs/platform_setup.md", "docs/training_tasks.md", "README.md"):
+            src = _read(rel)
+            for bad in ("<你的仓库地址>", "<你的 git 仓库地址>", "git push -u origin main",
+                        "git remote add origin <"):
+                self.assertNotIn(bad, src, f"{rel} 仍有过期占位符：{bad}")
+
+    def test_repo_remote_matches_documented_remote(self):
+        """文档写的 remote 必须与实际 `git remote` 一致（非工作树时跳过）。"""
+        if not _in_git_worktree():
+            self.skipTest("不在 git 工作树中")
+        out = subprocess.run(["git", "remote", "get-url", "origin"], cwd=str(V4),
+                             capture_output=True, text=True).stdout.strip()
+        self.assertEqual(out, self.REMOTE)
+
+
 def _in_git_worktree() -> bool:
     """非 git 工作树（例如 `git archive` 解出的目录）里 `git check-ignore` 无法用。"""
     return (V4 / ".git").exists() and shutil.which("git") is not None

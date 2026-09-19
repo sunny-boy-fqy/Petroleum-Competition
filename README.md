@@ -49,13 +49,17 @@ bash /code/workspace/v4/run_train.sh --mode all
 
 ## 云端上手（本机准备 → 平台三次任务）
 
+> **每次开跑前必须先 push**（agent 给出的开跑清单也必须包含这一步）：
+> remote 与 SSH 认证**已配置**（`origin` = `git@github.com:sunny-boy-fqy/Petroleum-Competition.git`，
+> 分支 **`master`**），不要再 `git init` / `git remote add`；平台只克隆**已 push** 的代码。
+
 ```bash
 # 【本机】① 生成数据分发包（~30 MB，不进 git，上传到平台云盘）
 python3 v4/tools/pack_dataset.py
 # 【本机】② 校验冻结引用件（折文件 / 数据指纹）
 python3 v4/tools/verify_reference.py
-# 【本机】③ 推送代码
-cd v4 && git add -A && git commit -m "..." && git push
+# 【本机】③ 推送代码（提交 → push → 记下 revision）
+cd v4 && git add -A && git commit -m "..." && git push origin master && git log --oneline -1
 
 # 【平台】任务1：环境与磁盘自检  bash /code/workspace/v4/run_train.sh --mode env
 # 【平台】任务2：部署数据到 /data  bash /code/workspace/v4/run_train.sh --mode data
@@ -128,7 +132,7 @@ python3 v4/predict.py --use-version CONST --data_dir ../data --output /tmp/r.jso
 
 ## 当前状态
 
-- [x] **计划全部完成**：总计划 871 行 + 12 个阶段计划（759 行）+ 33 个 P 级详细计划（5,224 行），**合计 6,854 行**（由 `tools/plan_stats.py` 实测）
+- [x] **计划全部完成**：总计划 886 行 + 12 个阶段计划（759 行）+ 33 个 P 级详细计划（5,224 行），**合计 6,869 行**（由 `tools/plan_stats.py` 实测）
 - [x] 状态台账 `versions/status.json`、候选注册表 `versions/candidates.json`、目录总览 `docs/PROJECT_FILES.md`
 - [x] 环境/磁盘自检脚本（`E0/code/check_env.py`、`src/data/disk_guard.py`、`E0/code/setup_deps.sh`）
 - [x] 锁文件与 Gate/引用模板

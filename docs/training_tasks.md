@@ -3,13 +3,22 @@
 > 平台字段见 [训练任务文档](http://discovery-staging.intern-ai.org.cn/docs/workbench/training)。
 > 启动命令上限 **500 字符**，本表全部命令都远低于该限制。
 
+> **⚠️ 每次开跑前必须先 push**（协议见 `PLAN.md` §3.1 / `docs/platform_setup.md` 步骤 3）：
+> ```bash
+> cd /home/fangqiyu/projects/Petroleum-Competition/v4
+> git push origin master && git log --oneline -1
+> ```
+> 平台只克隆**已 push** 的代码。remote 与 SSH 认证已配置好（`origin` =
+> `git@github.com:sunny-boy-fqy/Petroleum-Competition.git`，分支 **`master`**），
+> 不要再 `git init` / `git remote add`。
+
 ## 通用字段（所有任务相同）
 
 | 字段 | 值 |
 |---|---|
 | 代码来源 | **Git 仓库** |
-| 仓库地址 | `<你的 git 仓库地址>` |
-| 分支 | `main` |
+| 仓库地址 | `git@github.com:sunny-boy-fqy/Petroleum-Competition.git`（已配置，直接用） |
+| 分支 | **`master`** |
 | 资源配置 | **Nvidia A100 × 1**（80 GB 显存 / 4000m vCPU / 16 GiB 内存） |
 | 镜像 | 【我的镜像】→ `v4-train-py311-torch271-cu128`（场景 = **训练任务**）<br>未构建前先用官方 PyTorch 2.7.1 / CUDA 12.8 / Python 3.11 镜像 |
 | 训练/验证数据集 | 不挂载（数据走云盘 `/data`） |
