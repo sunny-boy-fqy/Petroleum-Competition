@@ -1,8 +1,10 @@
 # E6 联合常量状态与原子门
 
-> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 ``v4/E6/src/`、`v4/E6/code/``　|　产物 ``v4/experiments/E6/`、`v4/models/E6/``
+> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 `v4/E6/src/、v4/E6/code/`　|　产物 `v4/experiments/E6/、v4/models/E6/`
 
 > 阶段性质：**完整管线打通阶段（PD1 候选诞生）。**
+
+> **执行状态**以 [`versions/status.json`](../versions/status.json) 为唯一事实源；P 级计划的详细内容由 [`docs/gen_p_details.py`](../docs/gen_p_details.py) 生成。
 
 ## 1. 目标
 

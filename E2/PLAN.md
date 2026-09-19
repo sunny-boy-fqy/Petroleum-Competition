@@ -1,8 +1,10 @@
 # E2 特征工程与数据管线
 
-> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 ``v4/E2/src/`、`v4/E2/code/``　|　产物 ``v4/experiments/E2/`、`v4/models/E2/``
+> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 `v4/E2/src/、v4/E2/code/`　|　产物 `v4/experiments/E2/、v4/models/E2/`
 
 > 阶段性质：**特征与吞吐阶段。每组特征必须独立消融。**
+
+> **执行状态**以 [`versions/status.json`](../versions/status.json) 为唯一事实源；P 级计划的详细内容由 [`docs/gen_p_details.py`](../docs/gen_p_details.py) 生成。
 
 ## 1. 目标
 

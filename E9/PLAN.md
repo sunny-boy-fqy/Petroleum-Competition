@@ -1,8 +1,10 @@
 # E9 诚实验证与提交护栏
 
-> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 ``v4/E9/src/`、`v4/E9/code/``　|　产物 ``v4/experiments/E9/`、`v4/models/E9/``
+> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 `v4/E9/src/、v4/E9/code/`　|　产物 `v4/experiments/E9/、v4/models/E9/`
 
 > 阶段性质：**验证与仲裁阶段。不出新模型。**
+
+> **执行状态**以 [`versions/status.json`](../versions/status.json) 为唯一事实源；P 级计划的详细内容由 [`docs/gen_p_details.py`](../docs/gen_p_details.py) 生成。
 
 ## 1. 目标
 

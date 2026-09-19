@@ -1,38 +1,118 @@
-# E8/P2 集成与 Gate
+# E8/P2 集成（多 seed / 快照 / 多结构）与 Gate
 
-> 所属阶段：[E8](../PLAN.md)　|　总计划：[v4/PLAN.md](../../../PLAN.md)
+> 所属阶段：[E8](../PLAN.md)　|　总计划：[v4/PLAN.md](../../PLAN.md)　|　索引：[资料引用索引](../../资料引用索引.md)
 
-> 本目录是最小可执行单元：`code/` 放本 P 专属脚本，`docs/` 放本 P 的说明与结论。
+> **性质**：增益放大：必须扣除同源性　|　**依赖**：E8/P0–P1
+
+> 本目录是最小可执行单元：`code/` 放本 P 专属脚本，`docs/` 放本 P 的结论与证据。
+
+---
 
 ## 1. 目标
 
-多 seed/快照/多结构集成，报告成员同源性与加权配对 bootstrap，判定 Gate。
+构建多 seed、快照集成与多结构（U-Net/TCN/PatchTF）集成，报告成员同源性与按井行数加权的 paired bootstrap，判定集成是否真增益。
 
 ## 2. 为什么需要这一步
 
-集成的收益必须扣除同源性；`资料库/08` §0.3 第 4 层。
+1. `资料库/08` §0.3 第 4 层：多模型 Stacking/加权融合 + 快照集成是标准提分手段；
+2. **同源平均不构成增益**：若成员间预测相关 > 0.99，融合只是降低方差而非提升上限；
+3. 集成的收益必须用统计检验而非点估计确认。
 
-## 3. 代码
+## 3. 输入契约
+
+- E3/E4/E5/E6/E7 的冻结成员
+- E0 的 bootstrap 工具
+
+## 4. 输出契约
+
+- `src/ensemble/blend.py`、`E8/code/ensemble.py`
+- `$V4_RUN_ROOT/E8/ensemble/oof.npz`
+- `$V4_REPORTS_DIR/E8_ensemble_report.json`、`$V4_REPORTS_DIR/E8_gate.json`
+
+## 5. 执行步骤
+
+1. 枚举可用成员（多 seed 权重、不同主干的权重、快照 checkpoint）
+2. 计算成员间 OOF 预测相关矩阵，标记同源簇
+3. 实现三种融合：平均、加权（inner-OOF 选权）、线性 stacking（inner-OOF 训）
+4. 与最佳单成员做 paired bootstrap（按井行数加权，1000 次）
+5. 报告：集成 OOF、最佳单成员 OOF、delta、CI、逐折方向
+6. 写 Gate：集成 ≥ 最佳单成员 且 CI 下界 > 0
+
+## 6. 参数与配置
+
+| 参数 | 默认值 | 搜索范围/说明 | 选择位置 |
+|---|---|---|---|
+| 成员数上限 | 5 | 3–5（内存受限时 2） | 总计划 §3.4.1 收缩规则 |
+| 融合权重 | inner-OOF 选择 | 平均/加权/stacking | 禁止用 outer 选 |
+| 同源判据 | 相关系数 > 0.99 视为同源 | 冻结 | 同源成员不计入增益证据 |
+
+## 7. 完成判据
+
+- 集成 ≥ 最佳单成员 且 CI 下界 > 0
+- 成员同源性矩阵与同源簇标注完整
+- 5 折 delta 方向一致（至少 4/5）
+- `E8_gate.json` 全 mandatory 通过
+
+## 8. 禁止事项
+
+- 用同源模型平均制造假增益
+- 用 outer 折选融合权重
+- 成员数超过磁盘/内存可承受范围
+
+## 9. 风险与对策
+
+| 风险信号 | 早期表现 | 对策 |
+|---|---|---|
+| 集成无增益 | CI 含 0 | 判 NO-GO，保留最佳单成员作为最终候选 |
+| stacking 过拟合 inner | inner 好 outer 差 | 限制 stacking 自由度（只用线性 + 强正则） |
+
+## 10. 停止规则
+
+- 集成 CI 上界 ≤ 0 → 保留最佳单成员，记录 NO-GO
+
+## 11. 代码归属
 
 - `src/ensemble/blend.py`
 - `E8/code/ensemble.py`
 
-## 4. 产物
+## 12. 复算与证据
 
-- `experiments/E8/ensemble/**`
 - `reports/E8_ensemble_report.json`、`reports/E8_gate.json`
 
-## 5. 完成判据
+```bash
+# 云端（平台训练任务）
+bash /code/workspace/v4/run_train.sh --mode stage --stage E8
+# 本机（口径层，无 torch）
+python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
+```
 
-- 集成 ≥ 最佳单成员且 CI 下界 > 0；同源报告齐备
+## 13. Gate 预注册要点
 
-## 6. 禁止事项
+预注册文件：`v4/reports/E8_P2_gate_prereg.json`（实验**前**写入，之后不得改阈值，只能新建修订号）。完整模板见 [`docs/gate_template.md`](../../docs/gate_template.md)。
 
-- 用同源模型平均制造假增益
+```json
+{
+  "gate_id": "E8_P2_gate",
+  "stage": "E8",
+  "p_stage": "P2",
+  "candidate_budget": 3,
+  "alpha": 0.05,
+  "bootstrap_iters": 1000,
+  "bootstrap_unit": "well_row_weighted_cluster",
+  "decisions_locked": [],
+  "primary_metric": "oof_total",
+  "baseline_version": "E6_PD1",
+  "thresholds": {
+    "min_delta": 0.0
+  },
+  "multiplicity": "holm",
+  "mandatory_checks": [
+    "contract_ok",
+    "atomic_precision_reported",
+    "disk_budget_ok",
+    "training_time_log_valid"
+  ]
+}
+```
 
-## 7. 执行提示
-
-- 先跑最小可复算版本（单折 / 小样本），确认口径正确后再全量。
-- 结果写入本 P 的 `docs/` 与 `v4/reports/E8_P2_*.json`。
-- 预注册 Gate 后才允许看结果；预注册文件为 `v4/reports/E8_P2_gate_prereg.json`。
-- 任何结论必须附「复算命令」与「产物 sha256」。
+> 所有 Gate 的 `mandatory_checks` 必须包含 `contract_ok`、`atomic_precision_reported`、`disk_budget_ok`、`training_time_log_valid`（本 P 的 `prereg_extra` 已按 P 的性质补齐）。

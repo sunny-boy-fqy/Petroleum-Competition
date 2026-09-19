@@ -1,8 +1,10 @@
 # E7 评分对齐损失与解码后处理
 
-> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 ``v4/E7/src/`、`v4/E7/code/``　|　产物 ``v4/experiments/E7/`、`v4/models/E7/``
+> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 `v4/E7/src/、v4/E7/code/`　|　产物 `v4/experiments/E7/、v4/models/E7/`
 
 > 阶段性质：**损失与解码的收尾优化阶段。**
+
+> **执行状态**以 [`versions/status.json`](../versions/status.json) 为唯一事实源；P 级计划的详细内容由 [`docs/gen_p_details.py`](../docs/gen_p_details.py) 生成。
 
 ## 1. 目标
 

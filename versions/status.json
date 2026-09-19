@@ -1,0 +1,340 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-09-19T20:40:00+00:00",
+  "note": "v4 执行状态台账（唯一事实源）。status ∈ pending / in_progress / done / no_go / blocked。任何状态变更必须同时更新 evidence 字段。",
+  "project": {
+    "version": "v4",
+    "phase": "E1",
+    "summary": "E0 口径层已完成并通过 Gate 6/6（P0 环境实测待云端）；计划文档全部完成（总计划 661 行 + 12 阶段 + 33 个 P 级详细计划，合计 10,336 行）；E1 训练代码待写",
+    "last_updated": "2026-09-19T20:40:00+00:00"
+  },
+  "stages": [
+    {
+      "stage": "E0",
+      "title": "数据、评测与提交契约",
+      "status": "done_local_pending_cloud_env",
+      "p": [
+        {
+          "id": "P0",
+          "title": "环境与磁盘实测",
+          "status": "blocked",
+          "reason": "需要云端 A100 训练任务实机运行（本机无 GPU/torch）；不阻塞本机侧计划与代码工作",
+          "evidence": [
+            "E0/code/check_env.py",
+            "E0/code/setup_deps.sh"
+          ],
+          "blocked_by": "cloud_training_task"
+        },
+        {
+          "id": "P1",
+          "title": "数据卡、哨兵与标签三状态",
+          "status": "done",
+          "evidence": [
+            "reports/E0_data_card.json",
+            "E0/docs/data_card.md",
+            "versions/folds_sha256.json",
+            "artifacts/E0/folds.json"
+          ],
+          "findings": [
+            "3 口训练井 schema 非规范（20/21/16 列，27,080 行，3.71%）",
+            "numpy 越界切片静默截断曾导致 SW 整列丢失"
+          ]
+        },
+        {
+          "id": "P2",
+          "title": "评分器与分母口径冻结",
+          "status": "done",
+          "evidence": [
+            "src/score.py",
+            "reports/E0_data_card.json::constant_baseline"
+          ],
+          "findings": [
+            "drop 口径 70.490735 命中锚点 70.4907；mask 口径 69.843218（低 0.65）"
+          ]
+        },
+        {
+          "id": "P3",
+          "title": "提交契约、版本路由与干净目录冒烟",
+          "status": "done",
+          "evidence": [
+            "predict.py",
+            "src/inference/contract.py",
+            "reports/E0_contract_tests.json",
+            "versions/candidates.json"
+          ],
+          "findings": [
+            "CONST 基线端到端 10 井/95,948 行/1.4 s CPU，契约 6 负样例全拒绝"
+          ]
+        }
+      ],
+      "gate": {
+        "id": "E0_gate",
+        "passed": true,
+        "mandatory_passed": 6,
+        "mandatory_total": 6,
+        "report": "reports/E0_gate.json"
+      }
+    },
+    {
+      "stage": "E1",
+      "title": "纯 DL 行级基线",
+      "status": "in_progress",
+      "p": [
+        {
+          "id": "P0",
+          "title": "行级输入管线与分片缓存",
+          "status": "pending",
+          "evidence": [
+            "src/features/basic.py",
+            "src/data/dataset.py"
+          ]
+        },
+        {
+          "id": "P1",
+          "title": "行级 MLP + 对齐损失 + 5 折 OOF",
+          "status": "pending",
+          "evidence": [
+            "E1/code/train_row.py",
+            "src/models/row_mlp.py",
+            "src/losses/score_aligned.py"
+          ]
+        }
+      ],
+      "gate": {
+        "id": "E1_P1_gate",
+        "passed": null,
+        "threshold": {
+          "oof_total_min": 78.0
+        },
+        "report": null
+      }
+    },
+    {
+      "stage": "E2",
+      "title": "特征工程与数据管线",
+      "status": "pending",
+      "p": [
+        {
+          "id": "P0",
+          "status": "pending"
+        },
+        {
+          "id": "P1",
+          "status": "pending"
+        },
+        {
+          "id": "P2",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "stage": "E3",
+      "title": "深度序列主干",
+      "status": "pending",
+      "p": [
+        {
+          "id": "P0",
+          "status": "pending"
+        },
+        {
+          "id": "P1",
+          "status": "pending"
+        },
+        {
+          "id": "P2",
+          "status": "pending"
+        }
+      ],
+      "gate": {
+        "id": "E3_P2_gate",
+        "threshold": {
+          "oof_total_min": 81.0
+        }
+      }
+    },
+    {
+      "stage": "E4",
+      "title": "Patch Transformer 与多尺度",
+      "status": "pending",
+      "p": [
+        {
+          "id": "P0",
+          "status": "pending"
+        },
+        {
+          "id": "P1",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "stage": "E5",
+      "title": "逐目标精修",
+      "status": "pending",
+      "p": [
+        {
+          "id": "P0",
+          "status": "pending"
+        },
+        {
+          "id": "P1",
+          "status": "pending"
+        },
+        {
+          "id": "P2",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "stage": "E6",
+      "title": "联合常量状态与原子门",
+      "status": "pending",
+      "p": [
+        {
+          "id": "P0",
+          "status": "pending"
+        },
+        {
+          "id": "P1",
+          "status": "pending"
+        },
+        {
+          "id": "P2",
+          "status": "pending"
+        }
+      ],
+      "gate": {
+        "id": "E6_P2_gate",
+        "threshold": {
+          "oof_total_min": 82.0
+        }
+      }
+    },
+    {
+      "stage": "E7",
+      "title": "评分对齐损失与解码",
+      "status": "pending",
+      "p": [
+        {
+          "id": "P0",
+          "status": "pending"
+        },
+        {
+          "id": "P1",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "stage": "E8",
+      "title": "多任务、井级分支与集成",
+      "status": "pending",
+      "p": [
+        {
+          "id": "P0",
+          "status": "pending"
+        },
+        {
+          "id": "P1",
+          "status": "pending"
+        },
+        {
+          "id": "P2",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "stage": "E9",
+      "title": "诚实验证与提交护栏",
+      "status": "pending",
+      "p": [
+        {
+          "id": "P0",
+          "status": "pending"
+        },
+        {
+          "id": "P1",
+          "status": "pending"
+        },
+        {
+          "id": "P2",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "stage": "E10",
+      "title": "全量重训、打包与提交",
+      "status": "pending",
+      "p": [
+        {
+          "id": "P0",
+          "status": "pending"
+        },
+        {
+          "id": "P1",
+          "status": "pending"
+        },
+        {
+          "id": "P2",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "stage": "E11",
+      "title": "归档与复盘",
+      "status": "pending",
+      "p": [
+        {
+          "id": "P0",
+          "status": "pending"
+        },
+        {
+          "id": "P1",
+          "status": "pending"
+        }
+      ]
+    }
+  ],
+  "anchors": {
+    "constant_baseline_drop": 70.490735,
+    "constant_baseline_mask": 69.843218,
+    "b0_local_oof": 80.382479,
+    "b0_a_board": 82.2757,
+    "v2_best_dev64_oof": 80.305222,
+    "v2_best_a_board": 82.3035,
+    "guardrail_floor": 81.7757,
+    "reference_oof": 80.382479,
+    "protocol_matched": false
+  },
+  "environment": {
+    "local": {
+      "python": "3.12 (system) / 3.12 (v2 venv)",
+      "numpy": "1.26.4",
+      "torch": null,
+      "gpu": null,
+      "note": "口径层可跑；训练不可"
+    },
+    "cloud": {
+      "python": "3.11",
+      "torch": "2.4.0+cu124",
+      "cuda": "12.6",
+      "gpu": "A100 80GB x1",
+      "ram_gb": 16,
+      "disk_gb": 30,
+      "verified": false,
+      "note": "待 E0/P0 在云端实机确认"
+    }
+  },
+  "pending_plan_artifacts": [
+    {
+      "item": "reports/E1_P1_gate_prereg.json",
+      "reason": "E1 训练前必须预注册（代码已支持写入）",
+      "owner": "E1/P1"
+    }
+  ]
+}

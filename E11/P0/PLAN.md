@@ -1,36 +1,103 @@
-# E11/P0 资产归档
+# E11/P0 资产归档（含 sha256）
 
-> 所属阶段：[E11](../PLAN.md)　|　总计划：[v4/PLAN.md](../../../PLAN.md)
+> 所属阶段：[E11](../PLAN.md)　|　总计划：[v4/PLAN.md](../../PLAN.md)　|　索引：[资料引用索引](../../资料引用索引.md)
 
-> 本目录是最小可执行单元：`code/` 放本 P 专属脚本，`docs/` 放本 P 的说明与结论。
+> **性质**：可独立理解的知识包　|　**依赖**：E10/P2
+
+> 本目录是最小可执行单元：`code/` 放本 P 专属脚本，`docs/` 放本 P 的结论与证据。
+
+---
 
 ## 1. 目标
 
-生成代码/模型/候选/报告的清单与 sha256，确保可在不含 v1/v2/v3 的目录独立理解。
+生成代码/模型/候选/报告的清单与 sha256，确保归档可在**不含 v1/v2/v3** 的目录中独立理解。
 
 ## 2. 为什么需要这一步
 
-归档是下一代的输入；无哈希的归档无法验证。
+1. 归档是下一代的输入；无哈希的归档无法验证，也无法判断"哪个数字对应哪份权重"；
+2. git 仓库只放代码，权重与产物在 `/data`，因此归档清单必须把两侧关联起来；
+3. 失败候选（rejected）与成功候选同等重要——它们是负知识资产。
 
-## 3. 代码
+## 3. 输入契约
+
+- `v4/` 全部报告与代码、`/data/v4/**` 的产物
+- `versions/candidates.json`
+
+## 4. 输出契约
+
+- `$V4_REPORTS_DIR/E11_archive_manifest.json`
+- `v4/docs/PROJECT_FILES.md`（目录树 + 文件用途 + 数量统计）
+
+## 5. 执行步骤
+
+1. 遍历 `v4/` 与关键 `/data/v4` 产物，逐项记录路径/大小/sha256/用途
+2. 生成目录树文档（层级/文件数/职责），标注"提交必需"与"仅开发"
+3. 核对候选注册表里每个候选都能在归档中找到对应权重与结果
+4. 确认归档不依赖 v1/v2/v3 即可理解（除 E0 冻结引用件外）
+5. 删除任何重复/临时产物（保留有分析价值的）
+
+## 6. 参数与配置
+
+| 参数 | 默认值 | 搜索范围/说明 | 选择位置 |
+|---|---|---|---|
+| 哈希算法 | sha256 | 冻结 | — |
+| 保留策略 | 保留全部候选（含 rejected） | 冻结 | 负资产 |
+
+## 7. 完成判据
+
+- 清单完整且每项有 sha256
+- 每个候选都能追溯到权重 + result.json + cv.json
+- `PROJECT_FILES.md` 目录树与实际一致（文件数一致）
+
+## 8. 禁止事项
+
+- 删除任何候选或报告（含 rejected）
+- 在归档中丢失"哪个数字来自哪份权重"的关联
+
+## 9. 风险与对策
+
+| 风险信号 | 早期表现 | 对策 |
+|---|---|---|
+| 清单与实物漂移 | 哈希对不上 | 归档脚本从文件系统实时计算，不手写 |
+
+## 10. 停止规则
+
+- —（收尾阶段无停止条件）
+
+## 11. 代码归属
 
 - `E11/code/archive.py`
 
-## 4. 产物
+## 12. 复算与证据
 
-- `reports/E11_archive_manifest.json`
+- `reports/E11_archive_manifest.json`、`docs/PROJECT_FILES.md`
 
-## 5. 完成判据
+```bash
+# 云端（平台训练任务）
+bash /code/workspace/v4/run_train.sh --mode stage --stage E11
+# 本机（口径层，无 torch）
+python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
+```
 
-- 清单完整、每项有 sha256；关键结论有单一事实源指针
+## 13. Gate 预注册要点
 
-## 6. 禁止事项
+预注册文件：`v4/reports/E11_P0_gate_prereg.json`（实验**前**写入，之后不得改阈值，只能新建修订号）。完整模板见 [`docs/gate_template.md`](../../docs/gate_template.md)。
 
-- 删除 rejected 候选
+```json
+{
+  "gate_id": "E11_P0_gate",
+  "stage": "E11",
+  "p_stage": "P0",
+  "candidate_budget": 1,
+  "alpha": 0.05,
+  "bootstrap_iters": 1000,
+  "bootstrap_unit": "well_row_weighted_cluster",
+  "decisions_locked": [],
+  "primary_metric": "archive_complete",
+  "mandatory_checks": [
+    "archive_hashes_present"
+  ]
+}
+```
 
-## 7. 执行提示
-
-- 先跑最小可复算版本（单折 / 小样本），确认口径正确后再全量。
-- 结果写入本 P 的 `docs/` 与 `v4/reports/E11_P0_*.json`。
-- 预注册 Gate 后才允许看结果；预注册文件为 `v4/reports/E11_P0_gate_prereg.json`。
-- 任何结论必须附「复算命令」与「产物 sha256」。
+> 所有 Gate 的 `mandatory_checks` 必须包含 `contract_ok`、`atomic_precision_reported`、`disk_budget_ok`、`training_time_log_valid`（本 P 的 `prereg_extra` 已按 P 的性质补齐）。

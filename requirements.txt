@@ -1,0 +1,47 @@
+# 训练/推理依赖声明（v4）
+
+> **本文件是声明，默认不被执行。** 云端是平台预装镜像（CUDA 12.6 / PyTorch 2.4.0 / Python 3.11），
+> **不得 `pip install torch` 或更换 CUDA/Python 版本**；额外轻量包由 `v4/E0/code/setup_deps.sh`
+> 以 `--no-cache-dir` 安装并立即清缓存。
+>
+> 权威来源：
+> - 训练侧：`versions/locks/cloud.txt`
+> - 推理侧：`versions/locks/submit.txt`
+>
+> 镜像构建要求见 `docs/image_requirements.md`。
+
+## 基础栈（镜像预装，不得变更）
+
+```
+python==3.11
+torch==2.4.0+cu124
+numpy==1.26.4
+```
+
+## 额外轻量包（可 pip 安装，装完清缓存）
+
+```
+pandas==2.2.3
+pyarrow==17.0.0
+scipy==1.13.1
+scikit-learn==1.5.2
+einops==0.8.0
+onnx==1.16.2
+onnxruntime==1.18.1
+```
+
+## 明确不安装
+
+| 包 | 原因 |
+|---|---|
+| `torchvision` / `timm` | 图像侧依赖，与测井无关 |
+| `flash-attn` / `xformers` / `apex` / `deepspeed` | 需现场编译 CUDA 扩展；注意力走 `F.scaled_dot_product_attention` |
+| `tensorboard` | 平台已集成（写 `TENSORBOARD_LOGDIR`），训练日志用 CSV/JSONL |
+| `matplotlib` / `jupyter` / `wandb` | v4 不做绘图 |
+
+## 安装命令（云端任务内，可选）
+
+```bash
+bash /code/workspace/v4/E0/code/setup_deps.sh          # 含磁盘预检与 torch 触碰拒绝
+python -m pip freeze > /data/v4/reports/cloud_frozen.txt
+```

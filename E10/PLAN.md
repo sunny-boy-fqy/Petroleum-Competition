@@ -1,8 +1,10 @@
 # E10 全量重训、打包与提交
 
-> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 ``v4/E10/src/`、`v4/E10/code/``　|　产物 ``v4/experiments/E10/`、`v4/models/E10/``
+> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 `v4/E10/src/、v4/E10/code/`　|　产物 `v4/experiments/E10/、v4/models/E10/`
 
 > 阶段性质：**交付阶段。**
+
+> **执行状态**以 [`versions/status.json`](../versions/status.json) 为唯一事实源；P 级计划的详细内容由 [`docs/gen_p_details.py`](../docs/gen_p_details.py) 生成。
 
 ## 1. 目标
 

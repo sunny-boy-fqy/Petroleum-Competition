@@ -1,8 +1,10 @@
 # E8 多任务、井级分支与集成
 
-> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 ``v4/E8/src/`、`v4/E8/code/``　|　产物 ``v4/experiments/E8/`、`v4/models/E8/``
+> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 `v4/E8/src/、v4/E8/code/`　|　产物 `v4/experiments/E8/、v4/models/E8/`
 
 > 阶段性质：**增益放大阶段。**
+
+> **执行状态**以 [`versions/status.json`](../versions/status.json) 为唯一事实源；P 级计划的详细内容由 [`docs/gen_p_details.py`](../docs/gen_p_details.py) 生成。
 
 ## 1. 目标
 

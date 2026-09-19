@@ -1,8 +1,10 @@
 # E5 逐目标精修
 
-> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 ``v4/E5/src/`、`v4/E5/code/``　|　产物 ``v4/experiments/E5/`、`v4/models/E5/``
+> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 `v4/E5/src/、v4/E5/code/`　|　产物 `v4/experiments/E5/、v4/models/E5/`
 
 > 阶段性质：**分目标攻坚阶段（三个目标互相独立）。**
+
+> **执行状态**以 [`versions/status.json`](../versions/status.json) 为唯一事实源；P 级计划的详细内容由 [`docs/gen_p_details.py`](../docs/gen_p_details.py) 生成。
 
 ## 1. 目标
 

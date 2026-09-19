@@ -1,8 +1,10 @@
 # E4 Patch Transformer 与多尺度融合
 
-> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 ``v4/E4/src/`、`v4/E4/code/``　|　产物 ``v4/experiments/E4/`、`v4/models/E4/``
+> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 `v4/E4/src/、v4/E4/code/`　|　产物 `v4/experiments/E4/、v4/models/E4/`
 
 > 阶段性质：**第二主干与融合阶段。**
+
+> **执行状态**以 [`versions/status.json`](../versions/status.json) 为唯一事实源；P 级计划的详细内容由 [`docs/gen_p_details.py`](../docs/gen_p_details.py) 生成。
 
 ## 1. 目标
 

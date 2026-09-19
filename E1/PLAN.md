@@ -1,8 +1,10 @@
 # E1 纯 DL 行级基线
 
-> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 ``v4/E1/src/`、`v4/E1/code/``　|　产物 ``v4/experiments/E1/`、`v4/models/E1/``
+> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 `v4/E1/src/、v4/E1/code/`　|　产物 `v4/experiments/E1/、v4/models/E1/`
 
 > 阶段性质：**分母建立阶段。允许弱，必须正确。**
+
+> **执行状态**以 [`versions/status.json`](../versions/status.json) 为唯一事实源；P 级计划的详细内容由 [`docs/gen_p_details.py`](../docs/gen_p_details.py) 生成。
 
 ## 1. 目标
 

@@ -12,6 +12,9 @@
 | [`docs/image_requirements.md`](docs/image_requirements.md) | **镜像需求**：基础镜像版本锁定、快捷安装包清单、禁装清单、Dockerfile 追加层 |
 | [`E0/docs/data_card.md`](E0/docs/data_card.md) | E0 数据卡与口径冻结（含两个硬发现） |
 | [`docs/training_tasks.md`](docs/training_tasks.md) | **训练任务配置表**：每个任务逐字段填写 + 平台限制速记 |
+| [`docs/PROJECT_FILES.md`](docs/PROJECT_FILES.md) | **目录树与文件用途**：什么进 git、什么走云盘 |
+| [`versions/status.json`](versions/status.json) | **执行状态台账**（阶段/P 级状态唯一事实源） |
+| [`versions/candidates.json`](versions/candidates.json) | **候选注册表**（唯一事实源，未登记不得提交） |
 | [`docs/gate_template.md`](docs/gate_template.md) | Gate 预注册模板与判定逻辑 |
 | `E0/` … `E11/` | 阶段计划与 P 级子计划 |
 | `versions/locks/cloud.txt`、`versions/locks/submit.txt` | 训练/推理依赖快照 |
@@ -119,11 +122,12 @@ python3 v4/predict.py --use-version CONST --data_dir ../data --output /tmp/r.jso
 
 ## 当前状态
 
-- [x] 总计划与 12 个阶段、33 个 P 级子计划
+- [x] **计划全部完成**：总计划 661 行 + 12 个阶段计划 + 33 个 P 级详细计划（平均 224 行，合计 10,336 行）
+- [x] 状态台账 `versions/status.json`、候选注册表 `versions/candidates.json`、目录总览 `docs/PROJECT_FILES.md`
 - [x] 环境/磁盘自检脚本（`E0/code/check_env.py`、`src/data/disk_guard.py`、`E0/code/setup_deps.sh`）
 - [x] 锁文件与 Gate/引用模板
 - [x] **E0 口径层已实现并通过 Gate 6/6**：按表头名对齐解析器、三状态标签判据、官方评分器（复算命中 70.490735）、按井 5 折导出与指纹、提交契约校验、`predict.py` 端到端冒烟（10 井 / 95,948 行 / 1.4 s CPU）
-- [ ] E1–E10 模型与训练代码
+- [ ] E1–E10 模型与训练代码（E1/P0 行级管线与 E1/P1 训练器待写）
 
 ## E0 已经查出的两个硬事实（详见 [`E0/docs/data_card.md`](E0/docs/data_card.md)）
 

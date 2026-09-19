@@ -461,12 +461,16 @@ def w(path: Path, text: str) -> None:
 
 
 def render_e(st: dict) -> str:
-    code = f"`v4/{st['e']}/src/`、`v4/{st['e']}/code/`"
-    art = f"`v4/experiments/{st['e']}/`、`v4/models/{st['e']}/`"
+    code = f"v4/{st['e']}/src/、v4/{st['e']}/code/"
+    art = f"v4/experiments/{st['e']}/、v4/models/{st['e']}/"
     L: list[str] = []
     L.append(f"# {st['e']} {st['name']}\n")
     L.append(HEADER.format(up="../", code=code, art=art))
-    L.append(f"> 阶段性质：{st['nature']}\n")
+    L.append(f"> 阶段性质：{st['nature']}")
+    L.append("")
+    L.append("> **执行状态**以 [`versions/status.json`](../versions/status.json) 为唯一事实源；"
+             "P 级计划的详细内容由 [`docs/gen_p_details.py`](../docs/gen_p_details.py) 生成。")
+    L.append("")
     L.append("## 1. 目标\n")
     L.append(st["goal"] + "\n")
     L.append("## 2. 为什么这么设计\n")

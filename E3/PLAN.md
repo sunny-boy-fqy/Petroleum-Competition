@@ -1,8 +1,10 @@
 # E3 深度序列主干
 
-> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 ``v4/E3/src/`、`v4/E3/code/``　|　产物 ``v4/experiments/E3/`、`v4/models/E3/``
+> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 `v4/E3/src/、v4/E3/code/`　|　产物 `v4/experiments/E3/、v4/models/E3/`
 
 > 阶段性质：**主线上限阶段（本计划的核心赌注）。**
+
+> **执行状态**以 [`versions/status.json`](../versions/status.json) 为唯一事实源；P 级计划的详细内容由 [`docs/gen_p_details.py`](../docs/gen_p_details.py) 生成。
 
 ## 1. 目标
 

@@ -1,8 +1,10 @@
 # E11 归档与复盘
 
-> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 ``v4/E11/src/`、`v4/E11/code/``　|　产物 ``v4/experiments/E11/`、`v4/models/E11/``
+> 所属总计划：[v4/PLAN.md](../PLAN.md)　|　本层代码 `v4/E11/src/、v4/E11/code/`　|　产物 `v4/experiments/E11/、v4/models/E11/`
 
 > 阶段性质：**收尾阶段。不出候选、不提交。**
+
+> **执行状态**以 [`versions/status.json`](../versions/status.json) 为唯一事实源；P 级计划的详细内容由 [`docs/gen_p_details.py`](../docs/gen_p_details.py) 生成。
 
 ## 1. 目标
 

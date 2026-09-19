@@ -272,6 +272,41 @@ def main() -> int:
         json.dumps(gate, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
+    # ---------------- Gate 预注册（E0 为口径层，事后补记 + supersede 说明）
+    prereg = {
+        "gate_id": "E0_gate",
+        "stage": "E0",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "supersede_note": (
+            "E0 是口径层而非模型实验，其判定阈值不是可调超参（数据计数、评分锚点、折指纹、"
+            "契约自检都是客观等式），因此本文件在实现完成后补记。若未来 E0 需要修订判定项，"
+            "必须新建 E0_gate_r2 预注册，不得原地修改本文件。"
+        ),
+        "primary_metric": "constant_baseline_anchor",
+        "primary_threshold_key": "abs_tolerance",
+        "thresholds": {"abs_tolerance": 1e-4, "min_hard_pass": 6},
+        "baseline_version": "CONST",
+        "baseline_artifact": "reports/E0_data_card.json",
+        "alpha": 0.05,
+        "multiplicity": "none",
+        "candidate_budget": 1,
+        "bootstrap_iters": 1000,
+        "bootstrap_unit": "well_row_weighted_cluster",
+        "pilot_std": None,
+        "mde_units": 80,
+        "min_detectable_effect": None,
+        "mandatory_checks": ["data_card_recomputable", "row_counts_match",
+                             "constant_baseline_anchor_hit", "folds_fingerprint_present",
+                             "contract_selftest", "no_torch_required"],
+        "decisions_locked": ["data_parsing_by_header_name", "score_missing_mode=drop",
+                             "folds=v1_well_folds.json", "placeholder_kept"],
+        "planned_task_training_h": 0.0,
+        "notes": "不训练模型；只冻结数据/评分/折/提交契约。",
+    }
+    (REPORTS_DIR / "E0_gate_prereg.json").write_text(
+        json.dumps(prereg, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
     print(json.dumps({
         "train_wells": card_train["n_wells"],
         "train_rows": card_train["n_rows"],
