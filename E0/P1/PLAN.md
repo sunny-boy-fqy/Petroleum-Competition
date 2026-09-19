@@ -4,7 +4,7 @@
 
 > **性质**：契约冻结：产出**唯一事实源**的数据卡　|　**依赖**：E0/P0（环境可用）
 >
-> **状态**：✅ 已完成　　证据：`E0/docs/data_card.md`（含 3 口井实测表与泄漏事故复盘）、`reports/E0_data_card.json`、`reports/E0_folds.json`、`versions/folds_sha256.json`
+> **状态**：✅ 已完成　　证据：`E0/docs/data_card.md`（含 3 口井实测表与泄漏事故复盘）、`reports/E0_data_card.json`、`reports/E0_folds.json`、`versions/folds_sha256.json`、`$V4_CACHE_ROOT/manifest.json`
 
 > 本目录是最小可执行单元：`code/` 放本 P 专属脚本，`docs/` 放本 P 的结论与证据。
 
@@ -43,7 +43,7 @@
 4. 核对 `folds_sha256`=f7c2c58bd035294f0e0d80a9103c366877836249fcd6db42269269c85d94b87e 且 fold_sizes 各 16 井
 5. `python3 tools/verify_reference.py` 必须输出 `RESULT: OK`
 6. 核对 `target_stats` 的 SW 有效切片（min 8.305 / median 82.805）与 `sw_scale` 字段
-7. 核对 `input_leak_regression.passed == true`（90 井 13 列输入、输入与目标不相交）
+7. 核对 `input_leak_regression.passed == true`（抽样井 13 列输入、输入与目标不相交；全量 90 井回归由 `tools/check_data_leak.py` 覆盖）
 8. 核对 `score_consistency.consistent == true`（总分恒等式）
 9. 用 `V4_DATA_ROOT` 指向云端 `/data` 再跑一次，确认路径契约生效
 
@@ -100,6 +100,7 @@
 - `reports/E0_data_card.json`
 - `reports/E0_folds.json`
 - `versions/folds_sha256.json`
+- `$V4_CACHE_ROOT/manifest.json`
 
 ```bash
 # 云端（平台训练任务）

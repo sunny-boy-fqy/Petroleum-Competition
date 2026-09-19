@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "stage": "E0",
-  "created_at": "2026-09-19T12:55:06.088956+00:00",
+  "created_at": "2026-09-19T12:56:18.259427+00:00",
   "constants": {
     "columns": [
       "DEPTH",
@@ -335,24 +335,11 @@
     "checked_wells": 18,
     "violations": [],
     "n_curves": 13,
-    "passed": true
+    "passed": true,
+    "scope": "sample (12 train + 6 test wells); 全量 90 井见 tools/check_data_leak.py"
   },
   "shard_cache": {
-    "built": true,
-    "cache_root": "/tmp/v4final",
-    "counts": {
-      "train_wells": 80,
-      "test_wells": 10,
-      "train_rows": 730268,
-      "test_rows": 95948,
-      "placeholder_rows": 487225,
-      "missing_rows": 6700,
-      "valid_rows": 236343
-    },
-    "manifest": "/tmp/v4final/manifest.json",
-    "bytes": 32394873,
-    "input_col_check_violations": [],
-    "input_col_check_passed": true
+    "built": false
   },
   "folds": {
     "path": "/home/fangqiyu/projects/Petroleum-Competition/v4/versions/reference/v1_well_folds.json",

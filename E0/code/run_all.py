@@ -239,6 +239,7 @@ def main() -> int:
                     leak_report["violations"].append(
                         {"well": rec.well_id, "reason": f"{tname} == inputs[:,{k}]"})
     leak_report["passed"] = not leak_report["violations"]
+    leak_report["scope"] = "sample (12 train + 6 test wells); 全量 90 井见 tools/check_data_leak.py"
 
 
     # ---------------- 折指纹

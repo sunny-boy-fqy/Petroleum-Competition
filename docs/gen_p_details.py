@@ -105,7 +105,8 @@ P["E0"] = [
                "核对 `folds_sha256`=f7c2c58bd035294f0e0d80a9103c366877836249fcd6db42269269c85d94b87e 且 fold_sizes 各 16 井",
                "`python3 tools/verify_reference.py` 必须输出 `RESULT: OK`",
                "核对 `target_stats` 的 SW 有效切片（min 8.305 / median 82.805）与 `sw_scale` 字段",
-               "核对 `input_leak_regression.passed == true`（90 井 13 列输入、输入与目标不相交）",
+               "核对 `input_leak_regression.passed == true`（抽样井 13 列输入、输入与目标不相交；"
+               "全量 90 井回归由 `tools/check_data_leak.py` 覆盖）",
                "核对 `score_consistency.consistent == true`（总分恒等式）",
                "用 `V4_DATA_ROOT` 指向云端 `/data` 再跑一次，确认路径契约生效"],
         params=[("缺失哨兵", "{-99999, -9999, NaN, 任何 < -1000}", "冻结，不可改", "`src/constants.py::SENTINELS/MISSING_LT`"),
@@ -132,7 +133,7 @@ P["E0"] = [
               "src/validation/folds.py", "E0/code/run_all.py", "tools/verify_reference.py"],
         evidence=["`E0/docs/data_card.md`（含 3 口井实测表与泄漏事故复盘）",
                   "`reports/E0_data_card.json`", "`reports/E0_folds.json`",
-                  "`versions/folds_sha256.json`"],
+                  "`versions/folds_sha256.json`", "`$V4_CACHE_ROOT/manifest.json`"],
         prereg_extra={"primary_metric": "data_card_recomputable",
                       "mandatory_checks": ["data_card_recomputable", "row_counts_match",
                                            "folds_fingerprint_present"]},
