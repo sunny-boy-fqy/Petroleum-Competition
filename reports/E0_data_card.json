@@ -1,0 +1,219 @@
+{
+  "schema_version": 1,
+  "stage": "E0",
+  "created_at": "2026-09-19T12:32:03.275163+00:00",
+  "constants": {
+    "columns": [
+      "DEPTH",
+      "GR",
+      "PE",
+      "SP",
+      "CAL",
+      "AC",
+      "DEN",
+      "CNL",
+      "RXO",
+      "RT",
+      "DEVI",
+      "AZIM",
+      "BIT",
+      "CASE",
+      "POR",
+      "PERM",
+      "SW"
+    ],
+    "placeholder": {
+      "POR": 0.1,
+      "PERM": 0.01,
+      "SW": 99.9
+    },
+    "sentinels": [
+      -99999.0,
+      -9999.0
+    ],
+    "missing_lt": -1000.0,
+    "score_weights": {
+      "POR": 0.3,
+      "PERM": 0.35,
+      "SW": 0.35
+    },
+    "delta_por": 0.08,
+    "delta_sw": 0.05,
+    "eps": 0.001,
+    "sw_dual_scale": {
+      "placeholder": 99.9,
+      "valid_range": [
+        0.0,
+        1.0
+      ],
+      "valid_scale": 100.0
+    }
+  },
+  "train": {
+    "split": "train",
+    "n_wells": 80,
+    "n_rows": 730268,
+    "n_missing_rows": 6700,
+    "n_placeholder_rows": 487225,
+    "n_valid_rows": 236343,
+    "frac_missing": 0.009175,
+    "frac_placeholder": 0.667187,
+    "frac_valid": 0.323639,
+    "rows_per_well": {
+      "min": 4473,
+      "median": 9547,
+      "max": 13078
+    },
+    "missing_per_target_rows": {
+      "POR": 6701,
+      "PERM": 6711,
+      "SW": 6711
+    },
+    "non_monotonic_depth_rows": 0,
+    "duplicate_depth_rows": 0,
+    "malformed_rows": 0,
+    "noncanonical_schema_wells": [
+      {
+        "well_id": "42f2870b6ea743518d4ff77acca0462a",
+        "n_header_cols": 20,
+        "missing_columns": [],
+        "extra_columns": [
+          "K",
+          "U",
+          "CGR"
+        ],
+        "n_rows": 7879
+      },
+      {
+        "well_id": "b7eb1274305446c499a7b03848fb5bd3",
+        "n_header_cols": 21,
+        "missing_columns": [],
+        "extra_columns": [
+          "TH",
+          "K",
+          "U",
+          "CGR"
+        ],
+        "n_rows": 9547
+      },
+      {
+        "well_id": "c7611b0148bb4b878c00bc6d1367a136",
+        "n_header_cols": 16,
+        "missing_columns": [
+          "CASE"
+        ],
+        "extra_columns": [],
+        "n_rows": 9654
+      }
+    ],
+    "optional_curve_well_counts": {
+      "K": 2,
+      "U": 2,
+      "CGR": 2,
+      "TH": 1
+    },
+    "state_counts": {
+      "missing": 6700,
+      "placeholder": 487225,
+      "valid": 236343
+    }
+  },
+  "test": {
+    "split": "test",
+    "n_wells": 10,
+    "n_rows": 95948,
+    "n_missing_rows": 0,
+    "n_placeholder_rows": 0,
+    "n_valid_rows": 0,
+    "frac_missing": 0.0,
+    "frac_placeholder": 0.0,
+    "frac_valid": 0.0,
+    "rows_per_well": {
+      "min": 4494,
+      "median": 9908,
+      "max": 11831
+    },
+    "missing_per_target_rows": {},
+    "non_monotonic_depth_rows": 0,
+    "duplicate_depth_rows": 0,
+    "malformed_rows": 0,
+    "noncanonical_schema_wells": [],
+    "optional_curve_well_counts": {},
+    "expected_rows": 95948,
+    "rows_match_contract": true
+  },
+  "folds": {
+    "path": "/home/fangqiyu/projects/Petroleum-Competition/v4/versions/reference/v1_well_folds.json",
+    "exists": true,
+    "sha256": "f7c2c58bd035294f0e0d80a9103c366877836249fcd6db42269269c85d94b87e",
+    "bytes": 10249,
+    "n_folds": null
+  },
+  "constant_baseline": {
+    "anchor_expected": 70.4907,
+    "tolerance": 0.0001,
+    "missing_mode_mask": {
+      "n_rows": 730268,
+      "acc_por": 0.6674015566887773,
+      "acc_perm": 0.7007032636979833,
+      "acc_sw": 0.7227587616942018,
+      "total": 69.8432175893898,
+      "missing_mode": "mask"
+    },
+    "missing_mode_drop": {
+      "n_rows": 730268,
+      "acc_por": 0.6735824049466048,
+      "acc_perm": 0.7072022950150425,
+      "acc_sw": 0.7294623580241799,
+      "total": 70.49073500477093,
+      "missing_mode": "drop"
+    },
+    "hit": true,
+    "hit_mode": "drop"
+  },
+  "env": {
+    "available": {
+      "numpy": true,
+      "pandas": true,
+      "pyarrow": true,
+      "scipy": true,
+      "sklearn": true,
+      "torch": false,
+      "onnx": false,
+      "onnxruntime": false,
+      "einops": false
+    },
+    "versions": {
+      "numpy": "1.26.4",
+      "pandas": "2.2.3",
+      "pyarrow": "17.0.0",
+      "scipy": "1.13.1",
+      "sklearn": "1.5.2",
+      "torch": null,
+      "onnx": null,
+      "onnxruntime": null,
+      "einops": null
+    }
+  },
+  "depth": {
+    "min": 869.3,
+    "max": 3074.8
+  },
+  "folds_manifest": {
+    "source_path": "/home/fangqiyu/projects/Petroleum-Competition/v4/versions/reference/v1_well_folds.json",
+    "source_sha256": "f7c2c58bd035294f0e0d80a9103c366877836249fcd6db42269269c85d94b87e",
+    "seed": 42,
+    "n_folds": 5,
+    "n_wells": 80,
+    "fold_sizes": {
+      "0": 16,
+      "1": 16,
+      "2": 16,
+      "3": 16,
+      "4": 16
+    }
+  },
+  "contract_selftest": {
+    "passed": true
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "passed": true,
+  "cases": {
+    "good_minimal": {
+      "ok": true,
+      "errors": []
+    },
+    "bad_perm_nonpositive": {
+      "ok": false
+    },
+    "bad_missing_toplevel": {
+      "ok": false
+    },
+    "bad_rowcount": {
+      "ok": false
+    },
+    "bad_depth_order": {
+      "ok": false
+    },
+    "bad_uppercase_depth": {
+      "ok": false
+    },
+    "bad_nan": {
+      "ok": false
+    }
+  }
+}

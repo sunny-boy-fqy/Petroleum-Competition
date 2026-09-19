@@ -1,0 +1,18 @@
+# v4 云端训练环境 —— 基础栈（镜像预装，不得变更）
+# CUDA 12.6 / Python 3.11 / PyTorch 2.4.0+cu124
+# 注意：本文件中的 torch 由镜像提供，禁止 pip install torch（见 PLAN.md §3.3.1 安装纪律）
+torch==2.4.0+cu124
+numpy==1.26.4
+
+# 额外轻量包（允许 pip install --no-cache-dir，装完 pip cache purge）
+pandas==2.2.3
+pyarrow==17.0.0
+scipy==1.13.1
+scikit-learn==1.5.2
+einops==0.8.0
+onnx==1.16.2
+onnxruntime==1.18.1
+
+# 明确不安装（避免磁盘与版本风险）
+# tensorboard / matplotlib / jupyter / wandb / torchvision / timm
+# flash-attn / xformers / apex / deepspeed（需现场编译 CUDA 扩展）

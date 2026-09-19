@@ -1,0 +1,30 @@
+# v4 路径契约（本机 / 平台两用）
+#
+# 平台约定（docs/platform_setup.md）：
+#   /code/workspace  = git 克隆的代码（临时，任务结束即丢）
+#   /data            = 云盘挂载点（持久）
+#
+# 下面每一项都可用同名环境变量覆盖；run_train.sh 会按此表导出。
+roots:
+  data_root:     {env: V4_DATA_ROOT,    default: "/data"}
+  run_root:      {env: V4_RUN_ROOT,     default: "$V4_DATA_ROOT/v4/runs"}
+  cache_root:    {env: V4_CACHE_ROOT,   default: "$V4_DATA_ROOT/v4/cache"}
+  reports_dir:   {env: V4_REPORTS_DIR,  default: "$V4_DATA_ROOT/v4/reports"}
+  log_dir:       {env: V4_LOG_DIR,      default: "$V4_DATA_ROOT/v4/logs"}
+  tensorboard:   {env: TENSORBOARD_LOGDIR, default: "$V4_DATA_ROOT/v4/tb"}
+  repo_root:     {env: V4_REPO_ROOT,    default: "<repo>/v4"}
+
+derived:
+  train_dir:  "$V4_DATA_ROOT/v4/data/train"
+  test_dir:   "$V4_DATA_ROOT/v4/data/test"
+  folds:      "$V4_DATA_ROOT/v4/data/folds/v1_well_folds.json"
+  raw_cache:  "$V4_CACHE_ROOT/raw"
+  feat_cache: "$V4_CACHE_ROOT/feat"
+  oof:        "$V4_RUN_ROOT/<stage>/oof"
+  ckpt:       "$V4_RUN_ROOT/<stage>"
+
+# 本地（开发机，无 GPU）默认值：不设 V4_DATA_ROOT 时回退到项目根下的 ../data
+local_fallback:
+  data_root: "<project_root>"      # -> ../data/train, ../data/test
+  reports_dir: "<repo>/reports"
+  folds: "<repo>/versions/reference/v1_well_folds.json"   # 随 git 冻结，含 sha256 校验

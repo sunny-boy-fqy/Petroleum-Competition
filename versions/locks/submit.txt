@@ -1,0 +1,13 @@
+# v4 提交推理环境（评测机应具备同一套预装镜像）
+# CUDA 12.6 / Python 3.11 / PyTorch 2.4.0
+# 推理主路径：torch.load(map_location='cpu') + 纯 numpy 后处理
+# 兜底路径：ONNX（onnxruntime）或 .npz 权重清单
+torch==2.4.0+cu124
+numpy==1.26.4
+pandas==2.2.3
+
+# 可选兜底（缺失时自动降级，见 PLAN.md §3.3.2 portability 层）
+onnx==1.16.2
+onnxruntime==1.18.1
+
+# 明确不需要：scipy / scikit-learn / pyarrow / einops（训练专属）

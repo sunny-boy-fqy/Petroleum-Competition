@@ -1,0 +1,14 @@
+{
+  "source_path": "/tmp/v4dataroot/v4/data/folds/v1_well_folds.json",
+  "source_sha256": "f7c2c58bd035294f0e0d80a9103c366877836249fcd6db42269269c85d94b87e",
+  "seed": 42,
+  "n_folds": 5,
+  "n_wells": 80,
+  "fold_sizes": {
+    "0": 16,
+    "1": 16,
+    "2": 16,
+    "3": 16,
+    "4": 16
+  }
+}

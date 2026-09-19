@@ -1,0 +1,30 @@
+{
+  "gate_id": "E0_gate",
+  "stage": "E0",
+  "created_at": "2026-09-19T12:32:09.929039+00:00",
+  "passed": true,
+  "mandatory_checks": {
+    "data_card_recomputable": true,
+    "row_counts_match": true,
+    "constant_baseline_anchor_hit": true,
+    "folds_fingerprint_present": true,
+    "contract_selftest": true,
+    "no_torch_required": true
+  },
+  "constant_baseline": {
+    "drop": 70.49073500477093,
+    "mask": 69.8432175893898,
+    "anchor": 70.4907,
+    "hit_mode": "drop"
+  },
+  "state_counts": {
+    "missing": 6700,
+    "placeholder": 487225,
+    "valid": 236343
+  },
+  "folds": {
+    "source_sha256": "f7c2c58bd035294f0e0d80a9103c366877836249fcd6db42269269c85d94b87e",
+    "n_wells": 80,
+    "n_folds": 5
+  }
+}

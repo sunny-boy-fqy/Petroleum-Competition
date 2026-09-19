@@ -1,0 +1,52 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# ---- 大数据 / 二进制：绝不进 git ----
+# 数据集分发包（~30 MB）请走平台云盘 /data，不进仓库
+dist/
+*.tar.gz
+*.tgz
+*.zip
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.npz
+*.parquet
+
+# ---- 运行时产物（云端一律写 /data，本地默认写这些目录）----
+cache/
+runs/
+artifacts/
+submission/
+experiments/
+models/
+tb/
+logs/
+
+# reports 里的**大**产物忽略，但门禁与数据卡要提交（见下方 ! 规则）
+reports/*.parquet
+reports/*.csv
+
+# 但以下文档化结果必须进仓库（可复算证据）
+!reports/E0_gate.json
+!reports/E0_data_card.json
+!reports/E0_contract_tests.json
+!versions/folds_sha256.json
+!versions/locks/*.txt
+!versions/reference/*.json
+!dist/README.md
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+.DS_Store
+
+# ---- 平台注入 ----
+/data/
+/code/
