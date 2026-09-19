@@ -73,8 +73,9 @@ DISK_BUDGET_GB = 30.0
 # 依赖分档（R3 修复 + R5-M1）。
 #   REQUIRED_PY_DEPS：训练/分析主路径硬依赖；profile=full 且缺失 -> hard。
 #   OPTIONAL_PY_DEPS：有文档化降级路径；profile=full 且缺失 -> warn + degraded_paths。
-# **版本一律不钉死**（值为 None 表示"只查是否存在，不比较版本"）：镜像预装的 torch
-# 2.7.1 自带一份 numpy，用户按需 pip 安装其余包；把某个具体小版本写成硬约束会在
+# **版本一律不钉死**（值为 None 表示"只查是否存在，不比较版本"）：torch 的 wheel 本身
+# 不依赖 numpy（2.7.1 的 Requires-Dist 无 numpy），因此 numpy 也在 required 里由 pip 补装；
+# 把某个具体小版本写成硬约束会在
 # 镜像升级时误报。精确版本一致性由 `versions/locks/cloud_frozen.txt`（云端
 # `pip freeze` 回填）保证，本模块只做**存在性**门禁。
 REQUIRED_PY_DEPS: dict[str, str | None] = {
@@ -275,7 +276,8 @@ def check_py_deps(rep: Report, allow_non_a100: bool,
       - `--allow-non-a100` 只影响 GPU/torch 检查，不影响依赖分档。
 
     **版本不钉死**（R5-M1）：`REQUIRED_PY_DEPS` 的值是 `None` = 只查存在性。
-    镜像预装的 torch 2.7.1 自带一份 numpy，其余包由用户 pip 安装；把某个具体小版本
+    torch 的 wheel 不依赖 numpy（2.7.1 Requires-Dist 无 numpy），numpy 也在 required 里
+    由 pip 补装；把某个具体小版本
     写成硬约束会在镜像升级时误报。精确版本一致性由 `versions/locks/cloud_frozen.txt`
     （云端 `pip freeze` 回填）保证。
     """

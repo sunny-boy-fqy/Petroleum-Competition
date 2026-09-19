@@ -47,7 +47,8 @@ einops
 tensorboard
 ```
 
-> **版本不钉死（R5-M1）**：镜像预装的 `torch==2.7.1+cu128` 自带一份 numpy，
+> **版本不钉死（R5-M1）**：基础镜像通常自带 numpy，但 `torch` 的 wheel **并不依赖 numpy**
+> （`torch 2.7.1` 的 `Requires-Dist` 无 numpy），所以 numpy 仍列在 required 里由 pip 补装；
 > 其余包按构建时 pip 解析出的兼容版本即可。精确版本由镜像构建后回填的
 > `versions/locks/cloud_frozen.txt`（`pip freeze`）提供 —— 把具体小版本写进镜像
 > 会在基础镜像升级时构建失败。`tensorboard` 只是为了让平台任务详情页能看到

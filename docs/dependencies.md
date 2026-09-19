@@ -33,7 +33,9 @@
 **不需要**：`pyarrow`（分片缓存是 `.npz`，没有任何代码 `import pyarrow`）、
 `onnx` / `onnxruntime`（CPU 推理主路径是 `torch.load(map_location="cpu")`）。
 
-**版本策略**：只查存在性，**不钉死小版本**（镜像预装的 torch 自带一份 numpy；
+**版本策略**：只查存在性，**不钉死小版本**（`torch` 的 wheel **不**把 numpy 列为依赖
+（`torch 2.7.1` 的 `Requires-Dist` 里没有 numpy，实测从 PyPI 元数据核对），
+基础镜像通常自带，但不作为保证 —— 所以 numpy 在 required 清单里由 `setup_deps.sh` 补装；
 其余包按 pip 解析出的兼容版本即可）。精确版本由
 `versions/locks/cloud_frozen.txt`（云端 `pip freeze` 回填）提供。
 

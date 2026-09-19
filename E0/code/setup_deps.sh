@@ -54,7 +54,7 @@ PY
 echo "free disk on $DATA_ROOT: ${FREE_GB} GiB"
 
 if python3 -c "import sys; sys.exit(0 if float('${FREE_GB}') < 8 else 1)"; then
-  echo "!! free < 8 GiB —— 按 PLAN.md §3.4.1 的安全规则：不安装任何额外包，仅使用镜像自带 torch+numpy。"
+  echo "!! free < 8 GiB —— 按 PLAN.md §3.4.1 的安全规则：不安装任何额外包，仅使用镜像自带 torch（numpy 是硬前提，缺它也必须先补上）。"
   echo "   请先清理后重跑本脚本。"
   exit 2
 fi
@@ -64,9 +64,9 @@ export PIP_NO_CACHE_DIR=1
 
 # 优先使用 lock 文件里的**精确版本**（R2-M6：范围约束与 lock 不一定一致）
 # R5-M1/M2：lock 现在只列包名（版本不钉死）；**只排除 torch**（镜像提供，禁止 pip 触碰）。
-#   numpy 不再被排除：它虽随 torch 提供，但也在 REQUIRED_PY_DEPS / requirements.txt /
-#   用户 pip 清单里。若镜像哪天不带 numpy，pip 必须能补上（存在时 pip 只会打印
-#   "Requirement already satisfied"，不会改动 torch 的 ABI）。
+#   numpy 不再被排除：torch 的 wheel 并不依赖 numpy（2.7.1 Requires-Dist 无 numpy），
+#   而它同时在 REQUIRED_PY_DEPS / requirements.txt / 用户 pip 清单里。若镜像不带 numpy，
+#   pip 必须能补上（已装时只会打印 "Requirement already satisfied"，不会改动 torch）。
 LOCK="versions/locks/cloud.txt"
 if [[ -f "$LOCK" ]]; then
   mapfile -t PKGS < <(grep -vE '^\s*#|^\s*$|^torch' "$LOCK" | sed -E 's/[[:space:]]*#.*$//' | grep -vE '^\s*$')

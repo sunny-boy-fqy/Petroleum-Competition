@@ -51,10 +51,10 @@
 
 | 层级 | 数量 | 篇幅 | 状态 |
 |---|---:|---:|---|
-| 总计划 `PLAN.md` | 1 | **870 行** | ✅ 完成 |
+| 总计划 `PLAN.md` | 1 | **871 行** | ✅ 完成 |
 | 阶段计划 `E*/PLAN.md` | 12 | 平均 63 行（合计 759） | ✅ 完成 |
 | P 级子计划 `E*/P*/PLAN.md` | 33 | **平均 158 行**（合计 5,224） | ✅ 完成（V2 深度：输入/输出契约、执行步骤、参数表、完成判据、禁止事项、风险对策、停止规则、inner-OOF 选择协议、复算命令、Gate 预注册 JSON） |
-| 计划文件合计 | 46 | **6,853 行** | ✅ |
+| 计划文件合计 | 46 | **6,854 行** | ✅ |
 
 > **行数由 `tools/plan_stats.py` 实测、`tools/sync_plan_stats.py` 同步、`plan_stats.py --check` 校验**
 > （审查 R2-H6/R3-C2：此前手写数字两次过期，且旧校验只查总量、漏检阶段/P 分项）。
@@ -203,7 +203,7 @@ GPU       : 1× A100 80GB（sm_80），bf16 可用
 
 ```bash
 export PIP_NO_CACHE_DIR=1
-# 基础栈由镜像提供（python 3.11 / torch 2.7.1+cu128 / CUDA 12.8 / numpy），此处**不动**；
+# 基础栈由镜像提供（python 3.11 / torch 2.7.1+cu128 / CUDA 12.8），此处**不动**；
 # required 清单（唯一事实源 = check_env.py::REQUIRED_PY_DEPS，与 requirements.txt 同源）
 python -m pip install --no-cache-dir numpy pandas scipy scikit-learn einops
 # 可选：平台任务详情页的"迭代曲线"；缺失时自动降级为 JSONL 标量，不阻塞训练
@@ -224,8 +224,9 @@ python v4/E0/code/check_env.py --json v4/reports/E0_env.json
   推荐 `tensorboard`（平台"迭代曲线"观测，缺失时自动降级为 JSONL）；
   **不需要** `pyarrow`（分片是 `.npz`）、`onnx`/`onnxruntime`（CPU 推理主路径是
   `torch.load(map_location="cpu")`）。
-- **版本不钉死**：required 依赖只查**存在性**；镜像预装的 torch 自带一份 numpy，
-  其余包按 pip 解析出的兼容版本即可。精确版本以 `versions/locks/cloud_frozen.txt`
+- **版本不钉死**：required 依赖只查**存在性**。`torch` 的 wheel **不依赖 numpy**
+  （`torch 2.7.1` 的 `Requires-Dist` 里没有 numpy —— 已从 PyPI 元数据核对），基础镜像
+  通常自带但不保证，所以 numpy 也在清单里、由 pip 补装；其余包按 pip 解析出的兼容版本即可。精确版本以 `versions/locks/cloud_frozen.txt`
   （云端 `pip freeze` 回填）为准 —— 把具体小版本写成硬约束会在镜像升级时误报。
 - 只装上述清单；**不装** `matplotlib`/`jupyter`/`wandb`/`torchvision`/`timm`；
 - **不装**任何需要现场编译 CUDA 扩展的包（`flash-attn`/`xformers`/`apex`/`deepspeed`）——注意力统一走 `F.scaled_dot_product_attention`（PyTorch 2.7 原生，自动选择 Flash / Memory-Efficient / Math 后端）；
@@ -291,7 +292,7 @@ python v4/src/data/disk_guard.py --min-free-gb 8 --report /home,/tmp \
 | 缓存重定向（`TORCH_HOME`/`XDG_CACHE_HOME` → 项目内） | **≤ 0.5 GB** | 便于统一清理，避免写到不可控的系统路径 |
 | **项目合计** | **≈ 9.4 GB** | **其余留给镜像本体（含 torch ≈5–7 GB）与安全余量** |
 
-**安全规则**：`assert_disk_headroom(8.0)` 是硬门禁。若实测**可用空间 < 12 GB**（即镜像已占 > 18 GB），则**立即收缩**：特征缓存上限降到 0.5 GB（改为训练时现算）、集成成员上限从 5 降到 2、模型宽度上限减半、checkpoint 上限从 4 GB 降到 2 GB，并把该决定写入 `reports/E0_disk_budget.json` 的 `contingency_applied`。若实测可用 < 8 GB，**先不装任何额外包**，只用镜像自带的 torch+numpy 跑 E0/E1，再决定是否装 pandas。
+**安全规则**：`assert_disk_headroom(8.0)` 是硬门禁。若实测**可用空间 < 12 GB**（即镜像已占 > 18 GB），则**立即收缩**：特征缓存上限降到 0.5 GB（改为训练时现算）、集成成员上限从 5 降到 2、模型宽度上限减半、checkpoint 上限从 4 GB 降到 2 GB，并把该决定写入 `reports/E0_disk_budget.json` 的 `contingency_applied`。若实测可用 < 8 GB，**先不装任何额外包**，只用镜像自带的 torch（+ 基础镜像若已带的 numpy；`numpy` 是 E0/E1 的硬前提，缺它必须补装）跑 E0/E1，再决定是否装 pandas。
 
 #### 3.4.2 省盘策略
 

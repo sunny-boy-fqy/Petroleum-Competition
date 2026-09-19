@@ -787,6 +787,21 @@ class TestDependencyFactsAreSingleSourced(unittest.TestCase):
                 name = pkg.split("==")[0].strip()
                 self.assertIn(name, self.ALLOWED, f"Dockerfile 出现未列入清单的包：{pkg!r}")
 
+    def test_no_claim_that_torch_provides_numpy(self):
+        """torch 2.7.1 的 PyPI `Requires-Dist` 里**没有** numpy，不得再写"torch 自带 numpy"。
+
+        这条不是文案洁癖：一旦有人相信"numpy 必然存在"，就会把它从 required 清单里删掉，
+        而 numpy 是本项目口径层的唯一硬依赖（`portability.HAS_NUMPY`）。
+        """
+        for rel in ("requirements.txt", "PLAN.md", "versions/locks/cloud.txt",
+                    "docs/dependencies.md", "docs/image_requirements.md",
+                    "E0/code/check_env.py", "E0/code/setup_deps.sh"):
+            src = _read(rel)
+            for bad in ("自带一份 numpy", "随 torch 提供", "torch 自带 numpy", "torch+numpy"):
+                self.assertNotIn(bad, src, f"{rel} 仍声称 torch 提供 numpy：{bad}")
+        # 反向确认：numpy 必须在 required 清单里
+        self.assertIn("numpy", _load_check_env().REQUIRED_PY_DEPS)
+
     def test_requirements_lock_and_setup_deps_agree(self):
         chk = _load_check_env()
         # 1) requirements.txt 有效行
