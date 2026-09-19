@@ -38,7 +38,7 @@
 3. 注意力用 PyTorch 2.4 原生 `F.scaled_dot_product_attention`（自动选择 Flash/Memory-Efficient/Math 后端）
 4. 相对位置编码 + Pre-LN + 残差 + FFN(GELU)，dropout 0.1
 5. 输出上采样回逐行长度（patched 输出按 stride overlap-add 还原）
-6. fold0+1 筛查，胜者跑全 5 折
+6. inner-OOF 筛查（fold0 仅资源预检），胜者跑全 5 折
 
 ## 6. 参数与配置
 
@@ -57,7 +57,7 @@
 - patch 还原后输出长度与输入严格一致（overlap-add 权重归一）
 - 与 E3 在同折同数据下可比（同 chunk、同特征、同头）
 - 注意力只使用 2.4 已有签名；无编译扩展依赖
-- fold0+1 结果与资源记录完整
+- inner-OOF 筛查结果与资源记录完整（fold0 预检标 exploratory=true）
 
 ## 8. 禁止事项
 
@@ -75,7 +75,7 @@
 
 ## 10. 停止规则
 
-- fold0+1 耗时超过 E3 单折的 3 倍且分数无优势 → 判 NO-GO，保留 CNN 主干
+- 资源预检耗时超过 E3 单折的 3 倍且无优势 → 判 NO-GO，保留 CNN 主干
 
 ## 11. 代码归属
 

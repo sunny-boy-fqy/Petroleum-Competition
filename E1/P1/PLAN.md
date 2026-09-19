@@ -41,7 +41,7 @@
 2. 实现 `train_row.py`：`--resume`、`--time-budget-h`、每 epoch checkpoint、每 epoch 调 `assert_disk_headroom(8.0)`、写 `training_time_log.json`
 3. 跑 fold0 小规模冒烟（`--max-wells 8 --epochs 2 --smoke`）确认链路与显存/内存
 4. 全 5 折训练：bf16、AdamW、余弦退火、梯度裁剪 1.0；λ₁ 从 1.0 退火到 0.1
-5. 每 epoch 在**验证折**上用真实 `score.py` 算分（早停依据，不用 loss 值）
+5. 每 epoch 在**该 outer 折的 inner-OOF** 上用真实 `score.py` 算分（早停依据，不用 loss 值；outer 验证折只在最后推理一次）
 6. 汇总 OOF → `score_arrays(..., missing_mode="drop")` → 逐目标 Acc 与 Total
 7. 逐折 delta、逐井非退化比例、按井行数加权 paired cluster bootstrap（1000 次）
 8. 评估占位行逐目标 Acc/precision/recall，写入 Gate 的 `atomic_precision_reported`
@@ -51,10 +51,10 @@
 
 | 参数 | 默认值 | 搜索范围/说明 | 选择位置 |
 |---|---|---|---|
-| `hidden` | 256 | 128/256/512 | 在 fold0+1 上选，选后冻结 |
-| `layers` | 2 | 1/2/3 | 同上 |
-| `dropout` | 0.1 | 0.0/0.1/0.2 | 同上 |
-| `lr` | 2e-3 | 5e-4/1e-3/2e-3/5e-3 | AdamW，余弦退火到 1e-4 |
+| `hidden` | 256 | 128/256/512 | 在该 outer 折的 inner-OOF 上选，选后冻结（fold0 仅作资源预检） |
+| `layers` | 2 | 1/2/3 | 同 hidden，inner-OOF 选择 |
+| `dropout` | 0.1 | 0.0/0.1/0.2 | inner-OOF 选择 |
+| `lr` | 2e-3 | 5e-4/1e-3/2e-3/5e-3 | inner-OOF 选择；AdamW，余弦退火到 1e-4 |
 | `weight_decay` | 1e-4 | 0/1e-5/1e-4/1e-3 | 同上 |
 | `batch_size` | 4096 | 2048/4096/8192 | 内存允许下尽量大（显存不是约束） |
 | `epochs` | 40 | 20–80 | 结合早停（patience 5） |
