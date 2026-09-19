@@ -467,7 +467,7 @@ def main() -> int:
         ),
         "primary_metric": "constant_baseline_anchor",
         "primary_threshold_key": "abs_tolerance",
-        "thresholds": {"abs_tolerance": 1e-4, "min_hard_pass": 6},
+        "thresholds": {"abs_tolerance": 1e-4, "max_hard_failures": 0},
         "baseline_version": "CONST",
         "baseline_artifact": "reports/E0_data_card.json",
         "alpha": 0.05,

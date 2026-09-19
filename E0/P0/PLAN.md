@@ -51,7 +51,7 @@
 
 ## 7. 完成判据
 
-- `check_env.py` 的 **hard 检查 6/6 通过**：python 3.11 / torch 2.4.0 / cuda 可用 / A100 sm_80 / bf16 / disk ≥ 8 GiB
+- `check_env.py` 输出 **hard failures: 0**（判据是「所有 hard 级检查全过」，不是固定项数；本机 `--allow-non-a100` 模式下为 15 项检查 / 5 项 hard）
 - `E0_disk_budget.json` 含 `total_gb/used_gb/free_gb/level`，且 `level=="ok"`
 - `E0_env.json` 含全部 9 个可选依赖的 `available/versions`
 - `cloud_frozen.txt` 已生成并与 `versions/locks/cloud.txt` 一致或已更新
@@ -126,7 +126,7 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
   "thresholds": {
     "min_delta": 0.0,
     "min_effect_floor": 0.0,
-    "min_hard_pass": 6
+    "max_hard_failures": 0
   },
   "alpha": 0.05,
   "multiplicity": "none",

@@ -2,7 +2,7 @@
   "gate_id": "E0_local_contract_gate",
   "stage": "E0",
   "scope": "local_contract_only",
-  "created_at": "2026-09-19T12:56:23.786988+00:00",
+  "created_at": "2026-09-19T12:57:01.650223+00:00",
   "passed": true,
   "mandatory_checks": {
     "data_card_recomputable": true,

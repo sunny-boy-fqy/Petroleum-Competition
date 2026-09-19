@@ -479,7 +479,7 @@ L = L_align(主) + λ₁ · L_aux(稠密梯度) + λ₂ · L_ph(占位 BCE) + λ
 
 执行顺序：**E0 → E1 → E2 ⇒ E3 → E4 → E5 → E6 →（E7 公共件）→ E8 → E9 → E10 → E11**
 
-- [E0 数据、评测与提交契约](E0/PLAN.md) — 数据卡、哨兵、标签状态、评分器复算（70.4907）、按井折、提交契约与 CPU-only 单测。**不训练任何模型。**　**状态：已完成（E0 Gate 6/6 PASS，`reports/E0_gate.json`）。**
+- [E0 数据、评测与提交契约](E0/PLAN.md) — 数据卡、哨兵、标签状态、评分器复算（70.4907）、按井折、提交契约与 CPU-only 单测。**不训练任何模型。**　**状态：本地契约 Gate 10/10 PASS（`reports/E0_local_contract_gate.json`）；云端 Gate `blocked_pending_cloud_run`（`reports/E0_cloud_gate.json`）。**
 - [E1 纯 DL 行级基线](E1/PLAN.md) — **当前阶段（P0/P1 代码待写）**。32 维行级输入 + MLP（无序列上下文），对接对齐损失，建立纯 DL 分母与容量标定；硬 Gate ≥ 78.0。
 - [E2 特征工程与数据管线](E2/PLAN.md) — `F_phys`/`F_win`/`F_well` 三组特征、增强策略、按井分片缓存与 16 GiB 内存纪律。
 - [E3 深度序列主干](E3/PLAN.md) — 1D U-Net 与 TCN 头对头，含**感受野消融**；硬 Gate ≥ 81.0 且序列主干必须优于同头行级模型。

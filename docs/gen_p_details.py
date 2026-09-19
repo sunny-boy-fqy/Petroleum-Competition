@@ -61,8 +61,8 @@ P["E0"] = [
         params=[("`--min-free-gb`", "8.0", "8–12", "磁盘硬门禁；实测后若过紧则上调"),
                 ("`--allow-non-a100`", "false", "—", "仅本机开发时开启（把 GPU 检查降级为 warn）"),
                 ("`NUM_WORKERS`", "4", "2–6", "16 GiB 内存下的安全值，见总计划 §3.1-3")],
-        done=["`check_env.py` 的 **hard 检查 6/6 通过**：python 3.11 / torch 2.4.0 / cuda 可用 / "
-              "A100 sm_80 / bf16 / disk ≥ 8 GiB",
+        done=["`check_env.py` 输出 **hard failures: 0**（判据是「所有 hard 级检查全过」，"
+              "不是固定项数；本机 `--allow-non-a100` 模式下为 15 项检查 / 5 项 hard）",
               "`E0_disk_budget.json` 含 `total_gb/used_gb/free_gb/level`，且 `level==\"ok\"`",
               "`E0_env.json` 含全部 9 个可选依赖的 `available/versions`",
               "`cloud_frozen.txt` 已生成并与 `versions/locks/cloud.txt` 一致或已更新"],
@@ -77,7 +77,8 @@ P["E0"] = [
               "可用磁盘 < 8 GB 且无法清理时，暂停项目并先与 owner 确认配额"],
         code=["E0/code/check_env.py", "E0/code/setup_deps.sh", "src/data/disk_guard.py", "run_train.sh"],
         evidence=["`reports/E0_env.json`（云端实测快照）", "`reports/E0_disk_budget.json`"],
-        prereg_extra={"primary_metric": "env_hard_checks_passed", "thresholds": {"min_hard_pass": 6},
+        prereg_extra={"primary_metric": "env_hard_checks_passed",
+                      "thresholds": {"max_hard_failures": 0},
                       "mandatory_checks": ["env_hard_checks_passed", "disk_budget_ok"]},
     ),
     dict(
