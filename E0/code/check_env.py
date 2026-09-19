@@ -372,11 +372,18 @@ def check_repo(rep: Report, root: Path, profile: str = "full") -> dict:
         folds = root.joinpath(*FOLDS_FALLBACK_RELPATH)
     n_train = len(list(train_dir.glob("*.txt"))) if train_dir.is_dir() else 0
     n_test = len(list(test_dir.glob("*.txt"))) if test_dir.is_dir() else 0
+    # R6-M2：井数契约值必须来自 src/constants.py（唯一事实源，只依赖标准库），
+    # 不得在本文件里硬编码 80 / 10 —— 否则常量一改、Gate 口径就会漂移。
+    try:
+        from src import constants as _C  # noqa: PLC0415
+    except Exception as exc:  # pragma: no cover - 仓库不完整时明确报错，不静默放行
+        raise SystemExit(f"check_env: 无法导入 src.constants（仓库不完整？）：{exc!r}")
+    exp_train, exp_test = _C.EXPECTED_N_TRAIN_WELLS, _C.EXPECTED_N_TEST_WELLS
     info.update({"n_train_files": n_train, "n_test_files": n_test, "folds_exists": folds.is_file()})
-    rep.add("data_train_80", n_train == 80, level,
-            f"{train_dir} has {n_train} wells (expect 80)")
-    rep.add("data_test_10", n_test == 10, level,
-            f"{test_dir} has {n_test} wells (expect 10)")
+    rep.add("data_train_80", n_train == exp_train, level,
+            f"{train_dir} has {n_train} wells (expect {exp_train})")
+    rep.add("data_test_10", n_test == exp_test, level,
+            f"{test_dir} has {n_test} wells (expect {exp_test})")
     rep.add("well_folds_present", folds.is_file(), level,
             f"{folds} exists={folds.is_file()}")
     return info

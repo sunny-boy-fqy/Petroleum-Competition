@@ -19,13 +19,16 @@
 # manifest（可选但推荐）同法搜索：`--manifest` / `$V4_DATA_MANIFEST`，然后与
 # tarball 同目录、再上述 dist 位置。manifest **存在**时额外校验 tarball sha256
 # 与逐项计数；**不存在**时仍无条件校验 80/10 井与 730,268/95,948 行（R5-H2）。
+# R6-L1：显式给出的 `--manifest` 路径不存在 -> exit 4；manifest 缺 `tarball.sha256`
+#         -> exit 3（不得打印 "tarball sha256 OK" 假装校验通过）。
 #
 # 用法（在本机或云端均可执行）：
 #   bash v4/tools/bootstrap_data.sh                      # 自动搜索（含 $DATA_ROOT）
 #   bash v4/tools/bootstrap_data.sh --tarball /data/v4_data.tar.gz
 #   V4_DATA_TARBALL=/data/v4_data.tar.gz bash v4/tools/bootstrap_data.sh
 #   bash v4/tools/bootstrap_data.sh --from-dir /path/to/raw   # 直接从原始目录复制
-#   bash v4/tools/bootstrap_data.sh --verify-only            # 只校验，不写入
+#   bash v4/tools/bootstrap_data.sh --verify-only            # 只读校验：不建目录、不写文件
+#   bash v4/tools/bootstrap_data.sh --tarball X --dest Y      # 解压后搬运到 Y（R6-L2）
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,16 +37,19 @@ DATA_ROOT="${V4_DATA_ROOT:-/data}"
 DEST="$DATA_ROOT/v4/data"
 FROM_DIR=""
 VERIFY_ONLY=0
+DEST_EXPLICIT=0
 # 显式指定的路径优先（命令行 > 环境变量 > 约定位置）
 TARBALL="${V4_DATA_TARBALL:-}"
 MANIFEST="${V4_DATA_MANIFEST:-}"
+MANIFEST_EXPLICIT=0
+if [[ -n "$MANIFEST" ]]; then MANIFEST_EXPLICIT=1; fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --from-dir) FROM_DIR="$2"; shift 2 ;;
     --tarball) TARBALL="$2"; shift 2 ;;
-    --manifest) MANIFEST="$2"; shift 2 ;;
-    --dest) DEST="$2"; shift 2 ;;
+    --manifest) MANIFEST="$2"; MANIFEST_EXPLICIT=1; shift 2 ;;
+    --dest) DEST="$2"; DEST_EXPLICIT=1; shift 2 ;;
     --verify-only) VERIFY_ONLY=1; shift ;;
     *) echo "unknown arg: $1"; exit 2 ;;
   esac
@@ -53,6 +59,15 @@ echo "== v4 bootstrap_data =="
 echo "repo       : $V4"
 echo "data root  : $DATA_ROOT"
 echo "dest       : $DEST"
+
+# ---------------- 0) 显式路径必须先存在（R6-L1）
+# 用户显式写下 --manifest 却把路径写错，语义上**不等于**"没有 manifest"，
+# 静默降级会让一次真实的拼写错误伪装成 RESULT: OK。
+if [[ "$MANIFEST_EXPLICIT" == "1" && ! -f "$MANIFEST" ]]; then
+  echo "!! --manifest / \$V4_DATA_MANIFEST 指向的文件不存在：$MANIFEST"
+  echo "   自动搜索到的 manifest 才允许缺席；显式路径写错必须显式报错。"
+  exit 4
+fi
 
 # ---------------- 1) 定位 tarball（R5-B1）
 TARBALL_DIRS=("$V4/dist" "$DATA_ROOT" "$DATA_ROOT/dist")
@@ -79,8 +94,8 @@ if [[ "$VERIFY_ONLY" != "1" && -z "$FROM_DIR" ]]; then
   echo "tarball    : $TARBALL"
 fi
 
-# ---------------- 2) 定位 manifest（可选；存在即校验 sha 与精确计数）
-if [[ -z "$MANIFEST" ]]; then
+# ---------------- 2) 定位 manifest（自动搜索；未找到 -> 无 manifest 分支）
+if [[ "$MANIFEST_EXPLICIT" != "1" ]]; then
   MANIFEST_DIRS=()
   if [[ -n "$TARBALL" ]]; then MANIFEST_DIRS+=("$(dirname "$TARBALL")"); fi
   MANIFEST_DIRS+=("${TARBALL_DIRS[@]}")
@@ -91,9 +106,8 @@ if [[ -z "$MANIFEST" ]]; then
   done
 fi
 
-mkdir -p "$DEST"
-
 if [[ "$VERIFY_ONLY" == "1" ]]; then
+  # R6-L2：`--verify-only` 只读，**不创建任何目录、不复制任何文件**
   :
 elif [[ -n "$FROM_DIR" ]]; then
   echo "copy from  : $FROM_DIR"
@@ -112,21 +126,46 @@ with open(sys.argv[1],'rb') as f:
 print(h.hexdigest())
 PY
 )
-    if [[ -n "$WANT" && "$WANT" != "$GOT" ]]; then
+    if [[ -z "$WANT" ]]; then
+      # R6-L1：manifest 存在但缺 tarball.sha256 —— 不得假装"校验通过"
+      echo "!! manifest 缺少 tarball.sha256 字段：$MANIFEST"
+      echo "   无法校验分发包完整性（请重新生成 manifest：python3 v4/tools/pack_dataset.py）"
+      exit 3
+    fi
+    if [[ "$WANT" != "$GOT" ]]; then
       echo "!! tarball sha256 mismatch"; echo "   want $WANT"; echo "   got  $GOT"; exit 3
     fi
     echo "tarball sha256 OK"
   else
-    echo "manifest   : (未找到，跳过 sha256 校验；行数/井数仍会硬校验)"
+    echo "manifest   : (自动搜索未找到，跳过 sha256 校验；行数/井数仍会硬校验)"
   fi
-  # 解压到 DATA_ROOT：tar 内路径为 v4/data/train/... 与 v4/data/test/...
-  # （因此目标必须是 $DATA_ROOT，而不是 $DEST —— $DEST = $DATA_ROOT/v4/data）
-  tar xzf "$TARBALL" -C "$DATA_ROOT"
+  # tar 内路径为 v4/data/train/... 与 v4/data/test/...（R6-L3），因此
+  # 默认解压目标是 $DATA_ROOT（$DEST = $DATA_ROOT/v4/data）。
+  if [[ "$DEST_EXPLICIT" == "1" && "$DEST" != "$DATA_ROOT/v4/data" ]]; then
+    # R6-L2：显式 --dest 时先解到临时目录再搬运，使 `--dest` 真正生效
+    # （此前 tar 永远写 $DATA_ROOT，校验却读 $DEST，语义不自洽）。
+    echo "dest mode  : --dest 与默认不同 -> 解到临时目录后搬运到 $DEST"
+    TMPX="$(mktemp -d "${TMPDIR:-/tmp}/v4_bootstrap_XXXXXX")"
+    trap 'rm -rf "$TMPX"' EXIT
+    tar xzf "$TARBALL" -C "$TMPX"
+    for split in train test; do
+      mkdir -p "$DEST/$split"
+      if [[ -d "$TMPX/v4/data/$split" ]]; then
+        cp -f "$TMPX/v4/data/$split"/*.txt "$DEST/$split/" 2>/dev/null || true
+      fi
+    done
+    rm -rf "$TMPX"; trap - EXIT
+  else
+    mkdir -p "$DATA_ROOT"          # tar -C 需要目标存在（裸磁盘/首次部署时）
+    tar xzf "$TARBALL" -C "$DATA_ROOT"
+  fi
 fi
 
-# 折文件也放进 /data，使运行时完全不依赖 repo 外的路径
-mkdir -p "$DEST/folds"
-cp -f "$V4/versions/reference/v1_well_folds.json" "$DEST/folds/" 2>/dev/null || true
+# 折文件也放进 dest，使运行时完全不依赖 repo 外的路径（--verify-only 不写）
+if [[ "$VERIFY_ONLY" != "1" ]]; then
+  mkdir -p "$DEST/folds"
+  cp -f "$V4/versions/reference/v1_well_folds.json" "$DEST/folds/" 2>/dev/null || true
+fi
 
 # ---------------- 3) 校验（R5-H2：井数 + 行数**无条件**硬校验；manifest 存在时再校 sha 计数）
 python3 - "$DEST" "$MANIFEST" "$V4" <<'PY'
@@ -189,3 +228,7 @@ echo
 echo "数据就绪。训练任务中请设置："
 echo "  export V4_DATA_ROOT=$DATA_ROOT"
 echo "  python3 /code/workspace/v4/E0/code/check_env.py --json $DATA_ROOT/v4/reports/E0_env.json"
+if [[ "$DEST_EXPLICIT" == "1" && "$DEST" != "$DATA_ROOT/v4/data" ]]; then
+  echo "注意：本次使用了自定义 --dest=$DEST；check_env/训练脚本默认读"
+  echo "      \$V4_DATA_ROOT/v4/data，所以自定义 dest 只适合手工验证，正式部署请用默认 dest。"
+fi

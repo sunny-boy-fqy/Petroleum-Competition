@@ -53,8 +53,8 @@
 |---|---:|---:|---|
 | 总计划 `PLAN.md` | 1 | **870 行** | ✅ 完成 |
 | 阶段计划 `E*/PLAN.md` | 12 | 平均 63 行（合计 759） | ✅ 完成 |
-| P 级子计划 `E*/P*/PLAN.md` | 33 | **平均 158 行**（合计 5,221） | ✅ 完成（V2 深度：输入/输出契约、执行步骤、参数表、完成判据、禁止事项、风险对策、停止规则、inner-OOF 选择协议、复算命令、Gate 预注册 JSON） |
-| 计划文件合计 | 46 | **6,850 行** | ✅ |
+| P 级子计划 `E*/P*/PLAN.md` | 33 | **平均 158 行**（合计 5,224） | ✅ 完成（V2 深度：输入/输出契约、执行步骤、参数表、完成判据、禁止事项、风险对策、停止规则、inner-OOF 选择协议、复算命令、Gate 预注册 JSON） |
+| 计划文件合计 | 46 | **6,853 行** | ✅ |
 
 > **行数由 `tools/plan_stats.py` 实测、`tools/sync_plan_stats.py` 同步、`plan_stats.py --check` 校验**
 > （审查 R2-H6/R3-C2：此前手写数字两次过期，且旧校验只查总量、漏检阶段/P 分项）。
@@ -259,7 +259,7 @@ python v4/E0/code/check_env.py --json v4/reports/E0_env.json
 | 分片落盘 | `np.savez_compressed`（必须） | — | 无 |
 | 列式 OOF 存储 | `pyarrow.parquet` | `np.savez_compressed` + 列名 JSON | 体积略大，无功能损失 |
 | 分位数/标准化 | `numpy.percentile`（自写，训练折内 fit） | — | 无 |
-| 模型导出（跨机兜底） | `torch.onnx.export`（torch 2.7 内置） | 权重存 `.npz`（键名/形状清单） | 评测镜像预装 torch 2.7.1，因此 `torch.load(map_location='cpu')` 是主路径；ONNX 与 `.npz` 只是"torch 出现异常"时的兜底，不实现纯 numpy 前向（ROI 太低） |
+| 模型导出（跨机兜底） | `torch.onnx.export`（**best-effort，需用户额外装 `onnx`**；torch 2.7 dynamo 路径还需 `onnxscript`） | **主兜底 = `.pt` + `.npz` 权重清单**（`torch.load(map_location='cpu')`） | 评测镜像预装 torch 2.7.1，`torch.load(map_location='cpu')` 是主路径；未装 onnx 时 `torch.onnx.export` 会抛 `OnnxExporterError: Module onnx is not installed!`（实测），因此 ONNX **只做 best-effort、不写进任何 Gate**；不实现纯 numpy 前向（ROI 太低） |
 | 进度/日志 | 标准库 `print` + CSV/JSONL | `tensorboard`（可选，装了就写标量，没装只写 JSONL） | 不依赖 tqdm；观测量**不参与**任何阈值/选型决策 |
 | 绘图 | **不做**（不需要） | — | 不依赖 matplotlib |
 
@@ -627,7 +627,7 @@ L = L_align(主) + λ₁·L_aux(稠密梯度) + λ_joint·L_joint + λ_atom·L_a
 - [E7 评分对齐损失与解码](E7/PLAN.md) — 归一化 `L_aux`、**容差边界聚焦**、PERM 截断一致性、逐目标期望分解码与后处理敏感性（全部同结构对照）。
 - [E8 多任务、井级分支与集成](E8/PLAN.md) — MMoE 任务平衡、井级分支（消融）、**EMA/SWA**、**同折 top-k 快照集成**（权重只在 inner-OOF 选 + 同源性报告）、transductive 适配（只作消融）。
 - [E9 诚实验证与提交护栏](E9/PLAN.md) — 80 井 OOF 汇总、16 井体检、泄漏终审、A 榜短名单、`choose_submission.py` 护栏。
-- [E10 全量重训、打包与提交](E10/PLAN.md) — 全量重训或折集成、ONNX/CPU 推理导出、干净目录一次性复现、提交执行。
+- [E10 全量重训、打包与提交](E10/PLAN.md) — 全量重训或折集成、CPU 推理导出（`.pt`+`.npz` 主路径，ONNX best-effort）、干净目录一次性复现、提交执行。
 - [E11 归档与复盘](E11/PLAN.md) — 资产归档、三口径一致性复盘、下一代方向储备。
 
 ---
@@ -757,7 +757,7 @@ submission_code_v4/
 
 硬要求：
 1. `predict.py` **只读** `--data_dir` 下的文件，不访问网络、不训练、不写除 `--output` 外的路径（除 `--temp` 显式指定）。
-2. 权重是 **CPU 可加载** 的（`map_location='cpu'`），且**优先导出 ONNX** 作为兜底路径（防评测机 torch 版本不匹配）。
+2. 权重是 **CPU 可加载** 的（`map_location='cpu'`），**`.pt` + `.npz` 键名清单为主路径**；ONNX 只是 **best-effort 可选兜底** —— 需要用户额外安装 `onnx`（torch 2.7 的 dynamo 导出还需 `onnxscript`），未安装时 `torch.onnx.export` 会抛 `OnnxExporterError: Module onnx is not installed!`（实测），此时**直接跳过并记录 degraded 原因，不阻塞、不影响任何 Gate**（与 §3.3「不安装 onnx」的政策一致）。
 3. 单次运行内存峰值 < 8 GiB（16 GiB 机器的安全余量），时间 < 30 min，且**确定性**（固定 seed + `torch.use_deterministic_algorithms` 或明确的浮点容差声明）。
 4. `requirements.txt` **不声明 torch**（镜像预装、禁止 pip 替换），只声明额外轻量包（`numpy/pandas/scipy/scikit-learn/einops`，版本不钉死；可选 `tensorboard`）；`versions/locks/cloud.txt`（训练侧）与 `submit.txt`（推理侧）分离，后者不含任何训练专属依赖；精确版本由 `cloud_frozen.txt`（云端 `pip freeze` 回填）提供。
 
@@ -813,7 +813,7 @@ v4 可能整体失败（纯 DL 在 80 井上不收敛优于树模型）。因此
 | **训练不稳定（NaN）** | loss 变 NaN | `masked_mean` 先 `nan_to_num` 再乘掩码；梯度裁剪 1.0；bf16 而非 fp16；`softplus` 的 `β` 不超过 30 |
 | **两阶段训练第二段遗忘原子头** | atom Acc 下降 | 冻结原子头或用极低 `q_head_lr_mult`（0.05–0.1）；inner-OOF 持续监控 atom Acc；必要时联合微调 |
 | **边界平滑跨越原子边界** | 原子行被平滑出容差 | 平滑只作用于**连续分支**，且必须在原子硬切换**之前**、按 atom mask 断开 |
-| **评测机无 GPU / torch 版本不符** | 干净目录报错 | ONNX 导出兜底路径 + `map_location='cpu'` + 纯 numpy 后处理 |
+| **评测机无 GPU / torch 版本不符** | 干净目录报错 | 主路径 `map_location='cpu'` + 纯 numpy 后处理 + `.npz` 权重清单；ONNX 为可选 best-effort（需额外装 `onnx`），不作为 Gate |
 | **复现失败** | 两次运行 sha256 不一致 | 固定 seed + 确定性算子；不确定时在 README 声明容差并给出逐点最大差 |
 | **本地 CV 虚高** | A 榜远低于本地 | 折维度恒定为井；一切 fit 只用训练折；特征来源表审计 |
 | **A 榜过拟合** | A 高本地低、换候选就掉 | A 榜只做仲裁；每日额度预算制 |

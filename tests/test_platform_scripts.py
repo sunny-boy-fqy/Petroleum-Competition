@@ -449,6 +449,60 @@ class TestBootstrapDataTarballResolution(unittest.TestCase):
                      "n_tr == C.EXPECTED_N_TRAIN_WELLS", "n_te == C.EXPECTED_N_TEST_WELLS"):
             self.assertIn(expr, m.group(1), "硬校验必须是**无条件**的")
 
+    def test_explicit_missing_manifest_exits_nonzero(self):
+        """R6-L1：显式写下的 manifest 路径写错，不等于"没有 manifest"。"""
+        tb = self._tiny_tarball(self.tmp / "cloud3" / "v4_data.tar.gz")
+        r = self._run("--tarball", str(tb), "--manifest", str(self.tmp / "nope.json"),
+                      data_root=self.tmp / "data")
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 4, out)
+        self.assertIn("指向的文件不存在", out)
+
+    def test_explicit_missing_manifest_env_exits_nonzero(self):
+        tb = self._tiny_tarball(self.tmp / "cloud4" / "v4_data.tar.gz")
+        r = self._run("--tarball", str(tb), data_root=self.tmp / "data",
+                      extra_env={"V4_DATA_MANIFEST": str(self.tmp / "nope2.json")})
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 4, out)
+        self.assertIn("指向的文件不存在", out)
+
+    def test_manifest_without_sha_exits_3(self):
+        """R6-L1：manifest 缺 `tarball.sha256` 不得打印 "tarball sha256 OK"。"""
+        data_root = self.tmp / "data"
+        tb = self._tiny_tarball(data_root / "v4_data.tar.gz")
+        man = data_root / "v4_data_manifest.json"
+        man.write_text(json.dumps({"counts": {"n_train_wells": 1, "n_test_wells": 0,
+                                              "n_train_rows": 1, "n_test_rows": 0}}),
+                       encoding="utf-8")
+        r = self._run(data_root=data_root)
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 3, out)
+        self.assertNotIn("tarball sha256 OK", out)
+        self.assertIn("tarball.sha256", out)
+
+    def test_verify_only_writes_nothing(self):
+        """R6-L2：`--verify-only` 不得创建 dest（此前无条件 mkdir -p "$DEST"）。"""
+        data_root = self.tmp / "data"
+        dest = data_root / "v4" / "data"
+        r = self._run("--verify-only", data_root=data_root)
+        out = r.stdout + r.stderr
+        self.assertFalse(dest.exists(), f"--verify-only 竟然创建了 {dest}")
+        self.assertFalse((dest / "folds").exists())
+        self.assertIn("train wells=0", out)      # 只读校验仍然跑了
+
+    def test_dest_is_honored_in_tarball_mode(self):
+        """R6-L2：`--dest` 必须真正生效（此前解压永远写 $DATA_ROOT，校验却读 $DEST）。"""
+        data_root = self.tmp / "data"
+        tb = self._tiny_tarball(self.tmp / "cloud5" / "v4_data.tar.gz")
+        dest = self.tmp / "custom" / "wells"
+        r = self._run("--tarball", str(tb), "--dest", str(dest), data_root=data_root)
+        out = r.stdout + r.stderr
+        self.assertIn("--dest 与默认不同", out)
+        self.assertTrue((dest / "train" / "well_a.txt").is_file(),
+                        f"数据没有落到自定义 dest：{out}")
+        self.assertFalse((data_root / "v4" / "data" / "train").exists(),
+                         "数据不应同时写到默认 dest")
+
 
 class TestRunTrainDataModeFindsCloudTarball(unittest.TestCase):
     """R5-B1 端到端：tarball 只在"云盘"（repo 内无 dist/）时 `--mode data` 必须能部署。
@@ -594,6 +648,37 @@ class TestSetupDepsDryRunIsSideEffectFree(unittest.TestCase):
             self.assertEqual(stray, [], f"--dry-run 在 repo 里留下了证据文件：{stray}")
 
 
+class TestGateFilesUseContractConstants(unittest.TestCase):
+    """R6-M2：E0 Gate 与云端环境 Gate 的判据也必须取自 `src/constants.py`。
+
+    `constants.py` 自称唯一事实源，但 R5 之后仍有两处硬编码：
+    `E0/code/run_all.py` 的 `730_268`、`E0/code/check_env.py` 的 `80` / `10`。
+    这两处正是 Gate 阈值，一旦常量改动就会"常量改了、Gate 口径没改"。
+    """
+
+    def test_no_hardcoded_data_counts_in_gate_files(self):
+        for rel in ("E0/code/run_all.py", "E0/code/check_env.py"):
+            src = _read(rel)
+            for literal in ("730268", "730_268", "95948", "95_948"):
+                self.assertNotIn(literal, src,
+                                 f"{rel} 不得硬编码数据量 {literal}（应用 C.EXPECTED_N_*）")
+
+    def test_gate_files_reference_constants(self):
+        ra = _read("E0/code/run_all.py")
+        self.assertIn("C.EXPECTED_N_TRAIN_ROWS", ra)
+        self.assertIn("C.EXPECTED_N_TEST_ROWS", ra)
+        ce = _read("E0/code/check_env.py")
+        self.assertIn("EXPECTED_N_TRAIN_WELLS", ce)
+        self.assertIn("EXPECTED_N_TEST_WELLS", ce)
+        self.assertIn("from src import constants", ce)
+
+    def test_constants_module_is_stdlib_only(self):
+        """`check_env.py` 在无 numpy/torch 的开发机上也要能导入 `src.constants`。"""
+        src = _read("src/constants.py")
+        for bad in ("import numpy", "import pandas", "import torch", "import scipy"):
+            self.assertNotIn(bad, src, f"src/constants.py 必须只依赖标准库：{bad}")
+
+
 class TestDependencyFactsAreSingleSourced(unittest.TestCase):
     """R5-M1/M2：PLAN / image_requirements / requirements.txt / setup_deps / lock 五处口径必须一致。
 
@@ -731,6 +816,39 @@ class TestDependencyFactsAreSingleSourced(unittest.TestCase):
         self.assertEqual(sorted(self.IMPORT_NAME.get(p, p) for p in lock_pkgs),
                          sorted(chk.REQUIRED_PY_DEPS),
                          "versions/locks/cloud.txt 过滤后必须恰好等于 REQUIRED_PY_DEPS")
+
+
+class TestOnnxWordingMatchesDependencyPolicy(unittest.TestCase):
+    """R6-M1：计划不能一边说"不安装 onnx"，一边承诺"优先导出 ONNX 兜底"。
+
+    实测（无 onnx 的本机 venv）：`torch.onnx.export` →
+    `OnnxExporterError: Module onnx is not installed!`，torch 2.7 的 dynamo 路径还额外
+    需要 `onnxscript`。因此 ONNX 只能是 best-effort，实际兜底是 `.pt` + `.npz` 清单。
+    """
+
+    OLD_WORDING = "同时尝试 `torch.onnx.export`（失败不阻塞）"
+
+    def test_plan_no_longer_promises_onnx_export(self):
+        src = _read("PLAN.md")
+        for bad in ("优先导出 ONNX", "torch 2.7 内置", "ONNX 导出兜底路径"):
+            self.assertNotIn(bad, src, f"PLAN.md 仍把 ONNX 写成可依赖的兜底：{bad}")
+        self.assertIn("best-effort", src)
+        self.assertIn("Module onnx is not installed", src)
+        self.assertIn(".npz", src)
+
+    def test_e10_plan_states_onnx_is_best_effort(self):
+        src = _read("E10/P0/PLAN.md")
+        self.assertIn("best-effort", src)
+        self.assertIn("`import onnx`", src)
+        self.assertNotIn(self.OLD_WORDING, src,
+                         "E10/P0 仍是旧的 ONNX 措辞（生成器改了但没重跑 gen_p_details.py？）")
+        self.assertIn(".npz", src, "E10/P0 必须写出真正的兜底：`.npz` 权重清单")
+
+    def test_generator_carries_the_same_wording(self):
+        gen = _read("docs/gen_p_details.py")
+        self.assertNotIn(self.OLD_WORDING, gen,
+                         "生成器仍会产出旧的 ONNX 措辞（改了生成产物但没改生成器）")
+        self.assertIn("best-effort", gen)
 
 
 def _in_git_worktree() -> bool:

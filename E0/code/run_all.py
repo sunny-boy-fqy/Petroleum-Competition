@@ -575,7 +575,8 @@ def main() -> int:
 
     mandatory = {
         "data_card_recomputable": bool(tr_records) and not args.limit,
-        "row_counts_match": card_train["n_rows"] == 730_268 and card_test["n_rows"] == C.EXPECTED_N_TEST_ROWS,
+        "row_counts_match": (card_train["n_rows"] == C.EXPECTED_N_TRAIN_ROWS
+                             and card_test["n_rows"] == C.EXPECTED_N_TEST_ROWS),
         "constant_baseline_anchor_hit": hit,
         "folds_fingerprint_present": "source_sha256" in fold_man,
         "contract_selftest": ct["passed"],

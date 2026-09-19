@@ -64,7 +64,9 @@ python3 v4/tools/pack_dataset.py            # 需要 numpy
 ```
 
 > `v4/dist/` 默认被 `.gitignore` 忽略（30 MB 二进制不适合进 git）。
-> 把它上传到平台**云盘**（即可在 `/data` 看到）即可，例如放到 `/v4_data/v4_data.tar.gz`。
+> 把它上传到平台**云盘**（即可在 `/data` 看到）即可，推荐放到 **`/data/v4_data.tar.gz`**
+> （`$DATA_ROOT` 根，`bootstrap_data.sh` 会自动搜索；见步骤 2 的定位协议）。
+> 若放到别处（例如 `/data/uploads/v4_data.tar.gz`），必须显式传 `--tarball <路径>`。
 
 ### 步骤 1：构建训练任务镜像（`v4/docs/image_requirements.md`）
 

@@ -5,7 +5,7 @@
   "project": {
     "version": "v4",
     "phase": "E0",
-    "summary": "E0 本地契约 Gate 13/13 PASS（云端 Gate 待 P0 实机）；计划全部完成（46 份 / 6,850 行，由 tools/plan_stats.py 实测）；三审 R3-C1..C3/H1..H5/M1..M5、四审 R4-B1..B3/H1..H3/M1..M6 与五审 R5-B1/H1/H2/M1/M2/L1..L3 已修复并回归验证；改进 proposal 已落进 PLAN.md / E6 与 src/",
+    "summary": "E0 本地契约 Gate 13/13 PASS（云端 Gate 待 P0 实机）；计划全部完成（46 份 / 6,853 行，由 tools/plan_stats.py 实测）；三审 R3-C1..C3/H1..H5/M1..M5、四审 R4-B1..B3/H1..H3/M1..M6、五审 R5-B1/H1/H2/M1/M2/L1..L3 与六审 R6-M1/M2/L1..L3 已修复并回归验证；改进 proposal 已落进 PLAN.md / E6 与 src/",
     "last_updated": "2026-09-19T21:10:00+00:00"
   },
   "stages": [
@@ -433,6 +433,17 @@
         "L1_warn_ok_output": "fixed（image_requirements 期望输出改为 [OK]；说明 [WARN] 只在 warn 级**失败**时出现）",
         "L2_constants_column_comment": "fixed（constants.py：14 个输入字段 = DEPTH + 13 条曲线）",
         "L3_tar_path_comment": "fixed（bootstrap_data.sh：tar 内路径为 v4/data/...）"
+      }
+    },
+    "review_r6": {
+      "report": "reports/V4_PLAN_REVIEW_6.md",
+      "verdict": "五审返工通过（云端 env→data→e0 可开跑）；六审 2 中 + 3 低危已在本轮全部修复",
+      "resolved": {
+        "M1_onnx_wording": "fixed（PLAN.md §3.3.2/§9.2/§十 与 E10/P0 生成器统一为：ONNX 是 best-effort，需用户额外装 onnx（torch 2.7 dynamo 还需 onnxscript），未装时抛 OnnxExporterError 属预期，实际兜底是 .pt + .npz 清单；ONNX 不写进任何 Gate）",
+        "M2_single_source_of_counts": "fixed（E0/code/run_all.py 改用 C.EXPECTED_N_TRAIN_ROWS；E0/code/check_env.py 导入 src.constants 取 EXPECTED_N_TRAIN_WELLS/TEST_WELLS；新增 TestGateFilesUseContractConstants 3 项静态回归扫描两个 Gate 文件）",
+        "L1_explicit_manifest": "fixed（显式 --manifest/$V4_DATA_MANIFEST 不存在 -> exit 4；manifest 缺 tarball.sha256 -> exit 3，不再打印 'tarball sha256 OK'）",
+        "L2_verify_only_and_dest": "fixed（--verify-only 不再 mkdir/复制任何文件；--dest 显式时先解到临时目录再搬运，真正生效，并在收尾提示里注明 check_env 默认读 $V4_DATA_ROOT/v4/data）",
+        "L3_platform_setup_stale_path": "fixed（docs/platform_setup.md 的示例改为 /data/v4_data.tar.gz，并注明放别处必须 --tarball）"
       }
     }
   }
