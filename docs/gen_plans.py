@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""一次性生成 v4 的 E*/PLAN.md、E*/P*/PLAN.md 与 docs/ 文档（内容按阶段定制）。"""
+"""生成 v4 的 E*/PLAN.md（阶段层，12 份）。
+
+注意（R2-M8）：P 级详细计划由 `gen_p_details.py` 生成，本文件**不再生成 P 级骨架**，
+以免覆盖详细版。推荐的生成顺序：
+    python3 docs/gen_plans.py          # 阶段层
+    python3 docs/gen_p_details.py      # P 级（详细）
+    python3 E0/code/mark_status.py     # 回写 E0 执行状态
+"""
 from __future__ import annotations
 from pathlib import Path
 
@@ -206,7 +213,7 @@ P_STAGES = {
   ["hard 检查全过；可用磁盘 ≥ 8 GB；若 < 12 GB 则写入 `contingency_applied` 并降低后续预算"],
   ["装任何会触碰 torch/nvidia-* 的包","在磁盘未知的情况下开始 E3"]),
  ("P1","数据卡、哨兵与标签三状态",
-  "自写解析器读取 90 口井，冻结缺失哨兵规则、三状态判据（缺测/联合常量/有效）、SW 双尺度常量，产出数据卡与折指纹。",
+  "自写解析器读取 90 口井（按表头名对齐），冻结缺失哨兵规则、三状态判据（缺测/联合常量/有效）与目标值域统计，产出数据卡与折指纹。",
   "口径是唯一事实源；SW 的 99.9 与 [0,1] 混列是最大静默失分点。",
   ["`src/data/parse.py`","`src/data/labels.py`","`E0/code/build_data_card.py`"],
   ["`reports/E0_data_card.json`","`artifacts/E0/folds.json`","`versions/folds_sha256.json`"],

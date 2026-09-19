@@ -143,12 +143,25 @@ def main(argv: list[str] | None = None) -> int:
 
     payload = build_payload(version, test_dir, args.model_name)
 
-    res = CT.validate_payload(payload, test_dir=test_dir, expected_rows=args.expected_rows)
+    res = CT.validate_payload(payload, test_dir=test_dir,
+                              expected_rows=args.expected_rows,
+                              expected_wells=args.expected_wells)
     if not res.ok:
         print("[predict] CONTRACT VALIDATION FAILED:", file=sys.stderr)
         for e in res.errors[:20]:
             print("  -", e, file=sys.stderr)
         return 3
+
+    # R2-B6：深度逐行对齐必须硬校验
+    align = CT.depth_alignment_report(
+        {item["logId"]: [p["depth"] for p in item["predictions"]] for item in payload["resultData"]},
+        test_dir)
+    bad_align = {k: v for k, v in align.items() if not v.get("ok")}
+    if bad_align:
+        print("[predict] DEPTH ALIGNMENT FAILED:", file=sys.stderr)
+        for k, v in list(bad_align.items())[:10]:
+            print(f"  - {k}: {v}", file=sys.stderr)
+        return 4
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)

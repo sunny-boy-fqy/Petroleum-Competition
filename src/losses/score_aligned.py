@@ -45,19 +45,35 @@ def align_score_relative(y, yhat, delta: float, eps: float = 1e-3,
     return 1.0 - ell + F.softplus(ell - 1.0, beta=beta)
 
 
-def align_score_log(z, zhat, alpha: float = 1e-3, beta: float = 20.0):
-    """PERM 的对齐**得分**（log10 空间）：s ≈ max(0, 1 − |ẑ−z|)。"""
+def align_score_log(z, zhat, alpha: float = 1e-3, beta: float = 20.0,
+                    eps: float = 1e-3):
+    """PERM 的对齐**得分**（log10 空间，与官方严格同构）。
+
+    官方：`s = max(0, 1 − |log10(max(ŷ/y, ε))|)`
+      - 当 `ŷ/y ≥ ε` 时，`log10(max(ŷ/y,ε)) = ẑ − z`；
+      - 当 `ŷ/y < ε`（严重低估）时，官方把比值**截断在 ε**，
+        误差恒为 `log10(1/ε)`（ε=1e-3 → 3.0），不再随低估程度增长。
+    **R2-H3 修复**：此前直接用 `|ẑ − z|`，在 `ŷ/y < ε` 区域比官方惩罚更重
+    （例如 `ẑ−z=−5` 时官方误差 3.0、旧实现 5.0），梯度方向与官方评分不一致。
+    这里对 **log 空间的差值**做同样的下截断：`d = max(ẑ − z, log10(ε))`。
+    """
     require("torch")
-    ell = smooth_abs(zhat - z, alpha)
+    import math as _math
+    d = zhat - z
+    d = torch.maximum(d, torch.full_like(d, _math.log10(eps)))
+    ell = smooth_abs(d, alpha)
     return 1.0 - ell + F.softplus(ell - 1.0, beta=beta)
 
 
 def masked_mean(x, mask=None):
+    """掩码均值。**R2-H2 修复**：先把被屏蔽位置的 NaN/Inf 清零再乘掩码，
+    否则 `NaN * 0 = NaN` 会让整个 batch 的 loss 变成 NaN。"""
     require("torch")
     if mask is None:
         return x.mean()
     m = mask.to(x.dtype)
-    return (x * m).sum() / m.sum().clamp_min(1.0)
+    x_safe = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+    return (x_safe * m).sum() / m.sum().clamp_min(1.0)
 
 
 def aligned_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,

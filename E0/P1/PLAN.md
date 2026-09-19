@@ -18,7 +18,7 @@
 
 1. 口径是唯一事实源：解析错一列，后面所有分数都不可比；
 2. **实测发现 3 口训练井表头非官方 17 列**（`42f2870b` 20 列含 K/U/CGR、`b7eb1274` 21 列含 TH/K/U/CGR、`c7611b01` 16 列缺 CASE），共 27,080 行（3.71%），且都在 80 井折内、三目标齐全——按列位置解析会错位或丢行；
-3. **目标值域必须实测而非假设**：E0-R1 曾误以为 SW 是 `99.9`（百分数）+ `[0,1]`（小数）双尺度，实测有效 SW 为 min 8.305 / median 82.805 / max 99.9、SW<1 仅 11 行 → 实为单一标签尺度（审查 B2）；
+3. **目标值域必须实测而非假设**：E0-R1 曾误以为 SW 是 `99.9`（百分数）+ `[0,1]`（小数）双尺度，实测有效 SW 为 min 8.305 / median 82.805 / max 99.9、SW<1 的行数为 0 → 实为单一标签尺度（审查 B2/R2-B4）；
 4. 开发过程中已实际触发一次 numpy 越界切片静默截断（`arr[:,15:18]` 在 17 列数组上返回 2 列，丢掉 SW 整列），必须用断言防回归。
 
 ## 3. 输入契约
@@ -104,7 +104,9 @@
 
 ```bash
 # 云端（平台训练任务）
-bash /code/workspace/v4/run_train.sh --mode stage --stage E0
+bash /code/workspace/v4/run_train.sh --mode env    # P0：环境+磁盘（先装依赖再硬校验）
+bash /code/workspace/v4/run_train.sh --mode data   # 部署数据到 /data/v4/data
+bash /code/workspace/v4/run_train.sh --mode e0     # P1-P3：口径复算 + 分片缓存
 # 本机（口径层，无 torch）
 python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
 ```
@@ -132,6 +134,7 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
   "stage": "E0",
   "p_stage": "P1",
   "created_at": "<ISO8601，写盘时填写>",
+  "gate_type": "boolean",
   "primary_metric": "data_card_recomputable",
   "primary_threshold_key": "min_delta",
   "baseline_version": "<已冻结候选或 CONST>",

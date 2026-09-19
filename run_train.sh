@@ -14,6 +14,7 @@
 #   --mode env      环境自检 + 安装额外轻量依赖（不碰 torch）
 #   --mode data     把 repo 内 dist/v4_data.tar.gz 部署到 /data/v4/data（只需一次）
 #   --mode e0       E0 口径复算（数据卡 / 评分锚点 / 折指纹 / 契约自检）
+#   --mode data-health  数据健康硬校验（profile=full）
 #   --mode smoke    5 分钟极小规模冒烟（1 折 / 少量 epoch），验证全链路可跑
 #   --mode stage --stage E1   训练指定阶段
 #   --mode all      依次执行 env -> data -> e0 -> E1 ...
@@ -69,58 +70,100 @@ log "=============================================================="
 log "host: $(hostname)  python: $(python3 -V 2>&1)  pwd: $(pwd)"
 df -h "$DATA_ROOT" | tee -a "$LOG" || true
 
+# ---------------------------------------------------------------------------
+# 首次任务把"数据未就绪"降级为 warn：check_env --profile base
+# 训练前 / 数据部署后用 --profile full 做硬校验
+# ---------------------------------------------------------------------------
+_ENV_STATUS=0
+
+check_env_profile() {
+  local profile="$1"
+  python3 "$HERE/E0/code/check_env.py" --profile "$profile" \
+    --json "$REPORTS_DIR/E0_env.json" \
+    --disk-path "$DATA_ROOT" --disk-path "$HERE" 2>&1 | tee -a "$LOG"
+  return "${PIPESTATUS[0]}"
+}
+
 run_env() {
-  log "--- [env] 环境与磁盘自检"
-  if python3 "$HERE/E0/code/check_env.py" --json "$REPORTS_DIR/E0_env.json" \
-       | tee -a "$LOG"; then
-    log "[env] check_env 通过（hard failures: 0）"
+  # R2-B1 修复：先装依赖，再做硬校验（此前顺序相反导致首次必失败）
+  log "--- [env] 1/3 额外轻量依赖（--no-cache-dir，绝不触碰 torch）"
+  bash "$HERE/E0/code/setup_deps.sh" 2>&1 | tee -a "$LOG" \
+    || log "!! setup_deps 失败（可选依赖缺失时管线有降级路径）"
+
+  log "--- [env] 2/3 基础环境自检（profile=base：数据未就绪只告警）"
+  if check_env_profile base; then
+    log "[env] 基础环境检查通过（hard failures: 0）"
   else
-    log "!! [env] check_env 有 HARD FAILURE（见上）。按 E0/P0 契约，训练不得继续。"
-    log "!! 若你确认要在此环境继续（例如临时缺 GPU），请显式设置 V4_ALLOW_ENV_FAILURE=1。"
+    log "!! [env] 基础环境有 HARD FAILURE（python/torch/cuda/gpu/磁盘）。"
+    log "!! 如需在此环境继续，显式设置 V4_ALLOW_ENV_FAILURE=1。"
     if [[ "${V4_ALLOW_ENV_FAILURE:-0}" != "1" ]]; then
       exit 11
     fi
   fi
-  log "--- [env] 额外轻量依赖（--no-cache-dir，绝不触碰 torch）"
-  bash "$HERE/E0/code/setup_deps.sh" 2>&1 | tee -a "$LOG" || log "!! setup_deps 失败（可继续，代码有降级路径）"
+
+  log "--- [env] 3/3 磁盘余量（$DATA_ROOT 与代码目录分别检查）"
   if python3 "$HERE/src/data/disk_guard.py" --min-free-gb 8 \
        --report "$HERE,$DATA_ROOT" --json "$REPORTS_DIR/E0_disk_budget.json" 2>&1 | tee -a "$LOG"; then
     log "[env] 磁盘余量 ok（>= 8 GiB）"
   else
-    log "!! [env] 磁盘余量不足 8 GiB（见上）。请先清理 /data/v4/cache 或旧 checkpoint。"
+    log "!! [env] 磁盘余量不足 8 GiB。请清理 $DATA_ROOT/v4/cache 或旧 checkpoint。"
     [[ "${V4_ALLOW_ENV_FAILURE:-0}" == "1" ]] || exit 12
+  fi
+
+  # 数据若已部署，顺带做一次 full 校验（失败不阻塞 env 模式）
+  if [[ -d "$DATA_ROOT/v4/data/train" ]]; then
+    log "--- [env] 附加：数据已部署，做 profile=full 校验"
+    check_env_profile full || log "!! [env] full 校验未通过（数据健康有问题）"
+  else
+    log "--- [env] 数据尚未部署：请随后执行 --mode data（届时会做 full 校验）"
   fi
 }
 
 run_data() {
   log "--- [data] 部署数据集到 $DATA_ROOT/v4/data"
   bash "$HERE/tools/bootstrap_data.sh" 2>&1 | tee -a "$LOG"
+
+  log "--- [data] 数据健康校验（profile=full：数据缺失为 hard）"
+  if check_env_profile full; then
+    log "[data] 数据健康校验通过"
+  else
+    log "!! [data] 数据健康校验失败：请检查 $DATA_ROOT/v4/data/{train,test} 与折文件"
+    exit 13
+  fi
 }
 
 run_e0() {
-  log "--- [e0] 口径复算（不需要 torch）"
+  log "--- [e0] 口径复算 + 分片缓存（不需要 torch）"
+  # R2-B3 修复：默认建缓存，否则 E1/P0 无输入
   python3 "$HERE/E0/code/run_all.py" --train-dir "$DATA_ROOT/v4/data/train" \
-    --test-dir "$DATA_ROOT/v4/data/test" \
+    --test-dir "$DATA_ROOT/v4/data/test" --cache-root "$CACHE_ROOT" --with-cache \
     --out "$REPORTS_DIR/E0_data_card.json" 2>&1 | tee -a "$LOG"
-  # 折导出与契约自检已在 run_all 内完成；同时把 gate 报告复制到 repo 便于 git 提交
-  cp -f "$REPORTS_DIR/E0_gate.json" "$HERE/reports/E0_gate.json" 2>/dev/null || true
+  cp -f "$REPORTS_DIR/E0_local_contract_gate.json" "$HERE/reports/" 2>/dev/null || true
+  cp -f "$REPORTS_DIR/E0_cloud_gate.json" "$HERE/reports/" 2>/dev/null || true
+  cp -f "$REPORTS_DIR/E0_data_card.json" "$HERE/reports/" 2>/dev/null || true
 }
 
 run_smoke() {
   log "--- [smoke] 极小规模冒烟（1 折 / 2 epoch / 前 8 井）"
+  if [[ ! -f "$HERE/E1/code/train_row.py" ]]; then
+    log "!! E1/code/train_row.py 尚未实现（当前阶段）；smoke 跳过并返回非零"
+    return 1
+  fi
   python3 "$HERE/E1/code/train_row.py" \
-    --train-dir "$DATA_ROOT/v4/data/train" --test-dir "$DATA_ROOT/v4/data/test" \
+    --train-dir "$DATA_ROOT/v4/data/train" --cache-root "$CACHE_ROOT" \
     --out-dir "$RUN_ROOT/smoke" --folds 0 --max-wells 8 --epochs 2 --smoke \
-    "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1 | tee -a "$LOG" || {
-      log "!! smoke 失败：请先完成 E1/code/train_row.py 的实现（当前阶段尚未实现）"; }
+    "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1 | tee -a "$LOG"
 }
 
 run_stage() {
   log "--- [stage] $STAGE"
   case "$STAGE" in
-    E1) python3 "$HERE/E1/code/train_row.py" --train-dir "$DATA_ROOT/v4/data/train" \
+    E0) run_e0 ;;
+    E1) python3 "$HERE/E1/code/train_row.py" \
+          --train-dir "$DATA_ROOT/v4/data/train" --cache-root "$CACHE_ROOT" \
           --out-dir "$RUN_ROOT/E1" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1 | tee -a "$LOG" ;;
-    E3) python3 "$HERE/E3/code/train_seq.py" --train-dir "$DATA_ROOT/v4/data/train" \
+    E3) python3 "$HERE/E3/code/train_seq.py" \
+          --train-dir "$DATA_ROOT/v4/data/train" --cache-root "$CACHE_ROOT" \
           --out-dir "$RUN_ROOT/E3" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1 | tee -a "$LOG" ;;
     *)  log "!! 阶段 $STAGE 尚未实现（见 v4/PLAN.md §七 与各 E*/PLAN.md）"; return 1 ;;
   esac
@@ -131,14 +174,19 @@ case "$MODE" in
   data)  run_data ;;
   e0)    run_e0 ;;
   smoke) run_smoke ;;
+  data-health) check_env_profile full ;;
   stage) run_stage ;;
   all)
     run_env
     run_data
     run_e0
-    log "--- [all] E0 完成；后续阶段按 PLAN.md §七 顺序实现并训练"
-    log "已就绪的训练入口：E1/code/train_row.py（若尚未实现会明确报错，不会静默）"
-    run_stage || true
+    log "--- [all] env + data + e0 完成"
+    if [[ -f "$HERE/E1/code/train_row.py" ]]; then
+      log "--- [all] 检测到 E1 训练脚本，继续执行 stage"
+      run_stage || { log "!! [all] stage $STAGE 失败（退出码 $?）"; exit 21; }
+    else
+      log "--- [all] E1 训练脚本尚未实现，前置检查已完成（不算失败）"
+    fi
     ;;
   *) log "unknown mode: $MODE"; exit 2 ;;
 esac

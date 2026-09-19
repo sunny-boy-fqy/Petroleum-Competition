@@ -54,15 +54,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--json", type=str, default=None, help="write JSON report here")
     p.add_argument("--min-free-gb", type=float, default=MIN_FREE_GB_DEFAULT)
     p.add_argument(
-        "--disk-path",
-        type=str,
-        default=None,
-        help="path whose filesystem is checked (default: this repo root)",
-    )
-    p.add_argument(
         "--allow-non-a100",
         action="store_true",
         help="downgrade GPU/torch checks from hard to warn (local dev machine)",
+    )
+    p.add_argument(
+        "--profile", choices=("base", "full"), default="full",
+        help="base: 只检查环境（依赖缺失与数据缺失降为 warn，用于首次 --mode env）；"
+             "full: 环境 + 数据健康（数据缺失为 hard，用于 --mode data / 训练前）",
+    )
+    p.add_argument(
+        "--disk-path", action="append", default=None,
+        help="额外检查这些挂载点的剩余空间（可多次）。默认还会检查 $V4_DATA_ROOT",
     )
     return p.parse_args()
 
@@ -122,12 +125,18 @@ def check_torch(rep: Report, allow_non_a100: bool) -> dict:
     bf16 = bool(torch.cuda.is_bf16_supported())
     info["bf16_supported"] = bf16
     rep.add("bf16_supported", bf16, level, f"torch.cuda.is_bf16_supported()={bf16}")
+    info["torch_source"] = "platform image (do NOT pip install torch)"
     return info
 
 
-def check_py_deps(rep: Report, allow_non_a100: bool) -> dict:
-    """numpy/pandas 版本只在装了的时候校验；缺失在云端是 hard，在本机是 warn。"""
-    level = "warn" if allow_non_a100 else "hard"
+def check_py_deps(rep: Report, allow_non_a100: bool, profile: str = "full") -> dict:
+    """可选依赖探测。
+
+    profile=base（首次 --mode env，依赖尚未安装）-> warn
+    profile=full（安装完成后 / 训练前）           -> hard
+    本机 --allow-non-a100 始终 warn。
+    """
+    level = "warn" if (allow_non_a100 or profile == "base") else "hard"
     info: dict = {}
     expected = {
         "numpy": "1.26.4",
@@ -187,7 +196,7 @@ def check_disk(rep: Report, path: Path, min_free_gb: float) -> dict:
     }
 
 
-def check_repo(rep: Report, root: Path) -> dict:
+def check_repo(rep: Report, root: Path, profile: str = "full") -> dict:
     """数据与折引用是否就位。
 
     H4 修正：支持云端布局（代码在 /code/workspace/v4、数据在 /data/v4/data）。
@@ -204,6 +213,7 @@ def check_repo(rep: Report, root: Path) -> dict:
         train_dir = root.parent / "data" / "train"
         test_dir = root.parent / "data" / "test"
     info["data_root_env"] = droot
+    level = "hard" if profile == "full" else "warn"
     sys.path.insert(0, str(root))
     try:
         from src.validation.folds import find_folds_file  # noqa: PLC0415
@@ -213,23 +223,42 @@ def check_repo(rep: Report, root: Path) -> dict:
     n_train = len(list(train_dir.glob("*.txt"))) if train_dir.is_dir() else 0
     n_test = len(list(test_dir.glob("*.txt"))) if test_dir.is_dir() else 0
     info.update({"n_train_files": n_train, "n_test_files": n_test, "folds_exists": folds.is_file()})
-    rep.add("data_train_80", n_train == 80, "hard", f"data/train has {n_train} wells (expect 80)")
-    rep.add("data_test_10", n_test == 10, "hard", f"data/test has {n_test} wells (expect 10)")
-    rep.add("well_folds_present", folds.is_file(), "hard", f"{folds} exists={folds.is_file()}")
+    rep.add("data_train_80", n_train == 80, level,
+            f"{train_dir} has {n_train} wells (expect 80)")
+    rep.add("data_test_10", n_test == 10, level,
+            f"{test_dir} has {n_test} wells (expect 10)")
+    rep.add("well_folds_present", folds.is_file(), level,
+            f"{folds} exists={folds.is_file()}")
     return info
 
 
 def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parents[2]  # .../v4
-    disk_path = Path(args.disk_path).resolve() if args.disk_path else root
+    paths: list[Path] = []
+    if args.disk_path:
+        paths += [Path(x).resolve() for x in args.disk_path]
+    paths.append(root)
+    import os as _os
+    if _os.environ.get("V4_DATA_ROOT"):
+        paths.append(Path(_os.environ["V4_DATA_ROOT"]))
+    if Path("/data").exists() and Path("/data") not in paths:
+        paths.append(Path("/data"))
+    # 去重保序
+    seen: set[str] = set()
+    disk_paths = [p for p in paths if not (str(p) in seen or seen.add(str(p)))]
 
     rep = Report()
     check_python(rep)
     torch_info = check_torch(rep, args.allow_non_a100)
-    deps_info = check_py_deps(rep, args.allow_non_a100)
-    disk_info = check_disk(rep, disk_path, args.min_free_gb)
-    repo_info = check_repo(rep, root)
+    deps_info = check_py_deps(rep, args.allow_non_a100, args.profile)
+    disk_infos = []
+    for dp in disk_paths:
+        d = check_disk(rep, dp, args.min_free_gb)
+        d["path"] = str(dp)
+        disk_infos.append(d)
+    disk_info = disk_infos[0] if len(disk_infos) == 1 else disk_infos
+    repo_info = check_repo(rep, root, args.profile)
 
     hard = rep.hard_failures()
     warn = rep.warn_failures()
@@ -263,6 +292,7 @@ def main() -> int:
                 "disk_budget_gb": DISK_BUDGET_GB,
             },
             "allow_non_a100": args.allow_non_a100,
+            "profile": args.profile,
             "platform": platform.platform(),
             "executable": sys.executable,
             "torch": torch_info,

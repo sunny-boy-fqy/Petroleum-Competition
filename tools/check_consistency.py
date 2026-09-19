@@ -35,8 +35,20 @@ def main() -> int:
                             + C.SCORE_WEIGHTS["SW"] * cv["sw"])
             if abs(want - cv["total"]) > 1e-5:
                 errs.append(f"{cid}: total {cv['total']} != weighted sum {want:.7f}")
-        if cv.get("missing_mode") not in (None, "drop"):
-            errs.append(f"{cid}: missing_mode must be 'drop', got {cv.get('missing_mode')!r}")
+        # R2-M7：missing_mode 必须显式写 "drop"（不再允许 None）
+        if cv.get("missing_mode") != "drop":
+            errs.append(f"{cid}: missing_mode must be exactly 'drop', got {cv.get('missing_mode')!r}")
+        for f in ("total", "por", "perm", "sw"):
+            if f not in cv:
+                errs.append(f"{cid}: cv missing field {f!r}")
+        # result_zip 存在性（仅对已产出制品的候选）
+        rz = cand.get("result_zip")
+        if rz and not (V4 / rz).exists():
+            errs.append(f"{cid}: result_zip not found: {rz}")
+        # 字段 schema
+        for f in ("candidate_id", "stage", "status"):
+            if not cand.get(f):
+                errs.append(f"{cid}: missing required candidate field {f!r}")
         if cand.get("status") in ("submitted", "frozen_best") and not cand.get("result_zip_sha256"):
             errs.append(f"{cid}: status={cand['status']} requires result_zip_sha256")
         if cand.get("a_board_score") is not None and cand.get("a_board_delta_vs_b0") is None:

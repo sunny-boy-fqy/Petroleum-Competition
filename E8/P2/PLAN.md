@@ -111,6 +111,7 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
   "stage": "E8",
   "p_stage": "P2",
   "created_at": "<ISO8601，写盘时填写>",
+  "gate_type": "delta",
   "primary_metric": "oof_total",
   "primary_threshold_key": "min_delta",
   "baseline_version": "E6_PD1",

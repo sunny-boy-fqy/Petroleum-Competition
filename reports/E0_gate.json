@@ -2,7 +2,7 @@
   "gate_id": "E0_local_contract_gate",
   "stage": "E0",
   "scope": "local_contract_only",
-  "created_at": "2026-09-19T12:57:01.650223+00:00",
+  "created_at": "2026-09-19T13:18:33.352637+00:00",
   "passed": true,
   "mandatory_checks": {
     "data_card_recomputable": true,
@@ -14,7 +14,9 @@
     "missing_mode_is_drop": true,
     "score_total_consistent": true,
     "input_no_label_leak": true,
-    "target_scale_reported": true
+    "target_scale_reported": true,
+    "shard_cache_built": true,
+    "shard_cache_input_cols_ok": true
   },
   "constant_baseline": {
     "drop": 70.49073500477093,

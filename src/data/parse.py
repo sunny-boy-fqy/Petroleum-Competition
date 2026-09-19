@@ -121,7 +121,11 @@ def parse_well(path: str | Path, with_targets: bool = True) -> WellRecord:
         # （0=DEPTH, 1..13=13 条曲线, 14..16=POR/PERM/SW）。
         # 测试文件没有目标列 -> 对应位置填 NaN；这样训练/测试的输入通道位置完全一致。
         wanted = list(C.COLUMNS)
-        missing_cols = tuple(c for c in wanted if c not in idx)
+        # R2-B5：missing_columns 只针对**该 split 的期望列**计算。
+        # 测试集本就没有 POR/PERM/SW，不应被报告为"schema 非规范缺列"。
+        expected_cols = list(C.COLUMNS) if with_targets else \
+            [C.DEPTH_COLUMN, *C.INPUT_COLUMNS]
+        missing_cols = tuple(c for c in expected_cols if c not in idx)
         extra_cols = tuple(h for h in header if h not in C.COLUMNS)
 
         if "DEPTH" not in idx:

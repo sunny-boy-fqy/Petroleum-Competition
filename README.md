@@ -125,7 +125,7 @@ python3 v4/predict.py --use-version CONST --data_dir ../data --output /tmp/r.jso
 
 ## 当前状态
 
-- [x] **计划全部完成**：总计划 718 行 + 12 个阶段计划（1,412 行）+ 33 个 P 级详细计划（9,880 行），**合计 12,010 行**（由 `wc -l` 实测）
+- [x] **计划全部完成**：总计划 729 行 + 12 个阶段计划（708 行）+ 33 个 P 级详细计划（4,986 行），**合计 6,423 行**（由 `tools/plan_stats.py` 实测）
 - [x] 状态台账 `versions/status.json`、候选注册表 `versions/candidates.json`、目录总览 `docs/PROJECT_FILES.md`
 - [x] 环境/磁盘自检脚本（`E0/code/check_env.py`、`src/data/disk_guard.py`、`E0/code/setup_deps.sh`）
 - [x] 锁文件与 Gate/引用模板
@@ -139,6 +139,6 @@ python3 v4/predict.py --use-version CONST --data_dir ../data --output /tmp/r.jso
    → **必须按表头名对齐解析**，禁止按列位置（即 17,426 行"多列" + 9,654 行"缺 CASE"）。
 2. **评分分母口径 = 逐目标排除缺测行（`drop`）**：常数基线在此口径下 `70.490735`（命中锚点 70.4907）；全行分母口径为 `69.843218`（低 0.65 分）。
 3. **输入列泄漏事故（已修复 + 已加回归）**：`inputs = arr[:, 1:15]` 曾把 **POR 标签**当作第 14 个输入（80 口井全部泄漏），且测试井只有 13 列会导致提交崩溃。现为 **13 条曲线 + DEPTH 分离**，并强制 `input_no_label_leak` 检查。
-4. **SW 是单一标签尺度（非 [0,1]）**：实测有效 SW 为 min 8.305 / median 82.805 / max 99.9，SW<1 仅 11 行 → 取消"×100 双尺度"假设，仍严禁全局裁剪到 [0,1]。
+4. **SW 是单一标签尺度（非 [0,1]）**：实测有效 SW 为 min 8.305 / median 82.805 / max 99.9，SW<1 的行数为 0 → 取消"×100 双尺度"假设，仍严禁全局裁剪到 [0,1]。
 
 > 未实现的部分在 README 与各 `PLAN.md` 中显式列出；**不宣称任何尚未复算的分数**。

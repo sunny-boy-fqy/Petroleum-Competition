@@ -74,7 +74,7 @@ passed = (delta >= effective_threshold)
 2. **按井行数加权**的配对井级 cluster bootstrap 95% CI（1000 次）；
 3. 逐目标 Acc（POR/PERM/SW）与**连续切片** Acc（排除原子行后）；
 4. **占位原子报告**：逐目标 Acc、precision、recall、F1、τ 值、误判代价分解；
-5. `label_scale_summary`（POR/SW/PERM 的分布与量纲声明，**必须显式声明 SW 的双尺度处理**）；
+5. `label_scale_summary`（POR/SW/PERM 的分布与量纲声明，**必须显式声明 SW 为单一标签尺度（百分数，实测 8.305–99.9）且未做 [0,1] 归一化**）；
 6. 特征来源表变更（若有）；
 7. `training_time_log.json` 的本任务条目与 `disk_free_gb_end`；
 8. 所有产物的 sha256 与复算命令。

@@ -90,7 +90,9 @@
 
 ```bash
 # 云端（平台训练任务）
-bash /code/workspace/v4/run_train.sh --mode stage --stage E0
+bash /code/workspace/v4/run_train.sh --mode env    # P0：环境+磁盘（先装依赖再硬校验）
+bash /code/workspace/v4/run_train.sh --mode data   # 部署数据到 /data/v4/data
+bash /code/workspace/v4/run_train.sh --mode e0     # P1-P3：口径复算 + 分片缓存
 # 本机（口径层，无 torch）
 python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
 ```
@@ -118,6 +120,7 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
   "stage": "E0",
   "p_stage": "P0",
   "created_at": "<ISO8601，写盘时填写>",
+  "gate_type": "boolean",
   "primary_metric": "env_hard_checks_passed",
   "primary_threshold_key": "min_delta",
   "baseline_version": "<已冻结候选或 CONST>",

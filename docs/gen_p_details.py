@@ -90,7 +90,7 @@ P["E0"] = [
              "产出数据卡、按井折导出与指纹；**必须查清 3 口非规范 schema 井的正确解析方式**。",
         why=["口径是唯一事实源：解析错一列，后面所有分数都不可比；",
              "**实测发现 3 口训练井表头非官方 17 列**（`42f2870b` 20 列含 K/U/CGR、`b7eb1274` 21 列含 TH/K/U/CGR、`c7611b01` 16 列缺 CASE），共 27,080 行（3.71%），且都在 80 井折内、三目标齐全——按列位置解析会错位或丢行；",
-             "**目标值域必须实测而非假设**：E0-R1 曾误以为 SW 是 `99.9`（百分数）+ `[0,1]`（小数）双尺度，实测有效 SW 为 min 8.305 / median 82.805 / max 99.9、SW<1 仅 11 行 → 实为单一标签尺度（审查 B2）；",
+             "**目标值域必须实测而非假设**：E0-R1 曾误以为 SW 是 `99.9`（百分数）+ `[0,1]`（小数）双尺度，实测有效 SW 为 min 8.305 / median 82.805 / max 99.9、SW<1 的行数为 0 → 实为单一标签尺度（审查 B2/R2-B4）；",
              "开发过程中已实际触发一次 numpy 越界切片静默截断（`arr[:,15:18]` 在 17 列数组上返回 2 列，丢掉 SW 整列），必须用断言防回归。"],
         inputs=["`$V4_DATA_ROOT/v4/data/train/*.txt`（80 井，含表头/单位/数据三段）",
                 "`$V4_DATA_ROOT/v4/data/test/*.txt`（10 井，无标签）",
@@ -169,7 +169,7 @@ P["E0"] = [
                 ("容差", "POR δ=0.08 / SW δ=0.05", "冻结", "rules §7.3")],
         done=["常数基线在冻结口径下 = **70.490735 ± 1e-4**（锚点 70.4907）",
               "另一种口径的数字同时记录（69.843218）并在数据卡标注差异",
-              "逐目标 Acc 与预算表自洽：POR 0.6736 / PERM 0.7467 / SW 0.7421（±0.002）",
+              "逐目标 Acc 与预算表自洽：POR 0.6735824 / PERM 0.7072023 / SW 0.7294624（实测值，见 `reports/E0_score_check.json`）",
               "`src/score.py` 在**没有 torch** 的环境下可导入并运行"],
         forbid=["用第三方库的 `mean_squared_error` / `r2_score` 代替官方公式",
                 "把缺测行计入分母（除非显式标 `missing_mode=\"mask\"`）",
@@ -200,7 +200,7 @@ P["E0"] = [
                 "`资料库/12` §4（提交规范）、§5（复现要求）"],
         outputs=["`v4/predict.py`（`--data_dir/--output/--use-version/--list-versions`）",
                  "`src/inference/contract.py`（`validate_payload`/`validate_file`/`depth_alignment_report`）",
-                 "`versions/candidates.json`（候选注册表，唯一事实源）",
+                 "`versions/registry.json`（可运行版本事实源）+ `versions/candidates.json`（候选事实源）",
                  "`$V4_REPORTS_DIR/E0_contract_tests.json`（正/负样例自检）"],
         steps=["实现 `validate_payload`：顶层键集合、logId 集合与文件名一致、行数、逐行键名、"
                "depth 严格递增、有限性、PERM>0、禁止 SW 裁剪",
@@ -217,7 +217,7 @@ P["E0"] = [
               "干净目录下 `python3 predict.py --use-version CONST --data_dir ./data --output result.json` "
               "在一次运行内产出 10 井 / 95,948 行且 `contract_ok=true`（实测 ≈1.4 s，单核 CPU）",
               "`predict.py` 在**无 torch** 环境可运行；`--list-versions` 正确区分可用/未训练版本",
-              "`versions/candidates.json` 建立且被 `predict.py` 读取"],
+              "`versions/registry.json` 建立且被 `predict.py` 读取（`src/versioning/registry.py`）"],
         forbid=["契约校验依赖 torch 或网络",
                 "静默裁剪 SW / POR 到物理区间",
                 "允许 logId 缺失、行数不符、深度错位通过校验",
@@ -780,13 +780,17 @@ P["E5"] = [
              "用 BCE 监督占位分支，并验证不引入任何尺度换算；提升 SW 连续切片准确率。",
         why=["占位峰（99.9）与有效峰（实测 8.3–99.9，中位 82.8）**同尺度但分布形状完全不同**，"
              "单头线性回归仍会被占位尖峰拉扯（`资料库/12` §3.4 的双峰会震荡结论在结构上成立）；",
-             "**E0-R2 修正**：SW 不是 `[0,1]` 双尺度（审查 B2 实测 SW<1 仅 11 行）——"
+             "**E0-R2 修正**：SW 不是 `[0,1]` 双尺度（审查 B2/R2-B4 实测 SW<1 为 0 行，min 8.305）——"
              "因此**禁止**任何 ×100 换算；`constants.SW_SMALL_BRANCH=False`，"
              "有效分支直接用标签尺度监督；",
              "`资料库/12` §3.4 指出在 `q̂` 灰色地带向 99.9 偏移可换期望分——这是该指标允许的\"下注\"。"],
         inputs=["E3/E4 冻结主干表示", "E1/P1 的 SW 基线 OOF"],
         outputs=["`E5/code/head_sw.py`", "`$V4_RUN_ROOT/E5/sw/oof.npz`",
                  "`$V4_REPORTS_DIR/E5_sw.json`"],
+        notes_extra=["**接口语义（R2-M3）**：`head_sw` 的 `f_valid` 必须输出**标签尺度**"
+                     "（百分数，实测 8.3–99.9），不得是归一化值；`RowMLP` 用 "
+                     "`sw_affine_w/b` 做输出层仿射，训练脚本需先调用 "
+                     "`init_from_stats(sw_median=82.8, sw_std≈20)`。"],
         steps=["实现双分支：`q̂=sigmoid(g0)`（可与 H0 共享或独立）、`f` 为**标签尺度**的有效分支输出、"
                "混合 `q̂·99.9 + (1−q̂)·f`",
                "单测锁定尺度：`q̂=1` 时输出必须精确 99.9；`q̂=0` 时输出等于 `f`（**不做任何倍数换算**）；"
@@ -1527,13 +1531,24 @@ def render(e: str, p: dict) -> str:
         L.append(f"- `{code_path}`" if not code_path.startswith("`") else f"- {code_path}")
     L.append("")
 
+    if p.get("notes_extra"):
+        L.append("## 11.5 接口与实现约定\n")
+        for x in p["notes_extra"]:
+            L.append(f"- {x}")
+        L.append("")
+
     L.append("## 12. 复算与证据\n")
     for x in p["evidence"]:
         L.append(f"- {x}")
     L.append("")
     L.append("```bash")
     L.append("# 云端（平台训练任务）")
-    L.append(f"bash /code/workspace/v4/run_train.sh --mode stage --stage {e}")
+    if e == "E0":
+        L.append("bash /code/workspace/v4/run_train.sh --mode env    # P0：环境+磁盘（先装依赖再硬校验）")
+        L.append("bash /code/workspace/v4/run_train.sh --mode data   # 部署数据到 /data/v4/data")
+        L.append("bash /code/workspace/v4/run_train.sh --mode e0     # P1-P3：口径复算 + 分片缓存")
+    else:
+        L.append(f"bash /code/workspace/v4/run_train.sh --mode stage --stage {e}")
     L.append("# 本机（口径层，无 torch）")
     L.append(f"python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py")
     L.append("```")
@@ -1562,6 +1577,7 @@ def render(e: str, p: dict) -> str:
         "stage": e,
         "p_stage": p["pid"],
         "created_at": "<ISO8601，写盘时填写>",
+        "gate_type": "delta",
         "primary_metric": "oof_total",
         "primary_threshold_key": "min_delta",
         "baseline_version": "<已冻结候选或 CONST>",
@@ -1585,6 +1601,19 @@ def render(e: str, p: dict) -> str:
         "notes": "",
     }
     extra = dict(p["prereg_extra"])
+    # 按 primary_metric 推断 gate_type 并写入模板（与 src/validation/gates.py 语义一致）
+    _pm = extra.get("primary_metric", base["primary_metric"])
+    if _pm == "confirm_non_inferiority":
+        _gt = "non_inferior"
+    elif _pm in ("env_hard_checks_passed", "guardrail_pass", "no_high_risk_leak",
+                 "clean_dir_reproduce", "submission_recorded", "archive_complete",
+                 "retrospective_complete", "constant_baseline_anchor",
+                 "data_card_recomputable", "contract_selftest_passed") \
+            or _pm.endswith(("_ok", "_passed", "_reported")):
+        _gt = "boolean"
+    else:
+        _gt = "delta"
+    base["gate_type"] = _gt
     # mandatory_checks 取并集：模板 6 项核心 + 本 P 追加项
     core = list(base["mandatory_checks"])
     for c in extra.pop("mandatory_checks", []):

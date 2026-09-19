@@ -17,7 +17,7 @@
 ## 2. 为什么需要这一步
 
 1. 占位峰（99.9）与有效峰（实测 8.3–99.9，中位 82.8）**同尺度但分布形状完全不同**，单头线性回归仍会被占位尖峰拉扯（`资料库/12` §3.4 的双峰会震荡结论在结构上成立）；
-2. **E0-R2 修正**：SW 不是 `[0,1]` 双尺度（审查 B2 实测 SW<1 仅 11 行）——因此**禁止**任何 ×100 换算；`constants.SW_SMALL_BRANCH=False`，有效分支直接用标签尺度监督；
+2. **E0-R2 修正**：SW 不是 `[0,1]` 双尺度（审查 B2/R2-B4 实测 SW<1 为 0 行，min 8.305）——因此**禁止**任何 ×100 换算；`constants.SW_SMALL_BRANCH=False`，有效分支直接用标签尺度监督；
 3. `资料库/12` §3.4 指出在 `q̂` 灰色地带向 99.9 偏移可换期望分——这是该指标允许的"下注"。
 
 ## 3. 输入契约
@@ -77,6 +77,10 @@
 
 - `E5/code/head_sw.py`
 
+## 11.5 接口与实现约定
+
+- **接口语义（R2-M3）**：`head_sw` 的 `f_valid` 必须输出**标签尺度**（百分数，实测 8.3–99.9），不得是归一化值；`RowMLP` 用 `sw_affine_w/b` 做输出层仿射，训练脚本需先调用 `init_from_stats(sw_median=82.8, sw_std≈20)`。
+
 ## 12. 复算与证据
 
 - `reports/E5_sw.json`
@@ -111,6 +115,7 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
   "stage": "E5",
   "p_stage": "P2",
   "created_at": "<ISO8601，写盘时填写>",
+  "gate_type": "delta",
   "primary_metric": "sw_acc",
   "primary_threshold_key": "min_delta",
   "baseline_version": "<已冻结候选或 CONST>",

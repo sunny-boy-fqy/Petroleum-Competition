@@ -6,7 +6,8 @@
     有效       : 其余
 占位行**不剔除**，参与全量评分。
 
-SW 双尺度警示：同一列里占位是 99.9（百分数），有效值是 [0,1]（小数）。
+SW 尺度（E0-R2 修正）：单一标签尺度（百分数）。占位 99.9；有效值实测 8.305–99.9。
+此前「双尺度 [0,1]」的说法已被数据证伪（有效行 SW<1 的数量为 0）。
 本模块提供显式换算，禁止在别处手写 *100。
 """
 from __future__ import annotations
@@ -103,7 +104,7 @@ def sw_decode(q_placeholder: Any, f_valid: Any, small_branch: bool | None = None
     **默认（E0-R2 起）**：SW 是单一标签尺度，故取 `SW = q·99.9 + (1−q)·f_valid`，
     其中 `f_valid` 已是标签尺度的有效分支输出。
     仅当显式 `small_branch=True`（且 `constants.SW_SMALL_BRANCH=True`）时，
-    才把 `f_valid` 视为 [0,1] 并乘以 `SW_SMALL_BRANCH_SCALE`（保留旧双尺度路径以备对照）。
+    才把 `f_valid` 视为 [0,1] 并乘以 `SW_SMALL_BRANCH_SCALE`（保留旧路径仅供对照；默认关闭）。
 
     注意：E6 的提交路径使用**硬切换**（q>τ 直接输出 99.9）；本函数用于训练期监督与诊断。
     """

@@ -30,7 +30,7 @@
 
 - `v4/predict.py`（`--data_dir/--output/--use-version/--list-versions`）
 - `src/inference/contract.py`（`validate_payload`/`validate_file`/`depth_alignment_report`）
-- `versions/candidates.json`（候选注册表，唯一事实源）
+- `versions/registry.json`（可运行版本事实源）+ `versions/candidates.json`（候选事实源）
 - `$V4_REPORTS_DIR/E0_contract_tests.json`（正/负样例自检）
 
 ## 5. 执行步骤
@@ -55,7 +55,7 @@
 - 6 个负样例**全部被正确拒绝**，正样例通过（`E0_contract_tests.json::passed=true`）
 - 干净目录下 `python3 predict.py --use-version CONST --data_dir ./data --output result.json` 在一次运行内产出 10 井 / 95,948 行且 `contract_ok=true`（实测 ≈1.4 s，单核 CPU）
 - `predict.py` 在**无 torch** 环境可运行；`--list-versions` 正确区分可用/未训练版本
-- `versions/candidates.json` 建立且被 `predict.py` 读取
+- `versions/registry.json` 建立且被 `predict.py` 读取（`src/versioning/registry.py`）
 
 ## 8. 禁止事项
 
@@ -90,7 +90,9 @@
 
 ```bash
 # 云端（平台训练任务）
-bash /code/workspace/v4/run_train.sh --mode stage --stage E0
+bash /code/workspace/v4/run_train.sh --mode env    # P0：环境+磁盘（先装依赖再硬校验）
+bash /code/workspace/v4/run_train.sh --mode data   # 部署数据到 /data/v4/data
+bash /code/workspace/v4/run_train.sh --mode e0     # P1-P3：口径复算 + 分片缓存
 # 本机（口径层，无 torch）
 python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
 ```
@@ -118,6 +120,7 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
   "stage": "E0",
   "p_stage": "P3",
   "created_at": "<ISO8601，写盘时填写>",
+  "gate_type": "boolean",
   "primary_metric": "contract_selftest_passed",
   "primary_threshold_key": "min_delta",
   "baseline_version": "<已冻结候选或 CONST>",

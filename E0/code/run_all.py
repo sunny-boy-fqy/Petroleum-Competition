@@ -238,8 +238,37 @@ def main() -> int:
                 if same > 0.999:
                     leak_report["violations"].append(
                         {"well": rec.well_id, "reason": f"{tname} == inputs[:,{k}]"})
-    leak_report["passed"] = not leak_report["violations"]
-    leak_report["scope"] = "sample (12 train + 6 test wells); 全量 90 井见 tools/check_data_leak.py"
+    # R2-H1：抽样之外，追加**全量 90 井**回归（同一逻辑，避免"抽样过了 Gate 就过"）
+    full_leak = {"checked": 0, "violations": []}
+    for split_, wt_ in (("train", True), ("test", False)):
+        d_ = train_dir if split_ == "train" else test_dir
+        for f_ in sorted(Path(d_).glob("*.txt")):
+            rec_ = P.parse_well(f_, with_targets=wt_)
+            full_leak["checked"] += 1
+            n_in_ = rec_.inputs.shape[1]
+            if n_in_ != C.N_INPUT:
+                full_leak["violations"].append({"well": rec_.well_id, "reason": f"n_inputs={n_in_}"})
+                continue
+            if not wt_ or rec_.targets is None:
+                continue
+            for j_, tname_ in enumerate(C.TARGET_COLUMNS):
+                m_ = ~L.missing_masks(rec_.targets)[:, j_]
+                if int(m_.sum()) < 20:
+                    continue
+                for k_ in range(C.N_INPUT):
+                    if float(np.isclose(rec_.inputs[m_, k_], rec_.targets[m_, j_],
+                                        atol=1e-9).mean()) > 0.999:
+                        full_leak["violations"].append(
+                            {"well": rec_.well_id, "reason": f"{tname_} == inputs[:,{k_}]"})
+    leak_report["full_90_wells"] = {
+        "checked": full_leak["checked"],
+        "violations": len(full_leak["violations"]),
+        "passed": not full_leak["violations"],
+        "examples": full_leak["violations"][:5],
+    }
+    leak_report["passed"] = (not leak_report["violations"]) and leak_report["full_90_wells"]["passed"]
+    leak_report["scope"] = ("全量 90 井（train+test）逐井检查 13 列输入且输入列与任何目标列不完全相等；"
+                            "等价于 tools/check_data_leak.py")
 
 
     # ---------------- 折指纹
@@ -275,12 +304,12 @@ def main() -> int:
         cache_info = {
             "built": True, "cache_root": str(cache_root), "counts": man["counts"],
             "manifest": str(cache_root / "manifest.json"),
-            "bytes": DS.shard_bytes(cache_root),
-            "input_col_check_violations": viol,
-            "input_col_check_passed": not viol,
+            "mb": round(DS.shard_bytes(cache_root) / 1e6, 2),
+            "input_cols_ok": not viol,
+            "violations": viol,
         }
         echo(f"缓存完成：{man['counts']['train_wells']}训练/{man['counts']['test_wells']}测试井，"
-             f"{cache_info['bytes']/1e6:.1f} MB")
+             f"{cache_info['mb']:.1f} MB")
 
     # ---------------- 汇总
     card = {
@@ -391,9 +420,9 @@ def main() -> int:
         "input_no_label_leak": leak_report["passed"],
         "target_scale_reported": bool(target_stats) and "valid_rows_only" in target_stats["SW"],
     }
-    if args.with_cache:
-        mandatory["shard_cache_built"] = bool(cache_info.get("built"))
-        mandatory["shard_cache_input_cols_ok"] = bool(cache_info.get("input_col_check_passed"))
+    # R2-B3：E0 local Gate 必须包含缓存两项（E1/P0 依赖它）
+    mandatory["shard_cache_built"] = bool(cache_info.get("built"))
+    mandatory["shard_cache_input_cols_ok"] = bool(cache_info.get("input_cols_ok"))
     gate = {
         "gate_id": "E0_local_contract_gate",
         "stage": "E0",
@@ -457,19 +486,22 @@ def main() -> int:
 
     # ---------------- Gate 预注册（E0 为口径层，事后补记 + supersede 说明）
     prereg = {
-        "gate_id": "E0_gate",
+        "gate_id": "E0_local_contract_gate",
         "stage": "E0",
+        "p_stage": "P0-P3",
+        "gate_type": "boolean",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "supersede_note": (
             "E0 是口径层而非模型实验，其判定阈值不是可调超参（数据计数、评分锚点、折指纹、"
             "契约自检都是客观等式），因此本文件在实现完成后补记。若未来 E0 需要修订判定项，"
             "必须新建 E0_gate_r2 预注册，不得原地修改本文件。"
         ),
-        "primary_metric": "constant_baseline_anchor",
+        "primary_metric": "data_card_recomputable",
         "primary_threshold_key": "abs_tolerance",
-        "thresholds": {"abs_tolerance": 1e-4, "max_hard_failures": 0},
+        "thresholds": {"abs_tolerance": 1e-4},
         "baseline_version": "CONST",
         "baseline_artifact": "reports/E0_data_card.json",
+        "baseline_manifest_sha256": "",   # E0 无上游 manifest；填占位会导致校验失败，这里留空并在 notes 说明
         "alpha": 0.05,
         "multiplicity": "none",
         "candidate_budget": 1,
@@ -480,11 +512,25 @@ def main() -> int:
         "min_detectable_effect": None,
         "mandatory_checks": ["data_card_recomputable", "row_counts_match",
                              "constant_baseline_anchor_hit", "folds_fingerprint_present",
-                             "contract_selftest", "no_torch_required"],
+                             "contract_selftest", "contract_ok", "no_torch_required",
+                             "missing_mode_is_drop", "score_total_consistent",
+                             "input_no_label_leak", "target_scale_reported",
+                             "shard_cache_built", "shard_cache_input_cols_ok"],
         "decisions_locked": ["data_parsing_by_header_name", "score_missing_mode=drop",
                              "folds=v1_well_folds.json", "placeholder_kept"],
-        "planned_task_training_h": 0.0,
-        "notes": "不训练模型；只冻结数据/评分/折/提交契约。",
+        # E0 是口径层：不训练、无 checkpoint、无原子 precision 报告需求；
+        # 显式声明豁免并给出理由，而不是塞入假检查。
+        "mandatory_exempt": {
+            "atomic_precision_reported": "E0 不训练模型，无原子门",
+            "disk_budget_ok": "磁盘门禁在 E0_cloud_gate（需云端实测）",
+            "training_time_log_valid": "E0 无训练任务",
+            "checkpoint_resumable": "E0 无 checkpoint",
+            "no_label_leak": "等价检查为 input_no_label_leak + full_90_wells",
+        },
+        "planned_task_training_h": 0.05,
+        "notes": ("不训练模型；只冻结数据/评分/折/提交契约。E0 为确定性检查"
+                  "（gate_type=boolean），不依赖 delta/CI。baseline_manifest_sha256 留空："
+                  "E0 没有上游 manifest，其参照是公开锚点 70.4907。"),
     }
     (REPORTS_DIR / "E0_gate_prereg.json").write_text(
         json.dumps(prereg, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -509,9 +555,10 @@ def main() -> int:
         "sw_valid_min": target_stats["SW"]["valid_rows_only"]["min"],
         "sw_valid_median": target_stats["SW"]["valid_rows_only"]["median"],
         "shard_cache": ({"built": cache_info.get("built"),
-                         "mb": round(cache_info.get("bytes", 0) / 1e6, 2),
-                         "input_cols_ok": cache_info.get("input_col_check_passed")}
-                        if args.with_cache else None),
+                         "mb": cache_info.get("mb", 0.0),
+                         "input_cols_ok": bool(cache_info.get("input_cols_ok")),
+                         "violations": cache_info.get("violations", [])}
+                        if args.with_cache else {"built": False}),
         "gate_passed": gate["passed"],
         "cloud_gate_passed": cloud_gate["passed"],
         "cloud_gate_status": cloud_gate["status"],

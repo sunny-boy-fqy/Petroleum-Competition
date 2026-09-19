@@ -109,7 +109,7 @@ def build_labels(targets: np.ndarray, target_missing: np.ndarray,
     返回:
         por      : (n,) float32  原始尺度
         perm_z   : (n,) float32  log10(PERM)，缺测处填 0（由 mask 屏蔽）
-        sw       : (n,) float32  原始尺度（99.9 占位 / [0,1] 有效 混列）
+        sw       : (n,) float32  标签尺度（占位 99.9；有效实测 8.305–99.9）
         mask     : (n, 3) float32 1=参与监督
         y_ph     : (n,) float32  联合占位标签
     """

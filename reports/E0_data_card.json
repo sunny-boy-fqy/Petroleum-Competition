@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "stage": "E0",
-  "created_at": "2026-09-19T12:56:56.204250+00:00",
+  "created_at": "2026-09-19T13:18:17.816473+00:00",
   "constants": {
     "columns": [
       "DEPTH",
@@ -138,118 +138,7 @@
     "non_monotonic_depth_rows": 0,
     "duplicate_depth_rows": 0,
     "malformed_rows": 0,
-    "noncanonical_schema_wells": [
-      {
-        "well_id": "d122f5424b9e4984a8f701d16c2d5b58",
-        "n_header_cols": 14,
-        "missing_columns": [
-          "POR",
-          "PERM",
-          "SW"
-        ],
-        "extra_columns": [],
-        "n_rows": 11831
-      },
-      {
-        "well_id": "d31c7c00187a45a18d99ff4aeb6f41f8",
-        "n_header_cols": 14,
-        "missing_columns": [
-          "POR",
-          "PERM",
-          "SW"
-        ],
-        "extra_columns": [],
-        "n_rows": 10253
-      },
-      {
-        "well_id": "d328607c7e2345f8abde4f0a88914f10",
-        "n_header_cols": 14,
-        "missing_columns": [
-          "POR",
-          "PERM",
-          "SW"
-        ],
-        "extra_columns": [],
-        "n_rows": 4494
-      },
-      {
-        "well_id": "d37f8e2e6f5a49e1b73faa1f63f16234",
-        "n_header_cols": 14,
-        "missing_columns": [
-          "POR",
-          "PERM",
-          "SW"
-        ],
-        "extra_columns": [],
-        "n_rows": 9515
-      },
-      {
-        "well_id": "d7292fe3563740af861cc555d9e56ccf",
-        "n_header_cols": 14,
-        "missing_columns": [
-          "POR",
-          "PERM",
-          "SW"
-        ],
-        "extra_columns": [],
-        "n_rows": 11671
-      },
-      {
-        "well_id": "d86db495824a4488b29d7748f0f7918b",
-        "n_header_cols": 14,
-        "missing_columns": [
-          "POR",
-          "PERM",
-          "SW"
-        ],
-        "extra_columns": [],
-        "n_rows": 8937
-      },
-      {
-        "well_id": "dfcebd460a6245f785d2bffeadab22bf",
-        "n_header_cols": 14,
-        "missing_columns": [
-          "POR",
-          "PERM",
-          "SW"
-        ],
-        "extra_columns": [],
-        "n_rows": 9793
-      },
-      {
-        "well_id": "e06301737a614f69bbf23ffec7fadf6d",
-        "n_header_cols": 14,
-        "missing_columns": [
-          "POR",
-          "PERM",
-          "SW"
-        ],
-        "extra_columns": [],
-        "n_rows": 9908
-      },
-      {
-        "well_id": "e0c83283f68842d485491214ae4b19b9",
-        "n_header_cols": 14,
-        "missing_columns": [
-          "POR",
-          "PERM",
-          "SW"
-        ],
-        "extra_columns": [],
-        "n_rows": 10194
-      },
-      {
-        "well_id": "e212a1accdf94193a3b8f8955d6432d8",
-        "n_header_cols": 14,
-        "missing_columns": [
-          "POR",
-          "PERM",
-          "SW"
-        ],
-        "extra_columns": [],
-        "n_rows": 9352
-      }
-    ],
+    "noncanonical_schema_wells": [],
     "optional_curve_well_counts": {},
     "expected_rows": 95948,
     "rows_match_contract": true
@@ -335,11 +224,31 @@
     "checked_wells": 18,
     "violations": [],
     "n_curves": 13,
+    "full_90_wells": {
+      "checked": 90,
+      "violations": 0,
+      "passed": true,
+      "examples": []
+    },
     "passed": true,
-    "scope": "sample (12 train + 6 test wells); 全量 90 井见 tools/check_data_leak.py"
+    "scope": "全量 90 井（train+test）逐井检查 13 列输入且输入列与任何目标列不完全相等；等价于 tools/check_data_leak.py"
   },
   "shard_cache": {
-    "built": false
+    "built": true,
+    "cache_root": "/tmp/v4cache_final",
+    "counts": {
+      "train_wells": 80,
+      "test_wells": 10,
+      "train_rows": 730268,
+      "test_rows": 95948,
+      "placeholder_rows": 487225,
+      "missing_rows": 6700,
+      "valid_rows": 236343
+    },
+    "manifest": "/tmp/v4cache_final/manifest.json",
+    "mb": 32.39,
+    "input_cols_ok": true,
+    "violations": []
   },
   "folds": {
     "path": "/home/fangqiyu/projects/Petroleum-Competition/v4/versions/reference/v1_well_folds.json",

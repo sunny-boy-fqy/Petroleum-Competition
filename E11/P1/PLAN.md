@@ -104,6 +104,7 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
   "stage": "E11",
   "p_stage": "P1",
   "created_at": "<ISO8601，写盘时填写>",
+  "gate_type": "boolean",
   "primary_metric": "retrospective_complete",
   "primary_threshold_key": "min_delta",
   "baseline_version": "<已冻结候选或 CONST>",

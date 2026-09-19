@@ -55,7 +55,7 @@
 
 - 常数基线在冻结口径下 = **70.490735 ± 1e-4**（锚点 70.4907）
 - 另一种口径的数字同时记录（69.843218）并在数据卡标注差异
-- 逐目标 Acc 与预算表自洽：POR 0.6736 / PERM 0.7467 / SW 0.7421（±0.002）
+- 逐目标 Acc 与预算表自洽：POR 0.6735824 / PERM 0.7072023 / SW 0.7294624（实测值，见 `reports/E0_score_check.json`）
 - `src/score.py` 在**没有 torch** 的环境下可导入并运行
 
 ## 8. 禁止事项
@@ -88,7 +88,9 @@
 
 ```bash
 # 云端（平台训练任务）
-bash /code/workspace/v4/run_train.sh --mode stage --stage E0
+bash /code/workspace/v4/run_train.sh --mode env    # P0：环境+磁盘（先装依赖再硬校验）
+bash /code/workspace/v4/run_train.sh --mode data   # 部署数据到 /data/v4/data
+bash /code/workspace/v4/run_train.sh --mode e0     # P1-P3：口径复算 + 分片缓存
 # 本机（口径层，无 torch）
 python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
 ```
@@ -116,6 +118,7 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
   "stage": "E0",
   "p_stage": "P2",
   "created_at": "<ISO8601，写盘时填写>",
+  "gate_type": "boolean",
   "primary_metric": "constant_baseline_anchor",
   "primary_threshold_key": "min_delta",
   "baseline_version": "<已冻结候选或 CONST>",

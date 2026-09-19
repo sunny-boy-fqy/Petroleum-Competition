@@ -11,7 +11,7 @@
 ```
 v4/
 ├── README.md                 总入口：环境、平台速查、当前状态
-├── PLAN.md                   总计划（661 行，唯一权威）
+├── PLAN.md                   总计划（729 行，唯一权威）
 ├── 资料引用索引.md            每处引用的可核验定位
 ├── run_train.sh              平台训练任务统一入口（env/data/e0/smoke/stage/all）
 ├── predict.py                推理入口（官方 --data_dir/--output）
@@ -37,7 +37,7 @@ v4/
 │   ├── score.py                  官方评分器（drop 口径）
 │   ├── data/
 │   │   ├── parse.py              按表头名对齐的解析器（处理 3 口非规范 schema 井）
-│   │   ├── labels.py             三状态判据、SW 双尺度、PERM log 变换
+│   │   ├── labels.py             三状态判据、SW 尺度校验、PERM log 变换
 │   │   ├── dataset.py            按井分片缓存（raw/labels npz）
 │   │   └── disk_guard.py         30 GB 磁盘守卫（cleanup/save_and_exit/abort）
 │   ├── features/                 F1 行级特征（basic.py）+ E2 特征组（physics/window/well）
@@ -69,12 +69,23 @@ v4/
 │   ├── E0_data_card.json         数据卡（计数/状态/schema 异常）
 │   └── E0_contract_tests.json    契约自检（6 负样例）
 │
+├── tests/                    口径层测试（**不需要 torch**，52 项）
+│   ├── run_all.py                一键运行（unittest discover）
+│   ├── test_parse.py             列布局/泄漏回归/畸形井/哨兵/特征/标签（11 项）
+│   ├── test_score.py             官方公式边界/两种口径/总分恒等式/锚点（11 项）
+│   ├── test_contract.py          井数/每井行数/深度对齐/SW 尺度守卫（14 项）
+│   └── test_gates.py             Gate 类型/绝对门槛/模板校验（16 项）
+│
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
 │   ├── bootstrap_data.sh         部署数据到 /data（校验 sha256 + 行数 + 3 口畸形井）
 │   ├── verify_reference.py       校验冻结折文件与数据指纹
 │   ├── check_consistency.py      候选注册表与评分口径自洽校验
-│   └── check_status.py           状态台账与实物一致性校验
+│   ├── check_status.py           状态台账与实物一致性校验
+│   ├── check_data_leak.py        全量 90 井输入-标签泄漏回归
+│   ├── plan_stats.py             计划行数统计（唯一事实源）
+│   ├── sync_plan_stats.py        把实测行数同步进文档
+│   └── gen_data_card_md.py       由 JSON 生成数据卡统计表
 │
 ├── artifacts/E0/folds.json   outer + inner 折导出（本地便利副本，可重算；权威副本在 $V4_REPORTS_DIR/E0_folds.json）
 ├── dist/                     [gitignore] 数据包与清单（上传云盘用）
@@ -126,8 +137,8 @@ v4/
 | 项 | 数量 |
 |---|---:|
 | git 跟踪文件 | 见 `git ls-files \| wc -l` |
-| 计划文件（`PLAN.md`） | 1（总）+ 12（阶段）+ 33（P）= **46** |
-| P 级计划平均篇幅 | ≈224 行 |
+| 计划文件（`PLAN.md`） | 1（总，729 行）+ 12（阶段，708 行）+ 33（P，4,986 行）= **46 份 / 6,423 行** |
+| P 级计划平均篇幅 | **151 行**（合计 4,986；由 `tools/plan_stats.py` 统计） |
 | 代码模块（`v4/src/**/*.py`） | 见 `find v4/src -name '*.py' \| wc -l` |
 | E 层脚本（`v4/E*/code/*.py`） | 见 `find v4/E* -name '*.py' \| wc -l` |
 

@@ -108,6 +108,7 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
   "stage": "E9",
   "p_stage": "P2",
   "created_at": "<ISO8601，写盘时填写>",
+  "gate_type": "delta",
   "primary_metric": "a_board_no_breakdown",
   "primary_threshold_key": "min_delta",
   "baseline_version": "<已冻结候选或 CONST>",
