@@ -11,8 +11,9 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import re
+import shutil
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -127,6 +128,12 @@ class TestCommittedE0CacheEvidence(unittest.TestCase):
         self.assertGreater(sw["valid_rows_only"]["min"], 1.0)
 
 
+def _in_git_worktree() -> bool:
+    """非 git 工作树（例如 `git archive` 解出的目录）里 `git check-ignore` 无法用。"""
+    return (V4 / ".git").exists() and shutil.which("git") is not None
+
+
+@unittest.skipUnless(_in_git_worktree(), "不在 git 工作树中（git archive 解包目录）")
 class TestGitignoreDoesNotShadowSources(unittest.TestCase):
     """.gitignore 的目录模式不得误伤同名源码目录（R3 实际事故）。
 
