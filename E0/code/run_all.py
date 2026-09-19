@@ -646,7 +646,7 @@ def main() -> int:
         "disk_budget_level": disk_level,
         "disk_budget_expected_data_root": DATA_ROOT,
         "how_to_satisfy": (
-            "在平台训练任务执行 `bash /code/workspace/v4/run_train.sh --mode env`，"
+            "在平台训练任务执行 `bash \"$(find /code/workspace -name run_train.sh | head -1)\" --mode env`，"
             "产出 $V4_REPORTS_DIR/E0_env.json 与 E0_disk_budget.json，然后重跑本脚本。"
         ),
         "note": ("E0 阶段只有在本地契约 Gate 与云端 Gate **都通过**后才算完成；"

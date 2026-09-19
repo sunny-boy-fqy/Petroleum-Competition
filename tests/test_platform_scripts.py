@@ -1011,6 +1011,50 @@ class TestPushProtocolIsDocumented(unittest.TestCase):
         self.assertEqual(out, self.REMOTE)
 
 
+class TestStartCommandsAreLocationIndependent(unittest.TestCase):
+    """仓库根 = `v4/` 的内容，所以平台克隆目录**不叫 `v4`**。
+
+    文档若硬编码 `/code/workspace/v4/run_train.sh`，平台任务会直接 `No such file`。
+    所有入口文档与 P 级计划必须用 `find` 自定位写法。
+    """
+
+    RESOLVER = 'bash "$(find /code/workspace -name run_train.sh | head -1)"'
+
+    def test_no_doc_hardcodes_the_clone_path(self):
+        docs = ["README.md", "PLAN.md", "dist/README.md", "docs/platform_setup.md",
+                "docs/training_tasks.md", "docs/image_requirements.md", "E0/docs/data_card.md"]
+        docs += [str(p.relative_to(V4)) for p in sorted(V4.glob("E*/P*/PLAN.md"))]
+        docs += [str(p.relative_to(V4)) for p in sorted(V4.glob("E*/PLAN.md"))]
+        bad: list[str] = []
+        for rel in docs:
+            if not (V4 / rel).is_file():
+                continue
+            src = _read(rel)
+            if "/code/workspace/v4" in src:
+                bad.append(rel)
+        self.assertEqual(bad, [], f"这些文件仍硬编码 /code/workspace/v4：{bad}")
+
+    def test_entry_docs_use_the_resolver(self):
+        for rel in ("README.md", "docs/platform_setup.md", "docs/training_tasks.md",
+                    "dist/README.md"):
+            self.assertIn(self.RESOLVER, _read(rel),
+                          f"{rel} 必须给出位置无关的启动命令写法")
+
+    def test_generator_emits_the_resolver(self):
+        """生成器里的内层引号必须转义（否则会写出 Python 字符串语法错误）。"""
+        gen = _read("docs/gen_p_details.py")
+        self.assertIn('find /code/workspace -name run_train.sh', gen)
+        self.assertIn('bash \\"$(find /code/workspace -name run_train.sh | head -1)\\"', gen)
+        self.assertNotIn("/code/workspace/v4", gen)
+        # 生成的 P 级计划里必须是**未转义**的真实命令
+        self.assertIn(self.RESOLVER, _read("E0/P0/PLAN.md"))
+
+    def test_resolver_command_is_under_the_platform_limit(self):
+        """启动命令上限 500 字符（平台硬约束）。"""
+        for suffix in (" --mode env", " --mode data", " --mode e0", " --mode all"):
+            self.assertLess(len(self.RESOLVER + suffix), 500)
+
+
 def _in_git_worktree() -> bool:
     """非 git 工作树（例如 `git archive` 解出的目录）里 `git check-ignore` 无法用。"""
     return (V4 / ".git").exists() and shutil.which("git") is not None

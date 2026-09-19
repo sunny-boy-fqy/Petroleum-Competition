@@ -8,7 +8,7 @@
 #   - 启动命令最长 500 字符，因此本脚本承担全部编排逻辑
 #
 # 平台【启动命令】填：
-#     bash /code/workspace/v4/run_train.sh --mode all
+#     bash "$(find /code/workspace -name run_train.sh | head -1)" --mode all
 #
 # 常用模式：
 #   --mode env      环境自检 + 安装额外轻量依赖（不碰 torch）
@@ -29,7 +29,7 @@
 # =============================================================================
 set -euo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"     # /code/workspace/v4
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"     # 自定位：/code/workspace/<仓库名>
 DATA_ROOT="${V4_DATA_ROOT:-/data}"
 RUN_ROOT="${V4_RUN_ROOT:-$DATA_ROOT/v4/runs}"
 CACHE_ROOT="${V4_CACHE_ROOT:-$DATA_ROOT/v4/cache}"
@@ -77,7 +77,7 @@ log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
 
 log "=============================================================="
 log "v4 training task  mode=$MODE stage=$STAGE"
-log "repo(HERE)   = $HERE            <- /code/workspace/v4 (临时)"
+log "repo(HERE)   = $HERE            <- /code/workspace/<仓库名> (临时，实测值即本行)"
 log "DATA_ROOT    = $DATA_ROOT       <- 云盘（持久）"
 log "RUN_ROOT     = $RUN_ROOT"
 log "CACHE_ROOT   = $CACHE_ROOT"

@@ -127,7 +127,7 @@ v4/
 ## 三、云端的四处目录（平台约定）
 
 ```
-/code/workspace/v4/            git clone（**临时**，任务结束即丢）
+/code/workspace/<仓库名>/      git clone（**临时**，任务结束即丢；目录名由平台决定）
 /data/v4/data/{train,test}/    数据集（部署一次，永久）
 /data/v4/{cache,runs,reports,logs,tb}/
                               缓存 / checkpoint / Gate 报告 / 日志 / TensorBoard（永久）

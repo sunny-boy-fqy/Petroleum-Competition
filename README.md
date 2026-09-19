@@ -31,7 +31,7 @@
 因此本仓库只放代码，数据/缓存/checkpoint/报告全部写 `/data`：
 
 ```
-/code/workspace/v4/          <- 本仓库（临时，任务结束即丢）
+/code/workspace/<仓库名>/    <- 本仓库（临时，任务结束即丢；仓库根 = v4 的内容）
 /data/v4/data/               <- 数据集（一次性部署，永久保留）
 /data/v4/{cache,runs,reports,logs,tb}/   <- 缓存 / checkpoint / Gate 报告 / 日志 / TensorBoard
 ```
@@ -39,7 +39,7 @@
 平台【启动命令】只填一句：
 
 ```bash
-bash /code/workspace/v4/run_train.sh --mode all
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode all
 ```
 
 `run_train.sh` 的模式：`env`（环境+磁盘自检+装轻量依赖）、`data`（部署数据集到 `/data`）、
@@ -61,9 +61,9 @@ python3 v4/tools/verify_reference.py
 # 【本机】③ 推送代码（提交 → push → 记下 revision）
 cd v4 && git add -A && git commit -m "..." && git push origin master && git log --oneline -1
 
-# 【平台】任务1：环境与磁盘自检  bash /code/workspace/v4/run_train.sh --mode env
-# 【平台】任务2：部署数据到 /data  bash /code/workspace/v4/run_train.sh --mode data
-# 【平台】任务3：口径复算 E0      bash /code/workspace/v4/run_train.sh --mode e0
+# 【平台】任务1：环境与磁盘自检  bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env
+# 【平台】任务2：部署数据到 /data  bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data
+# 【平台】任务3：口径复算 E0      bash "$(find /code/workspace -name run_train.sh | head -1)" --mode e0
 ```
 
 ## 环境（两机分离）
@@ -73,7 +73,7 @@ cd v4 && git add -A && git commit -m "..." && git push origin master && git log 
 | 角色 | 写代码、生成数据包、跑口径层单测、组装提交包 | 训练、OOF 推理、集成 |
 | 硬件 | 无 GPU、`v2/.venv` 有 numpy/pandas、**无 torch** | **1× A100 80GB**、4000m vCPU、**16 GiB 系统内存**、**30 GB 磁盘** |
 | 软件 | 系统 Python 3.12（仅用于口径层） | **CUDA 12.8 / PyTorch 2.7.1 / Python 3.11**（平台镜像预装，**无 conda**，不得改 torch 版本；额外轻量包可 `pip install --no-cache-dir`） |
-| 目录 | `../data`、`./reports` | 代码 `/code/workspace/v4`（临时）；数据与产物 `/data/v4/*`（持久） |
+| 目录 | `../data`、`./reports` | 代码 `/code/workspace/<仓库名>`（临时，用 `find` 定位，别硬编码）；数据与产物 `/data/v4/*`（持久） |
 
 **四条铁律**
 
@@ -106,7 +106,7 @@ E0 契约 → E1 行级基线 → E2 特征 → E3 序列主干 → E4 多尺度
 | 字段 | 值 |
 |---|---|
 | 代码来源 | **Git 仓库**（本仓库）；分支 `main` |
-| 启动命令 | `bash /code/workspace/v4/run_train.sh --mode all` |
+| 启动命令 | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode all` |
 | 资源 | Nvidia **A100 × 1**（80 GB 显存） |
 | 镜像 | 见 [`docs/image_requirements.md`](docs/image_requirements.md)（训练任务场景；torch 2.7.1 / CUDA 12.8 / py3.11） |
 | 运行时长 | 自检/数据 0h30m；E1 2h；E3 20h；E8 40h（软预算） |
@@ -114,11 +114,11 @@ E0 契约 → E1 行级基线 → E2 特征 → E3 序列主干 → E4 多尺度
 任务序列（每个都可独立成任务，见 [`docs/platform_setup.md`](docs/platform_setup.md) §四）：
 
 ```bash
-bash /code/workspace/v4/run_train.sh --mode env    # ① 环境 + 磁盘 + 装轻量依赖
-bash /code/workspace/v4/run_train.sh --mode data   # ② 解压数据到 /data/v4/data（只需一次）
-bash /code/workspace/v4/run_train.sh --mode e0     # ③ 数据卡 + 常数基线 70.490735 + 折指纹 + 契约自检
-bash /code/workspace/v4/run_train.sh --mode smoke  # ④ 极小规模冒烟（E1 实现后）
-bash /code/workspace/v4/run_train.sh --mode stage --stage E1 --resume   # ⑤ 训练（可续训）
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env    # ① 环境 + 磁盘 + 装轻量依赖
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data   # ② 解压数据到 /data/v4/data（只需一次）
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode e0     # ③ 数据卡 + 常数基线 70.490735 + 折指纹 + 契约自检
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode smoke  # ④ 极小规模冒烟（E1 实现后）
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage E1 --resume   # ⑤ 训练（可续训）
 ```
 
 本机（无 torch）也可跑通口径层与提交契约：

@@ -76,7 +76,7 @@
 
 ```bash
 # 云端（平台训练任务）
-bash /code/workspace/v4/run_train.sh --mode stage --stage E11
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage E11
 # 本机（口径层，无 torch）
 python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
 ```

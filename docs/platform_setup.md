@@ -14,7 +14,7 @@
 | 平台约定 | 出处 | 对 v4 的影响 |
 |---|---|---|
 | 训练任务代码来源三选一：**Git 仓库 / 本地上传 / 我的云盘** | 训练任务文档 §选择代码来源 | v4 用 **Git 仓库**（本仓库） |
-| Git 仓库代码被复制到**临时**目录 `/code/workspace`，任务结束即丢 | 同上 | 启动命令必须基于 `/code/workspace/v4/...` 填写；**代码里不得写入需要保留的东西** |
+| Git 仓库代码被复制到**临时**目录 `/code/workspace`，任务结束即丢 | 同上 | 启动命令**不得硬编码**克隆目录（用 `$(find /code/workspace -name run_train.sh | head -1)` 定位）；**代码里不得写入需要保留的东西** |
 | **云盘挂载在 `/data`**，任务结束/资源释放后仍保留 | 同上 + §云盘持久化 | 数据、缓存、checkpoint、日志、报告**全部写 `/data/v4/...`** |
 | 启动命令最长 **500 字符** | 训练任务文档 §填写启动命令 | 所有编排逻辑封装进 `run_train.sh`，启动命令只有一句 |
 | 单次任务运行时长最长 **7×24 h** | 训练任务文档 §设置运行时长 | 与 D1（用户放宽 100h）兼容；但仍要求 checkpoint 可续训 |
@@ -24,13 +24,32 @@
 | 平台**最多创建 5 个镜像**；镜像使用场景（开发机 / 训练任务）互不通用 | 镜像文档 §常见问题 4、6 | 只构建**一个**「训练任务」场景镜像；开发机侧用官方镜像即可 |
 | 镜像可用【快捷安装】(apt/pip) 或【Dockerfile 编辑】 | 镜像文档 §配置构建方式 | v4 用快捷安装即可（只需 pip 轻量包） |
 
+> **克隆目录名不要猜（重要）**：本 git 仓库的**根就是 `v4/` 的内容**（`run_train.sh`、
+> `src/`、`E0/`… 直接位于仓库根），所以平台解压出来的目录**不叫 `v4`** ——
+> 可能是 `/code/workspace/Petroleum-Competition/`，也可能直接是 `/code/workspace/`。
+> 因此**所有启动命令一律写成位置无关形式**：
+>
+> ```bash
+> bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env
+> ```
+>
+> 需要引用仓库内其它文件时先取根目录：
+>
+> ```bash
+> V4="$(dirname "$(find /code/workspace -name run_train.sh | head -1)")"
+> python3 "$V4/E0/code/check_env.py" --profile full
+> ```
+>
+> `run_train.sh` 内部用 `$HERE` 自定位，所以仓库放在哪里都能跑；`--mode env` 的日志会打印
+> 实测的 `repo(HERE) = ...`，想改用具体路径时照抄那一行即可。
+
 ---
 
 ## 二、两机三处：代码 / 数据 / 产物
 
 ```
 本机（开发机，无 GPU）                     云端（Intern InkStone）
-├── 写代码、跑口径层单测                    ├── /code/workspace/v4/   ← git clone（临时！）
+├── 写代码、跑口径层单测                    ├── /code/workspace/<仓库名>/  ← git clone（临时！）
 ├── tools/pack_dataset.py 生成 31 MB 数据包  ├── /data/v4/data/         ← 云盘（持久）
 └── git push                               ├── /data/v4/cache/        ← 云盘（持久）
                                            ├── /data/v4/runs/         ← 云盘（持久，checkpoint）
@@ -92,7 +111,7 @@ tensorboard
 ### 步骤 2：把数据放到云盘 `/data`
 
 **R5-B1 必读**：`dist/*.tar.gz` 与 `dist/*.json` 被 `.gitignore` 忽略，所以云端从 Git
-克隆出来的 `/code/workspace/v4/dist/` **不可能**有 tarball。你必须把 tarball 放到云盘，
+克隆出来的 `dist/` **不可能**有 tarball（仓库根 = v4 的内容）。你必须把 tarball 放到云盘，
 `bootstrap_data.sh` 会按下面的顺序找它：
 
 | 优先级 | 位置 | 说明 |
@@ -110,19 +129,20 @@ manifest（`v4_data_manifest.json`，≈23 KB）同法搜索；**建议与 tarba
 
 - **A. 平台云盘上传**：把 `v4_data.tar.gz`（可选带上 `v4_data_manifest.json`）传到云盘
   **`/data/` 根目录**，然后在一个训练任务里执行
-  `bash /code/workspace/v4/run_train.sh --mode data`；
+  `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data`；
 - **B. 开发机直传**：在「我的开发机」里把文件放到云盘目录（`/data`）后再执行同一命令。
 
 若文件在别的位置（例如 `/data/uploads/v4_data.tar.gz`），显式传参即可（启动命令仍 ≤500 字符）：
 
 ```bash
-bash /code/workspace/v4/run_train.sh --mode data --tarball /data/uploads/v4_data.tar.gz
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data --tarball /data/uploads/v4_data.tar.gz
 ```
 
 校验（应输出 `RESULT: OK`，含 80/10 井、730,268/95,948 行、3 口畸形井 `OK`）：
 
 ```bash
-V4_DATA_ROOT=/data bash /code/workspace/v4/tools/bootstrap_data.sh
+V4="$(dirname "$(find /code/workspace -name run_train.sh | head -1)")"
+V4_DATA_ROOT=/data bash "$V4/tools/bootstrap_data.sh"
 ```
 
 > 数据只需部署**一次**；`/data` 持久保留，后续任务直接用。
@@ -158,7 +178,7 @@ git log --oneline -1        # 记下这个 revision —— 平台任务跑的就
 | 任务名称 | `v4-E0-env-check` / `v4-E1-row-baseline` / … |
 | 代码来源 | **Git 仓库** |
 | 仓库地址 / 分支 | `git@github.com:sunny-boy-fqy/Petroleum-Competition.git` / **`master`** |
-| **启动命令**（≤500 字符） | `bash /code/workspace/v4/run_train.sh --mode all` |
+| **启动命令**（≤500 字符） | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode all` |
 | 资源配置 | **Nvidia A100 \* 1**（80 GB 显存），4000m vCPU / 16 GiB 内存 |
 | 镜像 | 【我的镜像】→ `v4-train-py311-torch271-cu128`（步骤 1 构建）；未构建则先用官方 PyTorch 2.7.1 / CUDA 12.8 / Python 3.11 镜像 |
 | 训练数据集 / 验证数据集 | 可不挂载（数据在云盘 `/data`）；若平台数据集功能里有原始井数据，可挂载后在 `run_train.sh` 里加 `--from-dir` |
@@ -169,11 +189,11 @@ git log --oneline -1        # 记下这个 revision —— 平台任务跑的就
 
 | # | 任务名 | 启动命令 | 预期 |
 |---|---|---|---|
-| 1 | `v4-bootstrap` | `bash /code/workspace/v4/run_train.sh --mode env` | 打印 torch 2.7.1 / A100 sm_80 / bf16 / 磁盘剩余；把 `E0_env.json`、`E0_disk_budget.json` 写入 `/data/v4/reports/` |
-| 2 | `v4-data` | `bash /code/workspace/v4/run_train.sh --mode data` | 解压数据到 `/data/v4/data`，`RESULT: OK` |
-| 3 | `v4-e0` | `bash /code/workspace/v4/run_train.sh --mode e0` | 数据卡 + 常数基线 70.490735 + 折指纹 + 契约自检；`E0_gate.json` passed=true |
-| 4 | `v4-smoke` | `bash /code/workspace/v4/run_train.sh --mode smoke` | 1 折 / 2 epoch / 8 井，验证训练链路（需 E1 代码实现后） |
-| 5+ | `v4-E1`…`v4-E8` | `bash /code/workspace/v4/run_train.sh --mode stage --stage E1` | 按 PLAN §七 推进 |
+| 1 | `v4-bootstrap` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env` | 打印 torch 2.7.1 / A100 sm_80 / bf16 / 磁盘剩余；把 `E0_env.json`、`E0_disk_budget.json` 写入 `/data/v4/reports/` |
+| 2 | `v4-data` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data` | 解压数据到 `/data/v4/data`，`RESULT: OK` |
+| 3 | `v4-e0` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode e0` | 数据卡 + 常数基线 70.490735 + 折指纹 + 契约自检；`E0_gate.json` passed=true |
+| 4 | `v4-smoke` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode smoke` | 1 折 / 2 epoch / 8 井，验证训练链路（需 E1 代码实现后） |
+| 5+ | `v4-E1`…`v4-E8` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage E1` | 按 PLAN §七 推进 |
 
 > `--mode all` 会串行执行 env → data → e0 → 首个可用训练阶段，适合单次跑完前置检查。
 
@@ -187,7 +207,8 @@ git log --oneline -1        # 记下这个 revision —— 平台任务跑的就
 ```bash
 df -h / /data /code/workspace        # 运行任务时看，确认容量与是否同一挂载点
 du -sh /data/* 2>/dev/null | sort -h # 确认占用分布
-python3 /code/workspace/v4/src/data/disk_guard.py --min-free-gb 8 \
+V4="$(dirname "$(find /code/workspace -name run_train.sh | head -1)")"
+python3 "$V4/src/data/disk_guard.py" --min-free-gb 8 \
         --report /code/workspace,/data --json /data/v4/reports/disk.json
 ```
 
@@ -203,7 +224,7 @@ python3 /code/workspace/v4/src/data/disk_guard.py --min-free-gb 8 \
 
 ```bash
 # 新任务的启动命令
-bash /code/workspace/v4/run_train.sh --mode stage --stage E3 --resume
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage E3 --resume
 # run_train.sh 会把 --resume 透传给训练脚本，从 $V4_RUN_ROOT/E3/last.pt 恢复
 ```
 

@@ -24,8 +24,15 @@
 | 训练/验证数据集 | 不挂载（数据走云盘 `/data`） |
 | 超参数 | 不填（全部通过 `run_train.sh` 参数传递） |
 
-代码会被克隆到 **`/code/workspace/v4/`**，所以启动命令一律以
-`bash /code/workspace/v4/run_train.sh` 开头。
+代码会被克隆到 **`/code/workspace/<平台决定的目录名>/`**（本仓库的根就是 v4 的内容，
+所以目录名**不一定是** `v4`），因此启动命令一律用**位置无关**写法开头：
+
+```bash
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env
+```
+
+`run_train.sh` 内部用 `$HERE` 自定位，`--mode env` 的日志第一行会打印真实的
+`repo(HERE) = ...`，需要时可据此改用具体路径。
 
 ---
 
@@ -33,7 +40,7 @@
 
 | 字段 | 值 |
 |---|---|
-| 启动命令 | `bash /code/workspace/v4/run_train.sh --mode env` |
+| 启动命令 | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env` |
 | 运行时长 | 0h30m |
 | 产出（持久） | `/data/v4/reports/E0_env.json`、`/data/v4/reports/E0_disk_budget.json`、`/data/v4/logs/*.log` |
 | 判据 | 日志中 `hard failures: 0`；`torch 2.7.1` / `A100 sm_80` / `bf16=True` / `free >= 8 GiB` |
@@ -52,21 +59,21 @@
 
 | 字段 | 值 |
 |---|---|
-| 启动命令 | `bash /code/workspace/v4/run_train.sh --mode data` |
-| 备选启动命令 | `bash /code/workspace/v4/run_train.sh --mode data --tarball /data/uploads/v4_data.tar.gz` |
+| 启动命令 | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data` |
+| 备选启动命令 | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data --tarball /data/uploads/v4_data.tar.gz` |
 | 运行时长 | 0h30m |
 | 产出（持久） | `/data/v4/data/{train,test}/*.txt`、`/data/v4/data/folds/v1_well_folds.json` |
 | 判据 | 日志出现 `train wells=80 rows=730268`、`test wells=10 rows=95948`、`RESULT: OK` |
 | 幂等 | 可重复执行；manifest 存在时重算 tarball sha256，井数与行数**每次都无条件硬校验**（R5-H2） |
 
 > 若把数据做成了平台**数据集**并挂载成功，可改用：
-> `bash /code/workspace/v4/tools/bootstrap_data.sh --from-dir <挂载目录>`
+> `bash "$(dirname "$(find /code/workspace -name run_train.sh | head -1)")/tools/bootstrap_data.sh" --from-dir <挂载目录>
 
 ## 任务 3：`v4-e0` — 口径复算（必做，≈1 min）
 
 | 字段 | 值 |
 |---|---|
-| 启动命令 | `bash /code/workspace/v4/run_train.sh --mode e0` |
+| 启动命令 | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode e0` |
 | 运行时长 | 0h30m |
 | 产出（持久） | `/data/v4/reports/E0_data_card.json`、`E0_gate.json`、`E0_contract_tests.json` |
 | 判据 | `const_baseline_drop: 70.490735`、`anchor_hit: true`、`contract_selftest: true`、`gate_passed: true` |
@@ -76,7 +83,7 @@
 
 | 字段 | 值 |
 |---|---|
-| 启动命令 | `bash /code/workspace/v4/run_train.sh --mode smoke` |
+| 启动命令 | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode smoke` |
 | 运行时长 | 0h30m |
 | 判据 | 1 折 / 8 井 / 2 epoch 跑完，产出 OOF，且契约校验通过 |
 | 当前状态 | E1 训练脚本尚未实现，脚本会**明确报错**而不是静默跳过 |
@@ -85,14 +92,14 @@
 
 | 阶段 | 启动命令 | 建议时长（软预算） | 产出 |
 |---|---|---|---|
-| E1 行级基线 | `bash /code/workspace/v4/run_train.sh --mode stage --stage E1` | 2h | `$RUN_ROOT/E1/*`、OOF |
+| E1 行级基线 | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage E1` | 2h | `$RUN_ROOT/E1/*`、OOF |
 | E3 序列主干 | `... --stage E3` | 20h | `$RUN_ROOT/E3/*` |
 | E8 集成 | `... --stage E8` | 40h | `$RUN_ROOT/E8/*` |
 
 **续训**（平台停止任务后不能直接续跑，必须新建任务）：
 
 ```bash
-bash /code/workspace/v4/run_train.sh --mode stage --stage E3 --resume
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage E3 --resume
 # run_train.sh 把 --resume 透传，训练脚本从 $V4_RUN_ROOT/E3/last.pt 恢复
 ```
 

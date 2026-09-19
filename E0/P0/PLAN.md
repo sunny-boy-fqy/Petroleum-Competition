@@ -34,7 +34,7 @@
 
 ## 5. 执行步骤
 
-1. `bash /code/workspace/v4/run_train.sh --mode env`
+1. `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env`
 2. 读日志确认 `hard failures: 0`，逐项核对 torch/cuda/gpu/bf16/disk 五行
 3. `df -h / /data /code/workspace` 记录三个挂载点的容量与是否同盘，并写入 `E0_disk_budget.json::paths`（Gate 的 `disk_budget_ok` 只看 DATA-ROOT 级别）
 4. `du -sh /usr /opt /root 2>/dev/null` 记录镜像本体占用，推算项目可用空间
@@ -91,9 +91,9 @@
 
 ```bash
 # 云端（平台训练任务）
-bash /code/workspace/v4/run_train.sh --mode env    # P0：环境+磁盘（先装依赖再硬校验）
-bash /code/workspace/v4/run_train.sh --mode data   # 部署数据到 /data/v4/data
-bash /code/workspace/v4/run_train.sh --mode e0     # P1-P3：口径复算 + 分片缓存
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env    # P0：环境+磁盘（先装依赖再硬校验）
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data   # 部署数据到 /data/v4/data
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode e0     # P1-P3：口径复算 + 分片缓存
 # 本机（口径层，无 torch）
 python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
 ```

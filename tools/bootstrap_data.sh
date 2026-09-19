@@ -4,7 +4,7 @@
 # 为什么必须放在 /data：
 #   平台把 Git 仓库代码解压到**临时**目录 /code/workspace，任务结束即丢失；
 #   只有 /data（云盘）的内容会保留。因此：
-#     代码   -> /code/workspace/v4/...        （每次任务重新 clone，可丢）
+#     代码   -> /code/workspace/<仓库名>/...  （每次任务重新 clone，可丢；目录名由平台决定）
 #     数据   -> /data/v4/data/...             （只部署一次，永久保留）
 #     缓存   -> /data/v4/cache/...
 #     运行产物 -> /data/v4/runs/...
@@ -227,7 +227,7 @@ PY
 echo
 echo "数据就绪。训练任务中请设置："
 echo "  export V4_DATA_ROOT=$DATA_ROOT"
-echo "  python3 /code/workspace/v4/E0/code/check_env.py --json $DATA_ROOT/v4/reports/E0_env.json"
+echo "  python3 \"$V4/E0/code/check_env.py\" --json $DATA_ROOT/v4/reports/E0_env.json"
 if [[ "$DEST_EXPLICIT" == "1" && "$DEST" != "$DATA_ROOT/v4/data" ]]; then
   echo "注意：本次使用了自定义 --dest=$DEST；check_env/训练脚本默认读"
   echo "      \$V4_DATA_ROOT/v4/data，所以自定义 dest 只适合手工验证，正式部署请用默认 dest。"

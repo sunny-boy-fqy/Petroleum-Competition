@@ -104,9 +104,9 @@
 
 ```bash
 # 云端（平台训练任务）
-bash /code/workspace/v4/run_train.sh --mode env    # P0：环境+磁盘（先装依赖再硬校验）
-bash /code/workspace/v4/run_train.sh --mode data   # 部署数据到 /data/v4/data
-bash /code/workspace/v4/run_train.sh --mode e0     # P1-P3：口径复算 + 分片缓存
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env    # P0：环境+磁盘（先装依赖再硬校验）
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data   # 部署数据到 /data/v4/data
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode e0     # P1-P3：口径复算 + 分片缓存
 # 本机（口径层，无 torch）
 python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
 ```

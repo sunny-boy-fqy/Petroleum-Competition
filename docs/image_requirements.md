@@ -116,7 +116,7 @@ PY
 ## 四、镜像构建后自检（在任意训练任务里跑）
 
 ```bash
-bash /code/workspace/v4/run_train.sh --mode env
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env
 ```
 
 期望输出（`check_env.py` 的 hard 检查全过）：

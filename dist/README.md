@@ -18,7 +18,7 @@ python3 v4/tools/pack_dataset.py
 ## 部署到平台云盘 `/data`
 
 > **R5-B1 必读**：本目录不进 git（`dist/*.tar.gz`、`dist/*.json` 全被忽略），
-> 所以云端从 Git 克隆出的 `/code/workspace/v4/dist/` 里**没有** tarball。
+> 所以云端克隆出来的 `dist/` 里**没有** tarball（仓库根就是 v4 的内容，克隆目录名由平台决定）。
 > 必须把 tarball 放到云盘，脚本会按以下顺序搜索：
 > `--tarball` / `$V4_DATA_TARBALL` → `$V4/dist/v4_data.tar.gz` →
 > **`$DATA_ROOT/v4_data.tar.gz`（云端推荐）** → `$DATA_ROOT/dist/v4_data.tar.gz`。
@@ -28,11 +28,12 @@ python3 v4/tools/pack_dataset.py
 2. 在训练任务里执行：
 
 ```bash
-bash /code/workspace/v4/run_train.sh --mode data
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data
 # 等价于（上传到 /data 根时无需任何参数）：
-V4_DATA_ROOT=/data bash /code/workspace/v4/tools/bootstrap_data.sh
+V4="$(dirname "$(find /code/workspace -name run_train.sh | head -1)")"
+V4_DATA_ROOT=/data bash "$V4/tools/bootstrap_data.sh"
 # 上传到别处时显式指定：
-bash /code/workspace/v4/run_train.sh --mode data --tarball /data/uploads/v4_data.tar.gz
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data --tarball /data/uploads/v4_data.tar.gz
 ```
 
 找不到 tarball 时会打印**搜索过的全部位置**并以 `exit 4` 退出，而不是静默失败。
@@ -58,5 +59,6 @@ RESULT: OK
 若你确实把数据做成了平台数据集并挂载成功，可改用：
 
 ```bash
-bash /code/workspace/v4/tools/bootstrap_data.sh --from-dir <挂载目录>
+V4="$(dirname "$(find /code/workspace -name run_train.sh | head -1)")"
+bash "$V4/tools/bootstrap_data.sh" --from-dir <挂载目录>
 ```

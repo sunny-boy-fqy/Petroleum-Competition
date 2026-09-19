@@ -144,7 +144,7 @@ E5/P2 的"双尺度单测"改为"单尺度断言 + 明确禁止全局裁剪到 [
 云端用法（数据在 `/data`）：
 
 ```bash
-python3 /code/workspace/v4/E0/code/run_all.py --with-cache \
+python3 "$(dirname "$(find /code/workspace -name run_train.sh | head -1)")/E0/code/run_all.py" --with-cache \
   --train-dir /data/v4/data/train --test-dir /data/v4/data/test \
   --cache-root /data/v4/cache --out /data/v4/reports/E0_data_card.json
 ```
