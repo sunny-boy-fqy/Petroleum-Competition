@@ -125,7 +125,7 @@ python3 v4/predict.py --use-version CONST --data_dir ../data --output /tmp/r.jso
 
 ## 当前状态
 
-- [x] **计划全部完成**：总计划 729 行 + 12 个阶段计划（708 行）+ 33 个 P 级详细计划（4,986 行），**合计 6,423 行**（由 `tools/plan_stats.py` 实测）
+- [x] **计划全部完成**：总计划 729 行 + 12 个阶段计划（708 行）+ 33 个 P 级详细计划（4,988 行），**合计 6,425 行**（由 `tools/plan_stats.py` 实测）
 - [x] 状态台账 `versions/status.json`、候选注册表 `versions/candidates.json`、目录总览 `docs/PROJECT_FILES.md`
 - [x] 环境/磁盘自检脚本（`E0/code/check_env.py`、`src/data/disk_guard.py`、`E0/code/setup_deps.sh`）
 - [x] 锁文件与 Gate/引用模板

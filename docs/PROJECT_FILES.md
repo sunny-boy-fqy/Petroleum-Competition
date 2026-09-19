@@ -50,6 +50,7 @@ v4/
 │   ├── validation/
 │   │   ├── folds.py              按井折读取 + inner 折 + 加权 cluster bootstrap
 │   │   └── gates.py              Gate 预注册校验与聚合判定（已实现）
+│   ├── training/tb_logger.py     TensorBoard + JSONL 日志（平台迭代曲线；无 tensorboard 时降级）
 │   ├── versioning/registry.py    版本注册表读写（predict.py 的版本来源）
 │   └── ensemble/blend.py         集成融合（E8）
 │
@@ -137,8 +138,8 @@ v4/
 | 项 | 数量 |
 |---|---:|
 | git 跟踪文件 | 见 `git ls-files \| wc -l` |
-| 计划文件（`PLAN.md`） | 1（总，729 行）+ 12（阶段，708 行）+ 33（P，4,986 行）= **46 份 / 6,423 行** |
-| P 级计划平均篇幅 | **151 行**（合计 4,986；由 `tools/plan_stats.py` 统计） |
+| 计划文件（`PLAN.md`） | 1（总，729 行）+ 12（阶段，708 行）+ 33（P，4,988 行）= **46 份 / 6,425 行** |
+| P 级计划平均篇幅 | **151 行**（合计 4,988；由 `tools/plan_stats.py` 统计） |
 | 代码模块（`v4/src/**/*.py`） | 见 `find v4/src -name '*.py' \| wc -l` |
 | E 层脚本（`v4/E*/code/*.py`） | 见 `find v4/E* -name '*.py' \| wc -l` |
 

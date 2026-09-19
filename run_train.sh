@@ -18,6 +18,12 @@
 #   --mode smoke    5 分钟极小规模冒烟（1 折 / 少量 epoch），验证全链路可跑
 #   --mode stage --stage E1   训练指定阶段
 #   --mode all      依次执行 env -> data -> e0 -> E1 ...
+#
+# 平台集成（已按官方提示落实）：
+#   * TensorBoard：导出 TENSORBOARD_LOGDIR=$V4_DATA_ROOT/v4/tb，
+#     训练脚本用 src/training/tb_logger.py::RunLogger 写指标，平台任务详情页可见曲线。
+#   * 云盘持久化：所有产物（cache/runs/reports/logs/tb）都在 $V4_DATA_ROOT(=/data)/v4 下，
+#     任务结束或资源释放后仍保留。
 # =============================================================================
 set -euo pipefail
 

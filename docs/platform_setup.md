@@ -18,7 +18,7 @@
 | **云盘挂载在 `/data`**，任务结束/资源释放后仍保留 | 同上 + §云盘持久化 | 数据、缓存、checkpoint、日志、报告**全部写 `/data/v4/...`** |
 | 启动命令最长 **500 字符** | 训练任务文档 §填写启动命令 | 所有编排逻辑封装进 `run_train.sh`，启动命令只有一句 |
 | 单次任务运行时长最长 **7×24 h** | 训练任务文档 §设置运行时长 | 与 D1（用户放宽 100h）兼容；但仍要求 checkpoint 可续训 |
-| TensorBoard 日志写到环境变量 `TENSORBOARD_LOGDIR` 指向目录 | 训练任务文档 §TensorBoard 日志 | `run_train.sh` 已导出该变量到 `/data/v4/tb` |
+| TensorBoard 日志写到环境变量 `TENSORBOARD_LOGDIR` 指向目录 | 训练任务文档 §TensorBoard 日志 | `run_train.sh` 已导出 `TENSORBOARD_LOGDIR=/data/v4/tb`（**持久**）；训练脚本用 `src/training/tb_logger.py::RunLogger` 写入，平台任务详情页可见迭代曲线 |
 | 停止任务后**不能直接续跑**，只能用【重新训练】新建任务 | 训练任务文档 §常见问题 3 | 必须实现 `--resume` 并从 `/data/v4/runs/<stage>/last.pt` 恢复 |
 | 本地上传的代码包 ≤ 500 MB，**禁止包含模型权重与大数据集** | 训练任务文档 §本地上传 | v4 的 git 仓库只放代码 + 31 MB 数据 tarball 的**生成脚本**；数据集单独上传到云盘 |
 | 平台**最多创建 5 个镜像**；镜像使用场景（开发机 / 训练任务）互不通用 | 镜像文档 §常见问题 4、6 | 只构建**一个**「训练任务」场景镜像；开发机侧用官方镜像即可 |
@@ -155,6 +155,47 @@ bash /code/workspace/v4/run_train.sh --mode stage --stage E3 --resume
 ```
 
 ---
+
+## 五之二、平台集成两件事（官方提示的落地）
+
+### 1. TensorBoard 迭代曲线
+
+`run_train.sh` 已导出：
+
+```bash
+export TENSORBOARD_LOGDIR="${TENSORBOARD_LOGDIR:-$DATA_ROOT/v4/tb}"   # -> /data/v4/tb（持久）
+```
+
+训练脚本统一用 `src/training/tb_logger.py`：
+
+```python
+from src.training.tb_logger import RunLogger
+with RunLogger(f"E3_unet_fold{fold}") as log:
+    log.scalars({"loss/align": a, "loss/aux": b, "loss/ph": c}, step=epoch)
+    log.scalars({"score/oof_total": s, "score/acc_por": p1,
+                 "score/acc_perm": p2, "score/acc_sw": p3}, step=epoch)
+    log.scalar("lr", lr, step=epoch)
+```
+
+- 它会同时写 TensorBoard（若 `torch.utils.tensorboard` 可用）与 **JSONL**
+  （`$TENSORBOARD_LOGDIR/<run>/scalars.jsonl`，永远可写，便于事后复算）。
+- 平台镜像若不带 `tensorboard`，模块**静默降级**，不影响训练。
+- 纪律：曲线只用于观测；**早停与模型选择仍以 `src/score.py` 的真实分数为准**。
+
+### 2. 云盘 `/data` 持久化
+
+所有产物都在 `/data/v4/` 下，任务结束或资源释放后保留：
+
+| 路径 | 内容 |
+|---|---|
+| `/data/v4/data/` | 数据集（一次性部署） |
+| `/data/v4/cache/` | 分片缓存与特征缓存 |
+| `/data/v4/runs/` | checkpoint（`best/last/last_prev.pt`）、OOF |
+| `/data/v4/reports/` | Gate 报告、数据卡、`cloud_frozen.txt` |
+| `/data/v4/logs/` | `run_train.sh` 的 stdout 日志 |
+| `/data/v4/tb/` | TensorBoard 事件文件 + JSONL |
+
+**禁止**把上述任何内容写到 `/code/workspace`（临时目录，任务结束即丢）。
 
 ## 六、注意事项与已知坑
 

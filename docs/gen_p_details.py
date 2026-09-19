@@ -289,6 +289,8 @@ P["E1"] = [
              "`资料库/12` §2.3 指出纯对齐损失早期信号稀疏，因此必须用三段式 + 用**真实评分**早停。"],
         inputs=["E1/P0 的行级特征与标签", "`src/losses/score_aligned.py`", "E0 的评分器与折"],
         outputs=["`models/E1/pd0_fold{k}.pt`（5 折权重，bf16 state_dict）",
+                 "`$TENSORBOARD_LOGDIR/E1_pd0/`（平台可见的迭代曲线；"
+                 "由 `src/training/tb_logger.py::RunLogger` 写 TensorBoard + JSONL）",
                  "`$V4_RUN_ROOT/E1/oof.npz`（well_id/depth/y_true/y_pred/q_ph，逐行）",
                  "`$V4_REPORTS_DIR/E1_metrics.json`（逐折/逐目标/连续切片/bootstrap CI）",
                  "`$V4_REPORTS_DIR/E1_loss_curve.csv`（每 epoch 训练/验证真实分数）",
@@ -296,6 +298,8 @@ P["E1"] = [
         steps=["预注册 `E1_P1_gate_prereg.json`（阈值、候选数、bootstrap 设置、mandatory checks）",
                "实现 `train_row.py`：`--resume`、`--time-budget-h`、每 epoch checkpoint、"
                "每 epoch 调 `assert_disk_headroom(8.0)`、写 `training_time_log.json`",
+               "每 epoch 用 `RunLogger` 写 TensorBoard（`TENSORBOARD_LOGDIR`，持久在 /data）："
+               "`loss/align|aux|ph`、`score/oof_total`、`score/acc_{por,perm,sw}`、`atomic/*`、`lr`",
                "跑 fold0 小规模冒烟（`--max-wells 8 --epochs 2 --smoke`）确认链路与显存/内存",
                "全 5 折训练：bf16、AdamW、余弦退火、梯度裁剪 1.0；λ₁ 从 1.0 退火到 0.1",
                "每 epoch 在**该 outer 折的 inner-OOF** 上用真实 `score.py` 算分（早停依据，不用 loss 值；outer 验证折只在最后推理一次）",

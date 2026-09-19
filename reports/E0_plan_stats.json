@@ -1,6 +1,6 @@
 {
   "total_plan_files": 46,
-  "total_lines": 6423,
+  "total_lines": 6425,
   "main": {
     "files": 1,
     "lines": 729
@@ -12,7 +12,7 @@
   },
   "p_level": {
     "files": 33,
-    "lines": 4986,
+    "lines": 4988,
     "avg": 151
   },
   "per_file": {
@@ -34,7 +34,7 @@
     "E0/P2/PLAN.md": 156,
     "E0/P3/PLAN.md": 157,
     "E1/P0/PLAN.md": 151,
-    "E1/P1/PLAN.md": 175,
+    "E1/P1/PLAN.md": 177,
     "E10/P0/PLAN.md": 153,
     "E10/P1/PLAN.md": 154,
     "E10/P2/PLAN.md": 142,
