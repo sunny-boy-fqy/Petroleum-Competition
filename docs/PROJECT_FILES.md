@@ -232,6 +232,8 @@ v4/
 │   ├── test_e10_b0.py            E10 B0 兜底包（自包含、干净目录复现 ≤1e-9、缺产物显式失败）+
 │   │                             run_train.sh 的 E7–E10 接线与 `bash -n`
 │   ├── test_pipeline_check.py    流水线完整性（真仓库 0 问题；缺脚本/缺分支/报告名不一致都能查出）
+│   ├── test_chain_e2e.py         全链路串联（E1→E6→E9 aggregate→E9 choose→E10 dry-run，同一合成缓存，
+│   │                             断言各阶段产物按契约落地且不污染仓库事实源）
 │   ├── test_loss_ablation_lib.py E7/P0 库层（λ1 三条退火曲线、L_aux 绝对 vs 归一化尺度不变、
 │   │                             PERM 截断开关、边界聚焦、total_loss 透传）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
@@ -239,7 +241,7 @@ v4/
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**724 项**；本地无 torch 解释器 200 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**726 项**；本地无 torch 解释器 202 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包

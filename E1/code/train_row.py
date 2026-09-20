@@ -233,8 +233,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cache-root", default=str(default_cache_root()))
     ap.add_argument("--out-dir", default=str(default_run_root() / "E1"))
     ap.add_argument("--reports-dir", default=str(default_reports_dir()))
+    # 默认优先 `V4_SCALERS_DIR`（与 E4–E6 同一约定），否则退到 $V4_DATA_ROOT/v4/scalers
     ap.add_argument("--scalers-dir",
-                    default=str(_env_root("V4_DATA_ROOT", "/data") / "v4" / "scalers"))
+                    default=os.environ.get("V4_SCALERS_DIR")
+                    or str(_env_root("V4_DATA_ROOT", "/data") / "v4" / "scalers"))
     ap.add_argument("--candidates", default=str(V4 / "versions" / "candidates.json"),
                     help="候选注册表路径（测试必须指向 tmp，避免污染仓库）")
     ap.add_argument("--folds", default="all", help="all | 0 | 0,3")
