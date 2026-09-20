@@ -87,7 +87,126 @@ def list_lines() -> list[str]:
     return out
 
 
-def candidates() -> list[dict]:
-    if not CANDIDATES.is_file():
-        return []
-    return json.loads(CANDIDATES.read_text(encoding="utf-8")).get("candidates", [])
+def candidates(path: str | Path | None = None) -> list[dict]:
+    return load_candidates(path).get("candidates", [])
+
+
+# ---------------------------------------------------------------- 候选写回（E9/E10 依赖）
+CANDIDATE_STATUSES: tuple[str, ...] = ("local_only", "shortlisted", "submitted",
+                                      "frozen_best", "rejected")
+CANDIDATES_NOTE = ("v4 候选注册表（唯一事实源）。未登记的候选不得提交。"
+                   "status ∈ local_only / shortlisted / submitted / frozen_best / rejected。"
+                   "一旦 submitted 不得覆盖，修改必须新建 candidate_id 并写 parent。")
+
+
+def _jsonable(obj: Any) -> Any:
+    """递归转 JSON-可序列化（numpy 标量/数组、dataclass 之外的容器）。"""
+    if isinstance(obj, dict):
+        return {str(k): _jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_jsonable(v) for v in obj]
+    if hasattr(obj, "tolist"):
+        return obj.tolist()
+    if hasattr(obj, "item"):
+        try:
+            return obj.item()
+        except Exception:                                     # pragma: no cover
+            return str(obj)
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+    return str(obj)
+
+
+def load_candidates(path: str | Path | None = None) -> dict[str, Any]:
+    """读候选注册表；文件不存在时返回**空骨架**（不写盘）。"""
+    p = Path(path) if path else CANDIDATES
+    if not p.is_file():
+        return {"schema_version": 1, "created_at": _now(), "note": CANDIDATES_NOTE,
+                "candidates": []}
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def save_candidates(doc: dict[str, Any] | list[dict], path: str | Path | None = None) -> Path:
+    """原子写候选注册表（tmp → replace），并做状态合法性校验。"""
+    p = Path(path) if path else CANDIDATES
+    payload = doc if isinstance(doc, dict) else {"schema_version": 1, "created_at": _now(),
+                                                 "note": CANDIDATES_NOTE, "candidates": doc}
+    payload = _jsonable(payload)
+    for e in payload.get("candidates", []):
+        st = e.get("status")
+        if st is not None and st not in CANDIDATE_STATUSES:
+            raise ValueError(f"非法 status {st!r}；允许 {CANDIDATE_STATUSES}")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(p)
+    return p
+
+
+def find_candidate(candidate_id: str, path: str | Path | None = None) -> dict | None:
+    for e in candidates(path):
+        if str(e.get("candidate_id")) == str(candidate_id):
+            return e
+    return None
+
+
+def upsert_candidate(entry: dict[str, Any], path: str | Path | None = None,
+                     allow_submitted_overwrite: bool = False) -> Path:
+    """新增/更新候选；**已 submitted 的候选默认拒绝覆盖**（必须新建 candidate_id）。"""
+    if not entry.get("candidate_id"):
+        raise ValueError("候选必须带 candidate_id")
+    doc = load_candidates(path)
+    cid = str(entry["candidate_id"])
+    for i, e in enumerate(doc.get("candidates", [])):
+        if str(e.get("candidate_id")) == cid:
+            if e.get("status") == "submitted" and not allow_submitted_overwrite:
+                raise PermissionError(
+                    f"候选 {cid} 已 submitted，不得覆盖（新建 candidate_id 并写 parent）")
+            merged = {**e, **_jsonable(entry)}
+            hist = list(e.get("status_history", []))
+            if entry.get("status") and entry["status"] != e.get("status"):
+                hist.append({"status": entry["status"], "at": _now(),
+                             "from": e.get("status")})
+            if hist:
+                merged["status_history"] = hist
+            doc["candidates"][i] = merged
+            return save_candidates(doc, path)
+    new_entry = {**_jsonable(entry), "registered_at": _now()}
+    if entry.get("status"):
+        new_entry.setdefault("status_history", [{"status": entry["status"], "at": _now(),
+                                                 "from": None}])
+    doc.setdefault("candidates", []).append(new_entry)
+    return save_candidates(doc, path)
+
+
+def set_candidate_status(candidate_id: str, status: str, path: str | Path | None = None,
+                         extra: dict[str, Any] | None = None) -> Path:
+    """改状态（记录 `status_history`），非法状态抛错，未知候选抛错。"""
+    if status not in CANDIDATE_STATUSES:
+        raise ValueError(f"非法 status {status!r}；允许 {CANDIDATE_STATUSES}")
+    doc = load_candidates(path)
+    for e in doc.get("candidates", []):
+        if str(e.get("candidate_id")) == str(candidate_id):
+            if extra:
+                e.update(_jsonable(extra))
+            hist = list(e.get("status_history", []))
+            hist.append({"status": status, "at": _now(), "from": e.get("status")})
+            e["status_history"] = hist
+            e["status"] = status
+            return save_candidates(doc, path)
+    raise KeyError(f"未知候选 {candidate_id!r}")
+
+
+def freeze_candidate(candidate_id: str, path: str | Path | None = None,
+                     sha256: str | None = None) -> Path:
+    """冻结候选（`frozen_best`）：记录 sha256 与时间，此后不得再改产物。"""
+    extra = {"frozen_at": _now()}
+    if sha256:
+        extra["frozen_sha256"] = str(sha256)
+    return set_candidate_status(candidate_id, "frozen_best", path, extra=extra)
+
+
+def _now() -> str:
+    import datetime
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+

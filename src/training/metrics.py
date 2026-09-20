@@ -142,6 +142,74 @@ def placeholder_min_acc(res: dict[str, Any]) -> float:
     return float(min(vals)) if vals else float("nan")
 
 
+# ---------------------------------------------------------------- AUC / AP（E6 原子头）
+def _average_ranks(x: "np.ndarray") -> "np.ndarray":
+    """平均秩（并列取均值），用于 rank-based AUC（不依赖 sklearn/scipy）。"""
+    order = np.argsort(x, kind="mergesort")
+    ranks = np.empty(x.shape[0], dtype="float64")
+    ranks[order] = np.arange(1, x.shape[0] + 1, dtype="float64")
+    xs = x[order]
+    i = 0
+    while i < xs.shape[0]:
+        j = i
+        while j + 1 < xs.shape[0] and xs[j + 1] == xs[i]:
+            j += 1
+        if j > i:
+            ranks[order[i:j + 1]] = ranks[order[i:j + 1]].mean()
+        i = j + 1
+    return ranks
+
+
+def binary_auc(y_true: Any, score: Any) -> float | None:
+    """ROC-AUC（Mann–Whitney U）；单类标签或空输入返回 `None`（**不返回 0.5 假装有效**）。"""
+    if not HAS_NUMPY:
+        raise RuntimeError("binary_auc requires numpy")
+    y = np.asarray(y_true, dtype=bool).ravel()
+    s = np.asarray(score, dtype="float64").ravel()
+    if y.size == 0 or y.shape != s.shape:
+        return None
+    n_pos, n_neg = int(y.sum()), int((~y).sum())
+    if n_pos == 0 or n_neg == 0:
+        return None
+    r = _average_ranks(s)
+    return float((r[y].sum() - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg))
+
+
+def average_precision(y_true: Any, score: Any) -> float | None:
+    """PR-AUC（平均精度，step 积分）；单类标签或空输入返回 `None`。"""
+    if not HAS_NUMPY:
+        raise RuntimeError("average_precision requires numpy")
+    y = np.asarray(y_true, dtype=bool).ravel()
+    s = np.asarray(score, dtype="float64").ravel()
+    if y.size == 0 or y.shape != s.shape or y.sum() == 0:
+        return None
+    order = np.argsort(-s, kind="mergesort")
+    ys = y[order]
+    tp = np.cumsum(ys)
+    precision = tp / np.arange(1, ys.size + 1)
+    return float((precision * ys).sum() / ys.sum())
+
+
+def auc_report(y_atom: Any, q_atom: Any, targets: tuple[str, ...] = C.TARGETS) -> dict[str, Any]:
+    """逐目标 AUC/AP + 联合原子指标（E6/P0 §7 要求**逐目标**上报，不是只报总分）。"""
+    y = np.asarray(y_atom, dtype=bool)
+    q = np.asarray(q_atom, dtype="float64")
+    if y.ndim != 2 or q.shape != y.shape:
+        raise ValueError(f"y_atom/q_atom 必须同形状 (N,3)，got {y.shape}/{q.shape}")
+    per: dict[str, Any] = {}
+    for t, name in enumerate(targets):
+        per[name] = {"auc": binary_auc(y[:, t], q[:, t]),
+                     "average_precision": average_precision(y[:, t], q[:, t]),
+                     "n_pos": int(y[:, t].sum()), "n": int(y.shape[0])}
+    joint = y.all(axis=1)
+    per["joint"] = {"auc": binary_auc(joint, q.min(axis=1)),
+                    "average_precision": average_precision(joint, q.min(axis=1)),
+                    "n_pos": int(joint.sum()), "n": int(y.shape[0])}
+    vals = [v["auc"] for k, v in per.items() if k != "joint" and v["auc"] is not None]
+    return {"per_target": per, "min_auc": (min(vals) if vals else None),
+            "note": "AUC 用平均秩（并列取均值）；单类标签返回 None 而不是 0.5"}
+
+
 def jsonable(obj: Any) -> Any:
     """把 numpy 标量/数组递归转成 JSON 可写类型。"""
     if isinstance(obj, dict):

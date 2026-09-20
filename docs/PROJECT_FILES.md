@@ -74,13 +74,15 @@ v4/
 │   │   ├── loop.py               训练循环：bf16 autocast（npu/cuda/cpu）、λ1 退火、梯度裁剪、
 │   │   │                         best-epoch 权重写回、时间预算、每 epoch 磁盘守卫、时间日志
 │   │   ├── metrics.py            预测→官方分数口径（连续/原子门/占位行命中率/原子头 P·R·F1）
+│   │                         + AUC/AP（平均秩实现，E6 逐目标上报；单类标签返回 None）
 │   │   ├── fold_runner.py        **两阶段单折协议**（E1/E2/E3 共用：inner-OOF 选 epoch/τ）
 │   │   ├── seq_loop.py           E3 序列训练循环（chunk 批 + **分块重叠推理+加权拼接**）
 │   │   ├── ema.py                E8/P2 EMA 影子（decay∈{0.99,0.999,0.9995}，逐 step；context_ema 精确还原）
 │   │   ├── frozen.py             E5 冻结骨干取逐行隐状态（原生 forward_states / 前向钩子兜底 + 内存收据）
 │   │   ├── checkpoint.py         bf16 state_dict + manifest（含连续头标尺与 L_aux 尺度）+ 滚动淘汰 + resume 校验
 │   │   └── tb_logger.py          TensorBoard + JSONL 日志（平台迭代曲线；无 tensorboard 时降级）
-│   ├── versioning/registry.py    版本注册表读写（predict.py 的版本来源）
+│   ├── versioning/registry.py    版本注册表读写（predict.py 的版本来源）+ 候选状态机
+│   │                             （upsert/status/freeze，submitted 不可覆盖，原子写）
 │   └── ensemble/blend.py         E8 集成融合（纯 numpy）：inner-OOF 单纯形权重、同源性报告、
 │                                 井级配对 cluster bootstrap 显著性、EMA/SWA（融合连续头，
 │                                 原子硬切换必须在融合之后）
@@ -137,12 +139,14 @@ v4/
 │   ├── test_e4_pipeline.py       E4 端到端（合成井 → 报告/体检/Gate）+ 入口与 run_train.sh 接线
 │   ├── test_target_heads_e5.py   POR 表示能力（0.1 下界禁用臂）/ PERM 截断与桶头 / SW 单尺度与精确原子
 │   ├── test_frozen_e5.py         冻结读回等价 / 分块隐状态 / 钩子兜底 / 内存收据
+│   ├── test_metrics_auc.py       平均秩 AUC / AP / 单类标签返 None / 逐目标+联合上报
+│   ├── test_registry_writes.py   候选状态机：非法状态拒绝、submitted 不可覆盖、原子写
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
 │   ├── test_e1_pipeline.py       E1 端到端（合成井 → Gate/prereg/候选，需 torch）
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**484 项**；本地无 torch 解释器 146 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**507 项**；本地无 torch 解释器 146 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
