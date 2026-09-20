@@ -14,7 +14,7 @@
 
 1. 在引入序列主干之前，必须先知道"只看当前深度点"能拿到多少分，否则无法证明序列上下文的价值（`资料库/08` §0.3 第 1 层）。
 2. 行级基线训练极快（分钟级），是验证损失实现、数据管线、OOF 流程是否正确的最高性价比手段。
-3. v2 E4/P3 的 CPU MLP 是 NO-GO，但那是逐点+无 GPU+小容量；E1 要在 A100 上给出"正确实现下的行级上限"，作为 E3 的对照。
+3. v2 E4/P3 的 CPU MLP 是 NO-GO，但那是逐点+无 NPU/GPU+小容量；E1 要在 Ascend 910B 上给出"正确实现下的行级上限"，作为 E3 的对照。
 4. 改进 proposal（§3/§4）：若连续头仍用 `0.1+softplus(g)` 并被 SW 的 99.9 主导 `L_aux`，E3/E4 只会更快地优化一个错误目标；因此 POR/SW 参数化、`L_aux` 归一化、`masked_mean` 防 NaN 与 PERM 截断必须在 E1 就定稿，并配 `POR=0`/`POR<0.1` 切片单测。
 
 ## 3. 输入
@@ -59,7 +59,7 @@
 
 ## 9. 通用约束（继承总计划）
 
-- 训练/推理分离：本机（无 GPU）负责代码与契约，云端（1×A100 80GB，CUDA 12.8 / torch 2.7.1 / py3.11，**30 GB 磁盘**）负责训练。
+- 训练/推理分离：本机（无 NPU/GPU）负责代码与契约，云端（1×Ascend 910B 64GB，CANN 8.3rc2 / torch 2.8.0 + torch_npu 2.8.0 / py3.11 / arm64，**64 GiB 磁盘**）负责训练。
 - 禁止 `pip install torch` 或变更镜像基础栈；额外轻量包须 `--no-cache-dir` 并清缓存。
 - 一切阈值/权重/早停只在 **inner-OOF** 上选；outer 折只推理一次。
 - 训练脚本必须支持 `--resume`、`--time-budget-h`、每 epoch checkpoint 与 `assert_disk_headroom(8.0)`。

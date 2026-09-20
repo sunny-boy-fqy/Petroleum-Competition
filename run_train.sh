@@ -122,7 +122,7 @@ run_env() {
   if check_env_profile base; then
     log "[env] 基础环境检查通过（hard failures: 0）"
   else
-    log "!! [env] 基础环境有 HARD FAILURE（python/torch/cuda/gpu/磁盘）。"
+    log "!! [env] 基础环境有 HARD FAILURE（python/torch/torch_npu/CANN/NPU 设备/架构/磁盘）。"
     log "!! 如需在此环境继续，显式设置 V4_ALLOW_ENV_FAILURE=1。"
     if [[ "${V4_ALLOW_ENV_FAILURE:-0}" != "1" ]]; then
       exit 11
@@ -131,7 +131,7 @@ run_env() {
 
   log "--- [env] 3/3 磁盘余量（$DATA_ROOT 与代码目录分别检查）"
   # R3 修复：必须显式 --data-root，否则 E0_disk_budget.json::level 描述的是 ROOT 文件系统，
-  # 而云端 30 GB 配额在 $DATA_ROOT；E0_cloud_gate 的 disk_budget_ok 就读这个 level。
+  # 而云端 64 GiB 配额在 $DATA_ROOT；E0_cloud_gate 的 disk_budget_ok 就读这个 level。
   if python3 "$HERE/src/data/disk_guard.py" --min-free-gb 8 \
        --data-root "$DATA_ROOT" --path "$DATA_ROOT" --path "$HERE" \
        --report "$HERE,$DATA_ROOT" --json "$REPORTS_DIR/E0_disk_budget.json" 2>&1 | tee -a "$LOG"; then

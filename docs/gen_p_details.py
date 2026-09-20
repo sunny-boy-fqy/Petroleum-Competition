@@ -63,15 +63,15 @@ P["E0"] = [
         status="blocked",
         nature="契约前置：不产出模型，只产出**环境事实**",
         deps=["无（这是全项目第一步）"],
-        goal="在云端实机确认 CUDA 12.8 / PyTorch 2.7.1 / Python 3.11 / A100 sm_80 / bf16 可用，"
-             "并实测 30 GB 磁盘的可用余量与分布，产出可复算的 `E0_env.json` 与 `E0_disk_budget.json`。",
+        goal="在云端实机确认 CANN 8.3rc2 / PyTorch 2.8.0 + torch_npu 2.8.0 / Python 3.11 / Ascend 910B(64G) / bf16 可用，"
+             "并实测 64 GiB 磁盘的可用余量与分布，产出可复算的 `E0_env.json` 与 `E0_disk_budget.json`。",
         why=["未实测的环境假设会在 E3 训练数小时后才暴露（OOM / 版本不兼容 / 磁盘写满），"
-             "返工成本是 A100 机时；",
-             "30 GB 预算是本项目最硬的资源约束，而 `/code/workspace`（临时）与 `/data`（云盘）"
+             "返工成本是 Ascend 机时；",
+             "64 GiB 预算是本项目最硬的资源约束，而 `/code/workspace`（临时）与 `/data`（云盘）"
              "是否同一文件系统必须实测，不能假设；",
              "镜像内 torch 小版本漂移（2.7 vs 2.8）、以及 **2.6 起 `torch.load(weights_only=True)` "
              "的默认值变更**，都会在训练数小时后才暴露成 AttributeError/反序列化错误，必须前置断言。"],
-        inputs=["云端训练任务（Git 仓库代码来源，A100 资源，PyTorch 2.7.1/CUDA 12.8/py3.11 镜像）",
+        inputs=["云端训练任务（Git 仓库代码来源，Ascend 910B 资源，PyTorch 2.8.0+torch_npu 2.8.0/CANN 8.3rc2/py3.11/arm64 镜像）",
                 "`v4/E0/code/check_env.py`、`v4/E0/code/setup_deps.sh`、`v4/src/data/disk_guard.py`"],
         outputs=["`$V4_REPORTS_DIR/E0_env.json`",
                  "`$V4_REPORTS_DIR/E0_disk_budget.json`（**按挂载点**报告：`paths` + `worst_level` + `primary_path` + `data_root_checked`）",
@@ -86,10 +86,10 @@ P["E0"] = [
                "与收缩项写入 `E0_disk_budget.json`（`worst_level`/`primary_path`/`data_root_checked` 一并落盘）",
                "把 `E0_env.json` 的 `deps.versions` 与 `versions/locks/cloud.txt` 逐项比对，不一致则更新 lock 并提交"],
         params=[("`--min-free-gb`", "8.0", "8–12", "磁盘硬门禁；实测后若过紧则上调"),
-                ("`--allow-non-a100`", "false", "—", "仅本机开发时开启：**只放宽 GPU/torch 检查**，不放宽依赖检查"),
+                ("`--allow-non-target-device`", "false", "—", "仅本机开发时开启：**只放宽 设备/架构/torch 检查**，不放宽依赖检查"),
                 ("`NUM_WORKERS`", "4", "2–6", "16 GiB 内存下的安全值，见总计划 §3.1-3")],
         done=["`check_env.py` 输出 **hard failures: 0**（判据是「**所有 hard 级检查全过**」，"
-              "**不是固定项数**，也不因 `--allow-non-a100` 而放宽依赖检查——该开关只放宽 GPU/torch 检查）；"
+              "**不是固定项数**，也不因 `--allow-non-target-device` 而放宽依赖检查——该开关只放宽 设备/架构/torch 检查）；"
               "非主路径可选依赖（`onnx` / `onnxruntime`）失败时写入顶层 `degraded_paths` 并降级为 warn，"
               "不阻塞训练",
               "`E0_disk_budget.json` **按挂载点**报告（`paths` + `worst_level` + `primary_path` + "
@@ -100,10 +100,10 @@ P["E0"] = [
         forbid=["`pip install torch` / 升级 CUDA / 用 conda 建环境",
                 "安装 flash-attn / xformers / apex / deepspeed 等需编译 CUDA 扩展的包",
                 "在磁盘余量未知的情况下启动任何训练"],
-        risk=[("镜像里不是 torch 2.7.1（例如 2.8）", "`torch_version` hard failure", "按镜像实际版本同步改 `check_env.py::EXPECTED_TORCH`、`versions/locks/cloud.txt` 与 docs；**不要**pip 降级 torch"),
+        risk=[("镜像里不是 torch 2.8.0（或 torch_npu 与 torch 小版本不一致）", "`torch_version` hard failure", "按镜像实际版本同步改 `check_env.py::EXPECTED_TORCH`/`EXPECTED_TORCH_NPU`/`EXPECTED_CANN`、`versions/locks/cloud.txt` 与 docs；**不要**pip 降级 torch"),
               ("CUDA runtime 与声明值不一致（cu126 wheel）", "`cuda_runtime_declared` warn", "只记录事实；hard 底线是 runtime major==12，不因此阻断 Gate（R4-B1 教训）"),
               ("系统内存被镜像/其它进程占用", "`free -g` 显示可用 < 14 GiB", "把 `num_workers` 降到 2，并在 E2 关闭特征缓存"),
-              ("`/data` 与 `/code` 同盘且总容量仅 30 GB", "`df` 显示同一 Filesystem", "按总计划 §3.4.1 安全规则收缩：特征缓存 ≤0.5 GB、集成成员 ≤2、模型宽度减半"),
+              ("`/data` 与 `/code` 同盘且总容量仅 64 GiB", "`df` 显示同一 Filesystem", "按总计划 §3.4.1 安全规则收缩：特征缓存 ≤0.5 GB、集成成员 ≤2、模型宽度减半"),
               ("pip 计划替换 torch", "`setup_deps.sh` 预检命中", "脚本自动中止（exit 3）；改为只用镜像自带版本")],
         stop=["hard failure 未清零前，禁止进入 E0/P1 之后的任何阶段",
               "可用磁盘 < 8 GB 且无法清理时，暂停项目并先与 owner 确认配额"],
@@ -230,7 +230,7 @@ P["E0"] = [
         why=["`rules.md` §6.1 规定 JSON 结构禁止增删改字段，小写 `depth`，10 井 95,948 行；"
              "格式错一次就浪费一次每日 5 次的提交额度；",
              "`rules.md` §8.4：复现失败直接取消资格，因此契约必须早于模型存在并可自动化校验；",
-             "契约校验必须**不依赖 torch**，否则本机（无 GPU）无法在提交前自检。"],
+             "契约校验必须**不依赖 torch**，否则本机（无 NPU/GPU）无法在提交前自检。"],
         inputs=["`rules.md` §6.1–6.3、§8", "`data/测试数据返回结果格式.json`（官方模板）",
                 "`资料库/12` §4（提交规范）、§5（复现要求）"],
         outputs=["`v4/predict.py`（`--data_dir/--output/--use-version/--list-versions`）",
@@ -277,6 +277,7 @@ P["E1"] = [
     dict(
         pid="P0", title="行级输入管线与分片缓存",
         nature="数据管线：为 E1–E8 共用，必须先冻结",
+        status="in_progress",
         deps=["E0/P1（分片写入）、E0/P2（评分）"],
         goal="构建并缓存 `F1 = 13 条曲线 + DEPTH 原始值 + 13+1 缺失位 + 4 深度编码 = 32 维` 行级张量与三目标标签，"
              "落盘为按井分片，并验证内存占用符合 16 GiB 预算；同时在**每个训练折内**统计连续头需要的稳健尺度"
@@ -333,6 +334,7 @@ P["E1"] = [
     dict(
         pid="P1", title="行级 MLP + 评分对齐损失 + 5 折 OOF（硬 Gate ≥ 78.0）",
         nature="**分母建立阶段**：允许弱，必须正确",
+        status="in_progress",
         deps=["E1/P0"],
         goal="训练多任务 MLP（共享主干 + POR/PERM/SW 连续头 + 逐目标原子头 `q_por/q_perm/q_sw` + 辅助 `q_joint`），"
              "用三段式对齐损失（**含训练折尺度归一化的 `L_aux`**），跑完 80 井按井 5 折 OOF，"
@@ -486,7 +488,7 @@ P["E2"] = [
              "这是\"上下文有效\"的最强历史证据；",
              "工程曲线（CAL/DEVI/AZIM/BIT/CASE）在井内近常数（`资料库/08` §0.1-4），"
              "井级聚合是**唯一的井间信号通路**；",
-             "窗口特征也是最贵的一组，必须按需生成、按版本目录落盘，否则 30 GB 磁盘与 16 GiB 内存都扛不住。"],
+             "窗口特征也是最贵的一组，必须按需生成、按版本目录落盘，否则 64 GiB 磁盘与 16 GiB 内存都扛不住。"],
         inputs=["E1/P0 分片", "`资料库/07` §6（窗口与中心窗口要求）、§10（增强）"],
         outputs=["`src/features/window.py`、`src/features/well.py`",
                  "`$V4_CACHE_ROOT/feat/F2_win/<well>.npz`",
@@ -639,7 +641,7 @@ P["E3"] = [
                 ("归一化", "BN（默认）", "BN/LN/GN", "E3/P2 消融"),
                 ("`dropout`", "0.1", "0.0/0.1/0.2", "序列模型更易过拟合 80 井"),
                 ("`lr`", "1e-3", "3e-4/1e-3/3e-3", "AdamW + 余弦"),
-                ("bf16", "开启", "bf16/fp32", "A100 支持；fp16 易 NaN")],
+                ("bf16", "开启", "bf16/fp32", "910B 支持 bf16；fp16 易 NaN")],
         done=["两种主干都能前向且输出长度与输入一致（全段输出，非中心点）",
               "参数量与峰值资源记录完整，单折耗时在软预算内",
               "`--smoke` 无 NaN、契约通过、checkpoint 可 `--resume`",
@@ -1600,7 +1602,7 @@ P["E10"] = [
              "验证两次前向完全一致。",
         why=["`rules.md` §8.3 要求\"训练 + 推理\"可独立运行、结果一致；"
              "因此训练入口必须真实可跑，即使评测时不需要；",
-             "评测机不保证有 GPU，推理必须在 CPU 上稳定运行（fp32、确定性）；",
+             "评测机不保证有加速器，推理必须在 CPU 上稳定运行（fp32、确定性）；",
              "全量重训 vs 折集成的选择必须在看到 E9 结果前预注册，避免事后择优。"],
         inputs=["E9 通过的候选配置与权重", "80 井全量数据"],
         outputs=["`models/v4/final/*.pt`（fp32，CPU 可加载）",
@@ -1622,7 +1624,7 @@ P["E10"] = [
                 ("ONNX", "best-effort（需额外装 onnx）", "导出/跳过", "默认不装：跳过即可，不阻塞、不进门禁")],
         done=["CPU 加载并前向成功，两次结果 sha256 一致",
               "单次推理 < 30 min 且峰值内存 < 8 GiB",
-              "训练入口 `train.py` 在 A100 上可跑通（不要求评测时执行）",
+              "训练入口 `train.py` 在 Ascend 910B 上可跑通（不要求评测时执行）",
               "导出的 `.pt` + `.npz` 权重清单与配置哈希写入 manifest"],
         forbid=["导出依赖 GPU 的权重",
                 "在推理阶段做任何训练",

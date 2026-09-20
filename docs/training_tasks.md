@@ -25,8 +25,8 @@
 | 代码来源 | **Git 仓库** |
 | 仓库地址 | `https://github.com/sunny-boy-fqy/Petroleum-Competition.git`（**HTTPS**，不是 `git@…`） |
 | 分支 | **`main`**（平台默认；remote 上 `main` 与 `master` 同指一个 commit，填哪个都能拉到） |
-| 资源配置 | **Nvidia A100 × 1**（80 GB 显存 / 4000m vCPU / 16 GiB 内存） |
-| 镜像 | 【我的镜像】→ `v4-train-py311-torch271-cu128`（场景 = **训练任务**）<br>未构建前先用官方 PyTorch 2.7.1 / CUDA 12.8 / Python 3.11 镜像 |
+| 资源配置 | **Ascend 910B × 1**（64 GB HBM / 4000m vCPU / 16 GiB 内存 / 64 GiB 磁盘） |
+| 镜像 | 【我的镜像】→ `v4-train-py311-torch280-npu280-cann83rc2`（场景 = **训练任务**）<br>未构建前先用官方 PyTorch 2.8.0 + torch_npu 2.8.0 / CANN 8.3rc2 / Python 3.11 / arm64 镜像 |
 | 训练/验证数据集 | 不挂载（数据走云盘 `/data`） |
 | 超参数 | 不填（全部通过 `run_train.sh` 参数传递） |
 
@@ -76,7 +76,7 @@ git archive --format=zip --prefix='' -o dist/v4_code_src.zip HEAD
 | 启动命令 | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env` |
 | 运行时长 | 0h30m |
 | 产出（持久） | `/data/v4/reports/E0_env.json`、`/data/v4/reports/E0_disk_budget.json`、`/data/v4/logs/*.log` |
-| 判据 | 日志中 `hard failures: 0`；`torch 2.7.1` / `A100 sm_80` / `bf16=True` / `free >= 8 GiB` |
+| 判据 | 日志中 `hard failures: 0`；`torch 2.8.0` / `Ascend 910B` / `bf16=True` / `free >= 8 GiB` |
 | 失败处置 | 若 torch 版本或 GPU 不符 → 检查镜像与资源配置；若磁盘 < 8 GiB → 见 `docs/platform_setup.md` §五 收缩预案 |
 
 ## 任务 2：`v4-data` — 部署数据集到云盘（必做一次，≈2 min）
@@ -119,7 +119,7 @@ git archive --format=zip --prefix='' -o dist/v4_code_src.zip HEAD
 | 启动命令 | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode smoke` |
 | 运行时长 | 0h30m |
 | 判据 | 1 折 / 8 井 / 2 epoch 跑完，产出 OOF，且契约校验通过 |
-| 当前状态 | E1 训练脚本尚未实现，脚本会**明确报错**而不是静默跳过 |
+| 当前状态 | E1 训练脚本**已实现**（`E1/code/train_row.py`，本机 CPU smoke 六项 mandatory checks 全绿）；80 井 5 折 OOF 待 Ascend 910B 任务 |
 
 ## 任务 5+：`v4-E1` … `v4-E8` — 分阶段训练
 

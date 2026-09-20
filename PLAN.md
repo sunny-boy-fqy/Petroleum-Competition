@@ -2,7 +2,7 @@
 
 > **v4 的定位（一句话）**：放弃“在 v1/v2 树模型上打补丁”的路线，改为**从零构建一条纯深度学习管线**——深度序列主干（长感受野）输出逐行表示，三个目标头 + 联合常量状态头，用**与官方评分同构的可微损失**训练，最终以**自包含、CPU 可推理**的提交包一次性产出 `result.json`。
 >
-> **本计划与前代的唯一分歧点**：v2/v3 都被“CPU-only + 单任务 ≤100h”锁死在树模型上（v2 的 `资料库/08` §0.3 第 2 层 U-Net/TCN 从未真正训练过，v2 E4/P3 的 CPU MLP 是 NO-GO，但那是在**无序列上下文、无 GPU**条件下取得的结论，**不构成对 GPU 深度序列模型的证伪**）。v4 拥有 **1× A100 80GB**，因此把 v2 `/PLAN.md` 里被降级的 E7 序列模型重新提升为**主线**。
+> **本计划与前代的唯一分歧点**：v2/v3 都被“CPU-only + 单任务 ≤100h”锁死在树模型上（v2 的 `资料库/08` §0.3 第 2 层 U-Net/TCN 从未真正训练过，v2 E4/P3 的 CPU MLP 是 NO-GO，但那是在**无序列上下文、无 NPU/GPU**条件下取得的结论，**不构成对深度序列模型的证伪**）。v4 拥有 **1× Ascend 910B 64GB**，因此把 v2 `/PLAN.md` 里被降级的 E7 序列模型重新提升为**主线**。
 >
 > 总原则：**先口径与数据，后模型；先行级基线，后序列主干；先原子保护，后连续精度；先本地诚实 CV，后提交。**
 
@@ -13,13 +13,13 @@
 | 编号 | 决策项 | 用户选择 | 对计划的影响 |
 |---|---|---|---|
 | D1 | 单任务 wall-clock 上限 | **放宽——忽略 100h，能跑多久跑多久** | 不再设置单任务 100h 硬门禁；改为**软预算 + 强制 checkpoint/可续训**，任何任务被中断都能从最近 checkpoint 恢复。计划中所有“预算”均为软预算。 |
-| D5 | 云端软件栈 | **CUDA 12.8 + PyTorch 2.7.1 + Python 3.11 为镜像预装版本，不得变更/升级/另装 CUDA；无 conda；但 `pip` 可用，可安装额外的轻量纯 Python 依赖** | 允许 `pip install numpy/pandas/scipy/...`；**禁止** `pip install torch`（换版本）与任何需现场编译 CUDA 扩展的包（flash-attn/xformers/apex/deepspeed）。所有第三方依赖仍走「探测 + 降级」层，见 §3.3。 |
-| D6 | 云端可用磁盘 | **仅 30 GB（含镜像已占部分）** | pip 只装轻量包并立即清缓存；强制「按需生成特征 + checkpoint 滚动淘汰 + 中间产物即时清理」，并用 `du` 实测。见 §3.4。 |
+| D5 | 云端软件栈 | **CANN 8.3rc2 + PyTorch 2.8.0 + torch_npu 2.8.0 + Python 3.11 / arm64 为镜像预装版本，不得变更/升级/另装 CUDA；无 conda；但 `pip` 可用，可安装额外的轻量纯 Python 依赖** | 允许 `pip install numpy/pandas/scipy/...`；**禁止** `pip install torch`（换版本）与任何需现场编译 NPU/CUDA 扩展的包（flash-attn/xformers/apex/deepspeed）。所有第三方依赖仍走「探测 + 降级」层，见 §3.3。 |
+| D6 | 云端可用磁盘 | **仅 64 GiB（含镜像已占部分）** | pip 只装轻量包并立即清缓存；强制「按需生成特征 + checkpoint 滚动淘汰 + 中间产物即时清理」，并用 `du` 实测。见 §3.4。 |
 | D2 | 架构 | **深度序列主干 + 行级精度头** | 1D U-Net / TCN / Patch-Transformer 做深度上下文主干；行级精度头做逐点精修；再叠学习型原子门。见 §五。 |
 | D3 | 起点与保护 | **从零纯 DL 管线** | 不继承 B0 权重、不做 B0 patch 隔离；**但“逐目标常量占位必须精确命中”由模型内部的 `q_joint` 联合头 + `q_por/q_perm/q_sw` **逐目标原子头**共同承担**（自包含，不依赖 B0）。见 §五.3 与 §六.4。 |
-| D4 | 交付形态 | **权重随包 + CPU 可推理，训练可选** | 提交包含 `models/` 权重；`predict.py` 纯 CPU、确定性、无网络；`train.py` 可在 A100 上完整重训但不是评测必需。见 §九.3。 |
+| D4 | 交付形态 | **权重随包 + CPU 可推理，训练可选** | 提交包含 `models/` 权重；`predict.py` 纯 CPU、确定性、无网络；`train.py` 可在 Ascend 910B 上完整重训但不是评测必需。见 §九.3。 |
 
-> D1 的执行纪律：虽然用户允许超 100h，但**每一步训练都必须写 checkpoint 并支持 `--resume`**，且每个 P 的 Gate 报告必须记录 `actual_h`。原因：A100 租用是按时的，且赛题 `rules.md` 原文（“每个模型训练任务 wall-clock 上限 100 小时”）仍是唯一书面规则，保留 ≤100h 可行性是零成本的保险。
+> D1 的执行纪律：虽然用户允许超 100h，但**每一步训练都必须写 checkpoint 并支持 `--resume`**，且每个 P 的 Gate 报告必须记录 `actual_h`。原因：Ascend 机时租用是按时的，且赛题 `rules.md` 原文（“每个模型训练任务 wall-clock 上限 100 小时”）仍是唯一书面规则，保留 ≤100h 可行性是零成本的保险。
 
 > **E0-R2 修订（2026-09-19，独立审查后的修复，最高优先级）**：独立审查（[`reports/V4_PLAN_REVIEW.md`](reports/V4_PLAN_REVIEW.md)）发现三处会直接导致结论无效的错误，已全部修复并加回归测试：
 > 1. **输入列泄漏**：`parse.py` 的 `inputs = arr[:, 1:15]` 使索引 14（**POR 标签**）成为第 14 个输入，80 口井全部泄漏；且测试井只得到 13 列（提交必崩）。→ 改为 13 条曲线 + DEPTH 分离，布局常量集中在 `parse.py`，列布局与 `with_targets` 无关，新增 `input_no_label_leak` 回归（90 井全过）。
@@ -51,10 +51,10 @@
 
 | 层级 | 数量 | 篇幅 | 状态 |
 |---|---:|---:|---|
-| 总计划 `PLAN.md` | 1 | **888 行** | ✅ 完成 |
+| 总计划 `PLAN.md` | 1 | **892 行** | ✅ 完成 |
 | 阶段计划 `E*/PLAN.md` | 12 | 平均 63 行（合计 759） | ✅ 完成 |
 | P 级子计划 `E*/P*/PLAN.md` | 33 | **平均 158 行**（合计 5,224） | ✅ 完成（V2 深度：输入/输出契约、执行步骤、参数表、完成判据、禁止事项、风险对策、停止规则、inner-OOF 选择协议、复算命令、Gate 预注册 JSON） |
-| 计划文件合计 | 46 | **6,871 行** | ✅ |
+| 计划文件合计 | 46 | **6,875 行** | ✅ |
 
 > **行数由 `tools/plan_stats.py` 实测、`tools/sync_plan_stats.py` 同步、`plan_stats.py --check` 校验**
 > （审查 R2-H6/R3-C2：此前手写数字两次过期，且旧校验只查总量、漏检阶段/P 分项）。
@@ -71,7 +71,7 @@
 | P3 | 提交契约、版本路由、干净目录冒烟 | ✅ | `predict.py`、`reports/E0_contract_tests.json`（全部负样例被拒绝） |
 
 **E0 本地契约 Gate：13/13 mandatory PASS（含 `contract_ok` = `contract_selftest` 别名、`shard_cache_built`、`shard_cache_input_cols_ok`）**（`reports/E0_local_contract_gate.json`）；
-**E0 云端 Gate：`blocked_pending_cloud_run`**（需 E0/P0 在 A100 任务实测，`reports/E0_cloud_gate.json`）。
+**E0 云端 Gate：`blocked_pending_cloud_run`**（需 E0/P0 在 Ascend 任务实测，`reports/E0_cloud_gate.json`）。
 
 E0 的两个硬发现（已冻结进契约，详见 §6.1 与 [`E0/docs/data_card.md`](E0/docs/data_card.md)）：
 
@@ -90,7 +90,7 @@ E1–E11 全部处于 `pending`，按 §七 的顺序执行；每个 Gate 的阈
 2. **架构目标**：`v4/` 提供一条**端到端纯深度学习**管线，从 14 条测井曲线直接预测 POR / PERM / SW，不调用 v1/v2/v3 的任何模型或代码。
 3. **入口契约**：
    ```bash
-   # 训练（在 A100 云端机器上执行，非评测必需）
+   # 训练（在 Ascend 云端机器上执行，非评测必需）
    python train.py --train-dir data/train --model-dir models/v4 --config configs/v4_pd.yaml
    # 推理（官方口径，评测机执行；纯 CPU、确定性）
    python predict.py --data_dir ./data --output result.json
@@ -153,26 +153,26 @@ E1–E11 全部处于 `pending`，按 §七 的顺序执行；每个 Gate 的阈
 | | 本机（开发机） | 云端（训练机） |
 |---|---|---|
 | 角色 | 写代码、造数据、跑轻量单测、组装提交包、本地诚实 CV 的记录与汇总 | 训练、全量 OOF 推理、多 seed 集成 |
-| 硬件 | 无 GPU；`v2/.venv` 无 torch | **1× A100 80GB**，4000m vCPU，**16 GiB 系统内存**，80 GiB 显存 |
+| 硬件 | 无 NPU/GPU；`v2/.venv` 无 torch | **1× Ascend 910B（64 GB HBM）**，4000m vCPU，**16 GiB 系统内存** |
 | 必须能力 | **在没有 torch 的情况下**也能校验数据契约、评分口径、提交格式（这些全部用 numpy/pandas 实现） | 能在 ≤16 GiB 系统内存下流式加载数据 |
 
 **由此派生的四条硬性工程规则**：
 
-0. **环境不可变铁律（最高优先级）**：云端镜像**预装且不可替换**——CUDA 12.8、PyTorch 2.7.1、Python 3.11；**没有 conda**。因此：
-   - **禁止** `pip install torch` / 升级 CUDA / 更换 Python 版本 / 用 conda 建环境（会破坏镜像一致性，且 30 GB 磁盘容不下第二份 torch）；
+0. **环境不可变铁律（最高优先级）**：云端镜像**预装且不可替换**——CANN 8.3rc2、PyTorch 2.8.0 + torch_npu 2.8.0、Python 3.11 / **arm64**；**没有 conda**。因此：
+   - **禁止** `pip install torch` / `pip install torch_npu` / 升级 CANN / 更换 Python 版本 / 用 conda 建环境（会破坏镜像一致性，且 64 GiB 磁盘容不下第二份加速栈）；
    - **允许** `pip install` **额外的轻量纯 Python / 纯 wheel 依赖**（required 只有 `numpy`、`pandas`、`scipy`、`scikit-learn`、`einops`；`pyarrow`/`onnx`/`onnxruntime` **不需要**），但必须 `--no-cache-dir` 且装完 `pip cache purge`；
    - 所有第三方依赖仍**统一走 `portability` 探测层**（§3.3.2）：装了就用，没装就走 numpy/torch 兜底分支，**任何 `import` 失败都不得变成"请用户去装包"**；
    - 提交包里的 `requirements.txt` 是**声明**（`rules.md` §6.2/§8.3 要求列明环境），默认不被执行；评测环境用的是同一套预装镜像。
-1. **代码契约**：`v4/src/data/`、`v4/src/score.py`、`v4/src/inference/contract.py` **只依赖标准库 + numpy/pandas**，不 import torch。这样本机（无 GPU、无 torch）能跑通全部数据与提交侧单测，云端跑训练与推理。
+1. **代码契约**：`v4/src/data/`、`v4/src/score.py`、`v4/src/inference/contract.py` **只依赖标准库 + numpy/pandas**，不 import torch。这样本机（无 NPU/GPU、无 torch）能跑通全部数据与提交侧单测，云端跑训练与推理。
 2. **数据载体**：训练数据以一次性生成的按井分片 `npz` 传递（`pack_dataset.py` 产出，730k×17 float32 ≈ 50 MB）。云端只接受本机上传的这份缓存，不依赖任何外部下载。
-3. **内存纪律（16 GiB 系统内存 + 80 GiB 显存 = 极端不对称，瓶颈永远在系统内存）**：
+3. **内存纪律（16 GiB 系统内存 + 64 GB HBM 显存 = 极端不对称，瓶颈永远在系统内存）**：
    - 训练时**不把整井序列常驻内存**；`Dataset` 按井按需读取（打开分片 → 取所需窗口 → 关闭），**禁止把分片内容缓存在 Python 全局字典里**；
    - 特征预计算缓存使用 `float32` 且**按井分片落盘**（`cache/feat/<F>/<well>.npz`），训练时按需读取；
    - `DataLoader` 使用 `num_workers = 4`（**不是 8**：40 vCPU 但只有 16 GiB RAM，8 个 worker 的 numpy 副本会把内存吃光）、`persistent_workers=False`、`pin_memory=True`、`prefetch_factor=2`；
    - 每个 worker 的常驻内存必须 < 300 MB（用 `torch.utils.data.get_worker_info()` 做断言式自检）；
    - 任何“先全量 concat 再训练”的写法一律禁止（这在 16 GiB 上会 OOM）；
-   - 显存侧相反：80 GB 显存允许把 batch 开到内存允许的最大值，用 bf16 提高吞吐（显存不是约束）。
-4. **磁盘纪律（30 GB 上限，见 §3.4）**：只装必需轻量包并清缓存；**按需生成特征、按版本目录落盘、checkpoint 滚动淘汰**；把 `TORCH_HOME`/`XDG_CACHE_HOME` 重定向进项目目录以便统一清理；所有训练脚本每 epoch 调 `assert_disk_headroom(8.0)`。
+   - 显存侧相反：64 GB HBM 允许把 batch 开到内存允许的最大值，用 bf16 提高吞吐（显存不是约束）。
+4. **磁盘纪律（64 GiB 上限，见 §3.4）**：只装必需轻量包并清缓存；**按需生成特征、按版本目录落盘、checkpoint 滚动淘汰**；把 `TORCH_HOME`/`XDG_CACHE_HOME` 重定向进项目目录以便统一清理；所有训练脚本每 epoch 调 `assert_disk_headroom(8.0)`。
 
 **代码同步协议（用户已完成的既成事实 + agent 必须遵守的约定，2026-09-19 确认）**：
 
@@ -208,24 +208,26 @@ E1–E11 全部处于 `pending`，按 §七 的顺序执行；每个 Gate 的阈
 #### 3.3.1 已知基线
 
 ```
-OS        : Linux x86_64
+OS        : Linux aarch64（arm64）
 Python    : 3.11（预装，不得更换/不得用 3.12+ 语法）
-PyTorch   : 2.7.1 + cu128（预装，匹配 CUDA 12.8 驱动；不得 pip 改版本）
-GPU       : 1× A100 80GB（sm_80），bf16 可用
+PyTorch   : 2.8.0（预装；不得 pip 改版本）
+torch_npu : 2.8.0（预装，必须与 torch 同小版本；缺它 torch.npu 不可用）
+CANN      : 8.3rc2（Ascend 运行时；hard 底线 major.minor==8.3）
+NPU       : 1× Ascend 910B（64 GB HBM），bf16 可用
 环境管理  : 无 conda；直接用系统 Python；pip 可装额外轻量包
-磁盘      : 30 GB（含镜像本身）
+磁盘      : 64 GiB（含镜像本身）
 ```
 
 **一次性依赖安装（`E0/code/setup_deps.sh`，只装"确实需要且体积小"的包）**：
 
 ```bash
 export PIP_NO_CACHE_DIR=1
-# 基础栈由镜像提供（python 3.11 / torch 2.7.1+cu128 / CUDA 12.8），此处**不动**；
+# 基础栈由镜像提供（python 3.11 / torch 2.8.0 + torch_npu 2.8.0 / CANN 8.3rc2 / arm64），此处**不动**；
 # required 清单（唯一事实源 = check_env.py::REQUIRED_PY_DEPS，与 requirements.txt 同源）
 python -m pip install --no-cache-dir numpy pandas scipy scikit-learn einops
 # 可选：平台任务详情页的"迭代曲线"；缺失时自动降级为 JSONL 标量，不阻塞训练
 python -m pip install --no-cache-dir tensorboard
-python -m pip cache purge          # 30 GB 磁盘，装完立即清
+python -m pip cache purge          # 64 GiB 磁盘，装完立即清
 python -m pip freeze > v4/versions/locks/cloud_frozen.txt
 python v4/E0/code/check_env.py --json v4/reports/E0_env.json
 ```
@@ -234,7 +236,7 @@ python v4/E0/code/check_env.py --json v4/reports/E0_env.json
 > **不需要** `pyarrow` / `onnx` / `onnxruntime`：分片缓存是 `.npz`，没有任何代码
 > `import pyarrow`；CPU 推理主路径是 `torch.load(map_location="cpu")`。
 
-**安装纪律（针对 30 GB，R5-M1：依赖由用户 pip 安装，我不自动装）**：
+**安装纪律（针对 64 GiB，R5-M1：依赖由用户 pip 安装，我不自动装）**：
 - **我给出的 pip 清单**（用户执行；格式为一行一个包名）：
   `numpy` / `pandas` / `scipy` / `scikit-learn` / `einops` —— 与
   `E0/code/check_env.py::REQUIRED_PY_DEPS` 严格一致，并有单测锁定两者相等；
@@ -242,25 +244,27 @@ python v4/E0/code/check_env.py --json v4/reports/E0_env.json
   **不需要** `pyarrow`（分片是 `.npz`）、`onnx`/`onnxruntime`（CPU 推理主路径是
   `torch.load(map_location="cpu")`）。
 - **版本不钉死**：required 依赖只查**存在性**。`torch` 的 wheel **不依赖 numpy**
-  （`torch 2.7.1` 的 `Requires-Dist` 里没有 numpy —— 已从 PyPI 元数据核对），基础镜像
+  （`torch 2.8.0` 的 `Requires-Dist` 里没有 numpy —— 已从 PyPI 元数据核对），基础镜像
   通常自带但不保证，所以 numpy 也在清单里、由 pip 补装；其余包按 pip 解析出的兼容版本即可。精确版本以 `versions/locks/cloud_frozen.txt`
   （云端 `pip freeze` 回填）为准 —— 把具体小版本写成硬约束会在镜像升级时误报。
 - 只装上述清单；**不装** `matplotlib`/`jupyter`/`wandb`/`torchvision`/`timm`；
-- **不装**任何需要现场编译 CUDA 扩展的包（`flash-attn`/`xformers`/`apex`/`deepspeed`）——注意力统一走 `F.scaled_dot_product_attention`（PyTorch 2.7 原生，自动选择 Flash / Memory-Efficient / Math 后端）；
-- `pip install` **不允许**触碰 `torch`、`nvidia-*`、`cuda-*` 系列（会触发版本替换或重复下载数 GB）；`setup_deps.sh` 在安装前用 `--dry-run` 预检并在命中时中止（exit 3）；
+- **不装**任何需要现场编译 NPU/CUDA 扩展的包（`flash-attn`/`xformers`/`apex`/`deepspeed`）——注意力统一走 `F.scaled_dot_product_attention`（PyTorch 2.8 原生，自动选择 Flash / Memory-Efficient / Math 后端）；
+- `pip install` **不允许**触碰 `torch`、`torch_npu`、`npu*`、`ascend*`、`cann*`、`nvidia-*`、`cuda-*` 系列（会触发版本替换或重复下载数 GB、并可能破坏 `torch.npu`）；`setup_deps.sh` 在安装前用 `--dry-run` 预检并在命中时中止（exit 3）；
 - 每次安装后必须 `pip cache purge` 并跑 `check_env.py`。
 
-**PyTorch 2.7.1 / CUDA 12.8 兼容红线（写进 `E0/code/check_env.py`，不通过则禁止开始训练）**：
+**PyTorch 2.8.0 / torch_npu 2.8.0 / CANN 8.3rc2 兼容红线（写进 `E0/code/check_env.py`，不通过则禁止开始训练）**：
 
 | 项 | 要求 |
 |---|---|
-| `torch.__version__` 主版本 == `2.7.1` | 断言（`+cu128` 后缀允许）；否则报错退出 |
-| `torch.cuda.is_available()` 且 `torch.cuda.get_device_capability() == (8, 0)` | 断言 A100 |
-| `torch.cuda.is_bf16_supported()` | 断言，决定用 bf16 而非 fp16 |
-| **CUDA runtime 语义** | hard：`torch.version.cuda` 存在且 **major == 12**；warn：是否等于声明值 **12.8**（cu126/cu128 官方 wheel 都可接受）；advisory：`nvidia-smi` 的 `CUDA Version >= 12.8`。**禁止**把 runtime 小版本钉死成 hard 断言（四审 R4-B1 的 Gate 卡死根因） |
+| `torch.__version__` major.minor == `2.8` | 断言（补丁号/build 串漂移只 warn）；否则报错退出 |
+| `torch_npu` 可导入且 major.minor == `2.8` | 断言：**它负责注册 `torch.npu`**，缺它或小版本不匹配则 NPU 路径不可用 |
+| `torch.npu.is_available()` 且设备名含 `910` | 断言 910B；`torch.npu.get_device_properties(0).total_memory` 上报 HBM 容量 |
+| **CANN 语义** | hard：探测到的 CANN major.minor == `(8, 3)`；warn：归一化后是否等于声明值 `8.3rc2`（`8.3.RC2`/`8.3.rc2` 等价；rc 与补丁漂移不阻塞）。**禁止**把某个具体 rc 钉死成 hard 断言（四审 R4-B1 的 Gate 卡死根因） |
+| 架构 | 目标机 `uname -m` ∈ {`aarch64`,`arm64`}（arm64 轮子）；本机开发用 `--allow-non-target-device` 降级为 warn |
+| bf16 | **实测**一次 `npu` 上的 bf16 matmul（不假定 `is_bf16_supported` 存在）；决定用 bf16 而非 fp16 |
 | `torch.load` | torch >= 2.6 起 `weights_only` **默认 True**；本项目 checkpoint 只存张量 + 原生标量，**保持默认**，不放宽为 `weights_only=False`（安全 + 跨版本稳定） |
-| AMP | 用 `torch.amp.autocast("cuda", dtype=torch.bfloat16)` + `torch.amp.GradScaler("cuda")`（`torch.cuda.amp.*` 已弃用，A100 上 bf16 不需要 scaler） |
-| 注意力 | 只用 `F.scaled_dot_product_attention`（PyTorch 2.7 内置 Flash / Memory-Efficient / Math 三后端自动选择） |
+| AMP | 用 `torch.autocast("npu", dtype=torch.bfloat16)`（`src/training/loop.py::amp_context` 按实际设备取 `device_type`）；bf16 **不需要** GradScaler |
+| 注意力 | 只用 `F.scaled_dot_product_attention`（PyTorch 2.8 内置后端自动选择；NPU 侧由 torch_npu 提供实现） |
 | 禁用未验证 API | `torch.export` 新接口、`torch.compile(fullgraph=True)` 的新参数一律不用 |
 | `torch.compile` | 可选，必须有 `--no-compile` 开关；编译失败不得中断训练 |
 | 优化器/调度器 | 只用原生 `AdamW` + `torch.optim.lr_scheduler` |
@@ -277,13 +281,13 @@ python v4/E0/code/check_env.py --json v4/reports/E0_env.json
 | 分片落盘 | `np.savez_compressed`（必须） | — | 无 |
 | 列式 OOF 存储 | `pyarrow.parquet` | `np.savez_compressed` + 列名 JSON | 体积略大，无功能损失 |
 | 分位数/标准化 | `numpy.percentile`（自写，训练折内 fit） | — | 无 |
-| 模型导出（跨机兜底） | `torch.onnx.export`（**best-effort，需用户额外装 `onnx`**；torch 2.7 dynamo 路径还需 `onnxscript`） | **主兜底 = `.pt` + `.npz` 权重清单**（`torch.load(map_location='cpu')`） | 评测镜像预装 torch 2.7.1，`torch.load(map_location='cpu')` 是主路径；未装 onnx 时 `torch.onnx.export` 会抛 `OnnxExporterError: Module onnx is not installed!`（实测），因此 ONNX **只做 best-effort、不写进任何 Gate**；不实现纯 numpy 前向（ROI 太低） |
+| 模型导出（跨机兜底） | `torch.onnx.export`（**best-effort，需用户额外装 `onnx`**；torch 2.7 dynamo 路径还需 `onnxscript`） | **主兜底 = `.pt` + `.npz` 权重清单**（`torch.load(map_location='cpu')`） | 评测镜像预装 torch 2.8.0，`torch.load(map_location='cpu')` 是主路径；未装 onnx 时 `torch.onnx.export` 会抛 `OnnxExporterError: Module onnx is not installed!`（实测），因此 ONNX **只做 best-effort、不写进任何 Gate**；不实现纯 numpy 前向（ROI 太低） |
 | 进度/日志 | 标准库 `print` + CSV/JSONL | `tensorboard`（可选，装了就写标量，没装只写 JSONL） | 不依赖 tqdm；观测量**不参与**任何阈值/选型决策 |
 | 绘图 | **不做**（不需要） | — | 不依赖 matplotlib |
 
 **规则**：`import` 可选库统一写成 `try: import X; HAS_X=True except ImportError: HAS_X=False`，并把探测结果写进 `reports/E0_env.json`（`{"pyarrow": true/false, "onnx": ..., "sklearn": ...}`），供后续阶段选择路径。**任何模块不得因为可选库缺失而崩溃**；同时**也不得因为可用就强依赖**（对 OOF/缓存这类产出，必须给出兜底格式）。
 
-### 3.4 云端磁盘预算（30 GB，含镜像占用）
+### 3.4 云端磁盘预算（64 GiB，含镜像占用）
 
 **先测后用，不许假设**。E0 的第一条命令就是测量镜像与文件系统的真实占用：
 
@@ -295,7 +299,7 @@ python v4/src/data/disk_guard.py --min-free-gb 8 --report /home,/tmp \
        --json v4/reports/E0_disk_budget.json
 ```
 
-#### 3.4.1 预算表（**可用量 = 30 GB − 镜像已占**；表内为"项目自身"占用）
+#### 3.4.1 预算表（**可用量 = 64 GiB − 镜像已占**；表内为"项目自身"占用）
 
 | 项目 | 预算 | 控制手段 |
 |---|---:|---|
@@ -766,7 +770,7 @@ submission_code_v4/
 ├── README.md              # 算法名称/方法/环境/两条命令/文件说明（rules §6.3）
 ├── predict.py             # 主入口，官方 --data_dir / --output
 ├── train.py               # 训练入口（可选执行，但必须能跑）
-├── requirements.txt       # 环境声明（预装 torch 2.7.1 + 额外轻量包，见 §3.3.1）
+├── requirements.txt       # 环境声明（预装 torch 2.8.0 + 额外轻量包，见 §3.3.1）
 ├── configs/v4.yaml        # 模型/特征/解码配置
 ├── src/                   # data/ features/ models/ losses/ inference/ validation/
 ├── models/                # 训练好的权重 + scaler/分位数参数（JSON）
@@ -823,7 +827,7 @@ v4 可能整体失败（纯 DL 在 80 井上不收敛优于树模型）。因此
 | **SW 尺度混淆** | SW Acc 掉 ~10 分 | E0 单元测试锁死（SW<1 = 0，单一标签尺度）；连续头**训练折仿射归一化 + 输出反变换**；契约层 SW 中位数守卫，禁止裁剪到 [0,1] |
 | **POR 容差过窄（±0.008）** | POR Acc 在 0.6 附近打转 | `q_por` 原子头硬输出**精确 0.1**；连续头用 `por_max·sigmoid(g)`（可到 0），不承担命中容差 |
 | **16 GiB 系统内存 OOM** | DataLoader 被杀、swap 抖动、训练中途 OOM-kill | `num_workers=4`、禁止全局井缓存、按井分片按需读、每 worker < 300 MB 自检 |
-| **30 GB 磁盘打爆** | `pip install` 后剩余 < 5 GB；checkpoint 越攒越多 | 装完 `pip cache purge`；特征按版本目录落盘 + 旧版本即删；checkpoint 滚动窗口（best/last/last_prev）；每 epoch `assert_disk_headroom(8.0)`；E0 Gate 强制 `disk_budget_ok` |
+| **64 GiB 磁盘打爆** | `pip install` 后剩余 < 5 GB；checkpoint 越攒越多 | 装完 `pip cache purge`；特征按版本目录落盘 + 旧版本即删；checkpoint 滚动窗口（best/last/last_prev）；每 epoch `assert_disk_headroom(8.0)`；E0 Gate 强制 `disk_budget_ok` |
 | **PyTorch 2.4 API 不兼容** | 启动即 `AttributeError`/`ImportError` | `check_env.py` 前置断言；禁用 2.5+ API 与需编译扩展（flash-attn/xformers/apex）；注意力统一走 `F.scaled_dot_product_attention` |
 | **序列主干不优于行级模型** | E3 delta CI 含 0 或为负 | 感受野消融 → 检查窗口统计是否泄漏/是否被 batch 内打乱；最多两次结构修订后降级 |
 | **过拟合（80 井太少）** | inner 高、outer 低；折间方差大 | dropout/stochastic depth/weight decay；曲线随机掩码与深度抖动增强；早停用真实分数 |
@@ -844,16 +848,16 @@ v4 可能整体失败（纯 DL 在 80 井上不收敛优于树模型）。因此
 | 阶段 | 时间盒 | 计算预算（软） | A 榜配额 | 到期动作 |
 |---|---|---|---|---|
 | E0 | 0.5 天 | 本机 CPU，分钟级 | 0 | 契约不过不得进 E1 |
-| E1 | 1 天 | A100，≤3 h | 0 | OOF < 78.0 → 排查数据/损失，不扩容 |
-| E2 | 1 天 | 本机 CPU + A100，≤2 h | 0 | 每组特征必须消融 |
-| E3 | 3 天 | A100，≤20 h | 0 | 序列不优于行级 → 诊断，最多两次修订 |
-| E4 | 2 天 | A100，≤20 h | 0 | 不优则保留 E3 结构 |
-| E5 | 2 天 | A100，≤15 h | 0 | 每目标独立判定 |
-| E6 | 2 天 | A100，≤10 h | 0 | OOF < 82.0 → 冻结当前最强候选为 PD-pre |
-| E7 | 1.5 天 | A100，≤10 h | 0 | 损失消融必须完整 |
-| E8 | 3 天 | A100，≤40 h | 0 | 同源平均不得当增益 |
-| E9 | 1 天 | A100 + 本机，≤4 h | **2–3（短名单仲裁）** | 护栏不过 → 回退 |
-| E10 | 1 天 | 本机 CPU 打包 + A100 全量重训 ≤30 h | **1（最终确认）** | 复现失败 → 回退 |
+| E1 | 1 天 | Ascend 910B，≤3 h | 0 | OOF < 78.0 → 排查数据/损失，不扩容 |
+| E2 | 1 天 | 本机 CPU + Ascend 910B，≤2 h | 0 | 每组特征必须消融 |
+| E3 | 3 天 | Ascend 910B，≤20 h | 0 | 序列不优于行级 → 诊断，最多两次修订 |
+| E4 | 2 天 | Ascend 910B，≤20 h | 0 | 不优则保留 E3 结构 |
+| E5 | 2 天 | Ascend 910B，≤15 h | 0 | 每目标独立判定 |
+| E6 | 2 天 | Ascend 910B，≤10 h | 0 | OOF < 82.0 → 冻结当前最强候选为 PD-pre |
+| E7 | 1.5 天 | Ascend 910B，≤10 h | 0 | 损失消融必须完整 |
+| E8 | 3 天 | Ascend 910B，≤40 h | 0 | 同源平均不得当增益 |
+| E9 | 1 天 | Ascend 910B + 本机，≤4 h | **2–3（短名单仲裁）** | 护栏不过 → 回退 |
+| E10 | 1 天 | 本机 CPU 打包 + Ascend 910B 全量重训 ≤30 h | **1（最终确认）** | 复现失败 → 回退 |
 | E11 | 0.5 天 | 本机 | 0 | 归档 |
 
 - A 榜每日 ≤5 次；每次提交登记 `v4/reports/<STAGE>_a_board_log.json`（`candidate_id/score/submit_time/用途`）。

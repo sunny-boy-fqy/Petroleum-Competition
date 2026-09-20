@@ -11,7 +11,7 @@
 ```
 v4/
 ├── README.md                 总入口：环境、平台速查、当前状态
-├── PLAN.md                   总计划（888 行，唯一权威）
+├── PLAN.md                   总计划（892 行，唯一权威）
 ├── 资料引用索引.md            每处引用的可核验定位
 ├── run_train.sh              平台训练任务统一入口（env/data/e0/smoke/stage/all）
 ├── predict.py                推理入口（官方 --data_dir/--output）
@@ -33,28 +33,37 @@ v4/
 │
 ├── src/                      项目级共享代码（**不 import torch 的口径层也在其中**）
 │   ├── constants.py              冻结常量（列序/哨兵/占位/权重/锚点/预算）
+│   ├── hardware.py               **目标平台画像唯一事实源**（Ascend 910B / CANN 8.3rc2 /
+│   │                             torch 2.8.0 + torch_npu 2.8.0 / arm64 / 16 GiB / 64 GiB）
 │   ├── portability.py            可选依赖探测与降级（numpy/pandas/pyarrow/torch/onnx）
 │   ├── score.py                  官方评分器（drop 口径）
 │   ├── data/
 │   │   ├── parse.py              按表头名对齐的解析器（处理 3 口非规范 schema 井）
 │   │   ├── labels.py             三状态判据、SW 尺度校验、PERM log 变换
 │   │   ├── dataset.py            按井分片缓存（raw/labels npz）
-│   │   └── disk_guard.py         30 GB 磁盘守卫（cleanup/save_and_exit/abort）
+│   │   ├── disk_guard.py         64 GiB 磁盘守卫（cleanup/save_and_exit/abort）
+│   │   └── row_dataset.py        E1/P0 行级装配：F1 分片缓存 + **折内** RowScaler/目标尺度
 │   ├── features/                 F1 行级特征（basic.py）+ E2 特征组（physics/window/well）
 │   ├── models/                   row_mlp（q_joint + q_por/q_perm/q_sw）/ unet1d / tcn / patchtf / heads / mmoe
 │   ├── losses/score_aligned.py   三段式对齐损失（Charbonnier + softplus + 尺度归一化 L_aux + 逐目标原子 BCE + 边界聚焦）
 │   ├── inference/
 │   │   ├── contract.py           提交契约校验（10 井/95,948 行/字段/有限性/SW 尺度守卫）
 │   │   ├── atomic_gate.py        **逐目标硬切换 τ_t** + joint_guard + 平台区中点选择 + 误判代价（numpy，无 torch）
-│   │   └── predictor.py          统一推理器
+│   │   └── predictor.py          manifest→权重→逐井预测→提交载荷（CPU 主路径 + 契约校验）
 │   ├── validation/
 │   │   ├── folds.py              按井折读取 + inner 折 + 加权 cluster bootstrap
 │   │   └── gates.py              Gate 预注册校验与聚合判定（已实现）
-│   ├── training/tb_logger.py     TensorBoard + JSONL 日志（平台迭代曲线；无 tensorboard 时降级）
+│   ├── training/
+│   │   ├── loop.py               训练循环：bf16 autocast（npu/cuda/cpu）、λ1 退火、梯度裁剪、
+│   │   │                         best-epoch 权重写回、时间预算、每 epoch 磁盘守卫、时间日志
+│   │   ├── metrics.py            预测→官方分数口径（连续/原子门/占位行命中率/原子头 P·R·F1）
+│   │   ├── checkpoint.py         bf16 state_dict + manifest（含连续头标尺与 L_aux 尺度）+ 滚动淘汰 + resume 校验
+│   │   └── tb_logger.py          TensorBoard + JSONL 日志（平台迭代曲线；无 tensorboard 时降级）
 │   ├── versioning/registry.py    版本注册表读写（predict.py 的版本来源）
 │   └── ensemble/blend.py         集成融合（E8）
 │
 ├── E0/ … E11/                12 个阶段，每层含 PLAN.md + P*/{PLAN.md,code/,docs/}
+│   └── E1/code/                 train_row.py（5 折 OOF + 两阶段 inner-OOF 选择 + Gate）
 │
 ├── versions/                 事实源
 │   ├── registry.json            可运行版本注册表
@@ -144,14 +153,14 @@ v4/
 | `src/` | constants, portability, score, data/{parse,labels,dataset,disk_guard}, features/basic, losses/score_aligned, models/row_mlp（含 E6 的 `q_joint + q_por/q_perm/q_sw` 五个头）, inference/{contract,atomic_gate}, validation/{folds,gates}, versioning/registry | features/{physics,window,well}, models/{unet1d,tcn,patchtf,heads,mmoe}, inference/{predictor,decode}, ensemble/blend, losses 的物理项 |
 | 根目录 | predict.py, run_train.sh, requirements.txt | train.py, configs/v4.yaml（当前为 `configs/paths.yaml`） |
 | 产物 | reports/E0_*.json（10 份）、versions/registry.json、versions/candidates.json、versions/status.json、versions/folds_sha256.json、versions/prereg_templates/（33 份） | 各阶段的 E*.json |
-| `run_train.sh` | `env` / `data` / `e0` 可用 | `smoke` / `stage` 需 E1 代码（当前会明确报错） |
+| `run_train.sh` | `env` / `data` / `e0` / `smoke` / `stage E1` 均可用 | `--mode all` 会自动续跑 E1（代码已就绪） |
 
 ## 四、文件数量核对（截至 E0 完成时）
 
 | 项 | 数量 |
 |---|---:|
 | git 跟踪文件 | 见 `git ls-files \| wc -l` |
-| 计划文件（`PLAN.md`） | 1（总，888 行）+ 12（阶段，759 行）+ 33（P，5,224 行）= **46 份 / 6,871 行** |
+| 计划文件（`PLAN.md`） | 1（总，892 行）+ 12（阶段，759 行）+ 33（P，5,224 行）= **46 份 / 6,875 行** |
 | P 级计划平均篇幅 | **158 行**（合计 5,224；由 `tools/plan_stats.py` 统计） |
 | 代码模块（`v4/src/**/*.py`） | 见 `find v4/src -name '*.py' \| wc -l` |
 | E 层脚本（`v4/E*/code/*.py`） | 见 `find v4/E* -name '*.py' \| wc -l` |

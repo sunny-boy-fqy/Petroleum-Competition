@@ -317,6 +317,10 @@ def total_loss(out: dict, batch: dict, lam1: float = 1.0, lam2: float | None = N
            旧键 'y_ph'(B,) 仍作为联合标签的 fallback。
     返回 (total, parts_dict_of_floats)
 
+    `s_por` / `s_sw`（可选 kw）：`L_aux` 的逐目标稳健尺度，**必须来自训练折**
+    （`features.basic.fit_target_scalers`，见 E1/P1 §5 步 4）；未给出时回落到
+    `(11.34, 20.0)`，仅用于兼容旧调用点。`huber_beta` 同理由这里透传。
+
     兼容性：
       - `use_ph` 映射到联合项 `L_joint`（`use_joint` 显式优先）；
       - `lam2` 为旧名，显式传入时覆盖 `lam_joint`；
@@ -334,6 +338,12 @@ def total_loss(out: dict, batch: dict, lam1: float = 1.0, lam2: float | None = N
     # 原子项专属 kwargs 先取出，避免被透传给 aligned_loss 造成 TypeError
     pos_weight = kw.pop("pos_weight", None)
     alpha_nonjoint = kw.pop("alpha_nonjoint", 1.0)
+    # E1/P1 步骤 4（E1-R3 缺口修复）：`L_aux` 的**逐目标稳健尺度**必须可传入。
+    # 此前 `total_loss` 直接丢弃这两个量，`aux_loss` 永远用默认 (11.34, 20.0)，
+    # 于是"按训练折尺度归一化"在组合损失里静默失效（SW 的 99.9 重新支配梯度）。
+    s_por = kw.pop("s_por", 11.34)
+    s_sw = kw.pop("s_sw", 20.0)
+    huber_beta = kw.pop("huber_beta", 1.0)
 
     if mask is None:
         mask = torch.ones_like(torch.as_tensor(out["por"]))[:, None].expand(-1, 3)
@@ -353,7 +363,8 @@ def total_loss(out: dict, batch: dict, lam1: float = 1.0, lam2: float | None = N
     if use_aux:
         _add("aux", aux_loss(
             batch["por"], out["por"], batch["perm_z"], out["perm_z"],
-            batch["sw"], out["sw"], mask, slice_weight=slice_weight), lam1)
+            batch["sw"], out["sw"], mask, s_por=s_por, s_sw=s_sw,
+            huber_beta=huber_beta, slice_weight=slice_weight), lam1)
     if joint_on:
         y_joint = batch.get("y_joint")
         if y_joint is None:

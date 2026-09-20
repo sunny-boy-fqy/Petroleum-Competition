@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v4 云端一次性依赖安装（30 GB 磁盘纪律版）
+# v4 云端一次性依赖安装（64 GiB 磁盘纪律版；Ascend 910B / CANN 8.3rc2）
 #
 # 用法（**本机**：在项目父目录执行，`v4/` 是本机真实的目录名；
 #       云端由 run_train.sh 以 $HERE 调用，不要照抄下面的 `v4/` 前缀）：
@@ -11,7 +11,7 @@
 #   py3.11 + 平台镜像下 pip 会解析出哪个小版本，只有实机才知道；猜错会让镜像构建失败。
 #   所以第一次不钉（让 pip 解析），装完立刻 `pip freeze` 写进
 #   `versions/locks/cloud_frozen.txt`（本脚本第 3 步自动做）；需要**重建镜像 / 复现提交**时
-#   用 `--from-frozen` 按那份实测版本精确安装（torch/nvidia/cuda 系列由白名单天然排除）。
+#   用 `--from-frozen` 按那份实测版本精确安装（torch/torch_npu/npu/ascend/cann/nvidia/cuda 系列由白名单天然排除）。
 set -euo pipefail
 
 DRY=0
@@ -33,7 +33,7 @@ CACHE_ROOT="${V4_CACHE_ROOT:-/data/v4/cache}"
 mkdir -p "$REPORTS_DIR" 2>/dev/null || REPORTS_DIR="reports"
 mkdir -p "$REPORTS_DIR"
 
-# R3 修复：磁盘体检的权威路径必须是 data root（云端 /data 的 30 GB 配额），
+# R3 修复：磁盘体检的权威路径必须是 data root（云端 /data 的 64 GiB 配额），
 # 不能默认检查 `/`。本机开发环境若 /data 与 $V4_DATA_ROOT 都不存在，则降级到
 # repo 目录，并明确打印**实际使用**的路径（而不是崩溃）。
 if [[ ! -d "$DATA_ROOT" ]]; then
@@ -87,17 +87,18 @@ sys.exit(0 if free >= 8 else 1)
   echo "磁盘余量 ${FREE_GB} GiB >= 8 GiB，继续安装。"
 else
   echo "!! 可用余量 ${FREE_GB} GiB < 8 GiB（或无法测量）—— 按 PLAN.md §3.4.1 的安全规则："
-  echo "   不安装任何额外包，仅使用镜像自带 torch（numpy 是口径层硬前提，缺它也必须先补上）。"
+  echo "   不安装任何额外包，仅使用镜像自带 torch + torch_npu（numpy 是口径层硬前提，缺它也必须先补上）。"
   echo "   请先清理 $CACHE_ROOT 或旧 checkpoint 后重跑本脚本。"
   exit 2
 fi
 
-# 1) 安装纪律：绝不触碰 torch / nvidia-* / cuda-*
+# 1) 安装纪律：绝不触碰 torch / torch_npu / nvidia-* / cuda-* / ascend* / cann*
 export PIP_NO_CACHE_DIR=1
 
 # 包清单三选一：
 #   a) --from-frozen：`pip freeze` 的**实测精确版本**（重建镜像/复现提交时用；
-#      E0/code/frozen_pins.py 用白名单挑直接依赖，构造上不含 torch/nvidia/cuda/triton）
+#      E0/code/frozen_pins.py 用白名单挑直接依赖，构造上不含 torch/torch_npu/
+#      nvidia/cuda/triton/ascend/cann —— 目标平台是 Ascend + CANN）
 #   b) versions/locks/cloud.txt：默认，**只列包名、不钉版本**（让 pip 解析当前镜像的兼容版本）
 #   c) 兜底硬编码列表：与 check_env.py::REQUIRED_PY_DEPS 保持一致（lock 缺失时）
 LOCK="versions/locks/cloud.txt"
@@ -112,8 +113,12 @@ if [[ "$FROM_FROZEN" == "1" ]]; then
   echo "使用 frozen lock 的精确版本: ${#PKGS[@]} 个包（$FROZEN）"
   printf '  %s\n' "${PKGS[@]}"
 elif [[ -f "$LOCK" ]]; then
-  mapfile -t PKGS < <(grep -vE '^\s*#|^\s*$|^torch' "$LOCK" | sed -E 's/[[:space:]]*#.*$//' | grep -vE '^\s*$')
-  echo "使用 lock 清单: ${#PKGS[@]} 个包（不钉版本；仅 torch 由镜像提供，跳过）"
+  # 只跳过**加速栈**（torch/torch_npu/npu/ascend/cann 系列），其余照装
+  mapfile -t PKGS < <(grep -vE '^\s*#|^\s*$' "$LOCK" \
+    | sed -E 's/[[:space:]]*#.*$//' \
+    | grep -vE '^\s*$' \
+    | grep -viE '^(torch|torch[_-]npu|npu|ascend|cann|nvidia-|cuda-|triton|apex|deepspeed|flash-attn|xformers)')
+  echo "使用 lock 清单: ${#PKGS[@]} 个包（不钉版本；加速栈 torch/torch_npu/npu/ascend/cann 由镜像提供，跳过）"
 else
   # 与 check_env.py::REQUIRED_PY_DEPS 保持一致（四审 R5-M1：pyarrow 已移出 required）
   PKGS=( "numpy" "pandas" "scipy" "scikit-learn" "einops" )
@@ -124,10 +129,10 @@ if [[ "$DRY" == "1" ]]; then
   exit 0
 fi
 
-# 2) 预检：确认 pip 不会顺带替换 torch
+# 2) 预检：确认 pip 不会顺带替换加速栈（torch / torch_npu / ascend / cann / nvidia / cuda）
 if python3 -m pip install --no-cache-dir --dry-run "${PKGS[@]}" 2>/dev/null \
-     | grep -Ei 'torch|nvidia-|cuda-' ; then
-  echo "!! pip 计划触碰 torch/nvidia/cuda 系列 —— 违反安装纪律，已中止。"
+     | grep -Ei 'torch|npu|ascend|cann|nvidia-|cuda-|triton' ; then
+  echo "!! pip 计划触碰加速栈（torch/torch_npu/npu/ascend/cann/nvidia/cuda）—— 违反安装纪律，已中止。"
   echo "   请改用镜像自带版本，不要安装这些包。"
   exit 3
 fi

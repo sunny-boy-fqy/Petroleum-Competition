@@ -23,7 +23,7 @@ derived:
   oof:        "$V4_RUN_ROOT/<stage>/oof"
   ckpt:       "$V4_RUN_ROOT/<stage>"
 
-# 本地（开发机，无 GPU）默认值：不设 V4_DATA_ROOT 时回退到项目根下的 ../data
+# 本地（开发机，无 NPU/GPU）默认值：不设 V4_DATA_ROOT 时回退到项目根下的 ../data
 local_fallback:
   data_root: "<project_root>"      # -> ../data/train, ../data/test
   reports_dir: "<repo>/reports"

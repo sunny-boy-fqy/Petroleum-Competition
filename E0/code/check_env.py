@@ -1,30 +1,35 @@
 #!/usr/bin/env python3
-"""E0 环境自检：PyTorch 2.7.1+cu128 / CUDA 12.8 / Python 3.11 / A100 / 30 GB 磁盘。
+"""E0 环境自检：Ascend 910B / CANN 8.3rc2 / torch 2.8.0 + torch_npu 2.8.0 / py3.11 / arm64。
 
-CUDA 语义（R4-B1 + R5-B1，务必读）
----------------------------------
-本项目的 **CUDA 12.8** 指**平台驱动的 CUDA 能力**（`nvidia-smi` 头部
-`CUDA Version: 12.8`），**不是** PyTorch 的运行时版本。平台镜像是
-`torch==2.7.1+cu128`（见 `versions/locks/cloud.txt`），该 wheel 编译期的
-`torch.version.cuda` 是 **12.8**。
+目标平台（2026-09-20 变更，**唯一事实源 = `src/hardware.py`**）
+-------------------------------------------------------------
+规格 `Ascend910B-1-64G`：Ascend 910B × 1（64 GB HBM）/ 4000m vCPU / 16 GiB RAM /
+64 GiB 磁盘；镜像 = CANN 8.3rc2 + PyTorch 2.8.0 + torch_npu 2.8.0 + Python 3.11 / **arm64**。
+
+三层口径（沿用 R4-B1 的教训：**不要把某个具体小版本钉成硬门禁**）
+----------------------------------------------------------------
+| 项 | hard（会阻塞训练） | warn（只提示） |
+|---|---|---|
+| Python | major.minor == 3.11 | micro 差异 |
+| torch | 可导入且 major.minor == 2.8 | 与声明值 `2.8.0` 完全相等 |
+| torch_npu | 可导入且 major.minor == 2.8（**NPU 上缺它就没有 `torch.npu`**） | 与声明值完全相等 |
+| CANN | 可探测且 major.minor == (8, 3) | 与声明值 `8.3rc2` 归一化后相等（rc 后缀漂移不阻塞） |
+| 加速器 | `torch.npu.is_available()` 为真且设备名含 910 | — |
+| 架构 | `uname -m` ∈ {aarch64, arm64}（仅目标机；本机开发用开关降级） | — |
+| bf16 | 910B 上真实跑一次 bf16 小算子 | — |
 
 历史教训：四审时把版本写死成 torch 2.4.0+cu124，代码便拿 `torch.version.cuda`
 硬比驱动声明值 → 云端 `run_train.sh --mode env` 必然 `[FAIL]`→`exit 11`，
 `E0_env.json`/`E0_disk_budget.json` 永远产不出来、`E0_cloud_gate` 永远 blocked。
-因此现在是**声明值 + 可接受集合 + 硬底线**三层口径，而不是把某个具体小版本钉死：
+因此这里始终是**声明值 + 可接受集合 + 硬底线**三层，而不是钉死具体小版本。
 
-  - `cuda_runtime_version`（**hard**）：`torch.version.cuda` 存在且 major == 12
-    （= "CUDA-enabled wheel + 12.x runtime"，这是唯一真正会破坏训练的条件）；
-  - `cuda_runtime_declared`（**warn**）：runtime 是否等于**声明值** 12.8
-    （等价地落在 `ACCEPTED_CUDA_RUNTIMES` 内）。cu126 / cu128 两种官方 wheel 都能跑，
-    因此小版本漂移只提示、不阻塞 —— 这正是上次 Gate 挂掉的根因；
-  - `cuda_driver_version`（**warn/advisory**）：`nvidia-smi` 报的驱动 CUDA 能力 >= 12.8，
-    取不到只提示（驱动由平台保证，程序无法也不应修改）。
+CUDA 路径**保留**（`check_torch_and_accel` 会按实际加速器分支）：若将来换回 NVIDIA
+机器，`torch.version.cuda` 的 hard 底线仍是 "CUDA-enabled wheel + major == 12"。
 
 
 设计原则
 --------
-1. 只依赖标准库 + （可选的）torch；**不 import numpy/pandas**，保证在本机无 GPU、
+1. 只依赖标准库 + （可选的）torch/torch_npu；**不 import numpy/pandas**，保证在本机无 NPU、
    无 torch 的开发机上也能跑出一份 "环境不满足" 的明确报告，而不是 ImportError。
 2. 任何一项 hard 检查失败 -> exit code 非 0，训练脚本应在启动时调用它并拒绝继续。
 3. 结果可写成 JSON，供 E0 Gate 的 mandatory_check `env_ok` 读取。
@@ -35,14 +40,14 @@ CUDA 语义（R4-B1 + R5-B1，务必读）
      `--profile full` 下缺失 = warn，并记入 JSON 顶层 `degraded_paths`
      （例如 ONNX 导出不可用时改用原生 torch checkpoint 做推理），**不阻塞训练**。
    注意：本模块 `OPTIONAL_PY_DEPS` 里 optional 依赖的版本号是**参考值（advisory）**，
-   仅用于提示版本漂移，不作为门禁；真实版本一致性由 `versions/locks/cloud.txt` 保证。
+   仅用于提示版本漂移，不作为门禁；真实版本一致性由 `versions/locks/cloud_frozen.txt` 保证。
 
 用法
 ----
     python E0/code/check_env.py                      # 人类可读
     python E0/code/check_env.py --json reports/E0_env.json
     python E0/code/check_env.py --min-free-gb 8      # 磁盘门槛（默认 8）
-    python E0/code/check_env.py --allow-non-a100     # 本机开发模式，降级为 warn
+    python E0/code/check_env.py --allow-non-target-device   # 本机开发：设备/架构/torch 降为 warn
 """
 from __future__ import annotations
 
@@ -57,27 +62,36 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-EXPECTED_PY = (3, 11)
-EXPECTED_TORCH = "2.7.1"
-# R4-B1 + R5-B1：`torch.version.cuda`（编译期 runtime）≠ 平台驱动的 CUDA 能力。
-#   - 声明值：镜像 `torch==2.7.1+cu128` 的 runtime = 12.8；
-#   - 硬底线：只要是 CUDA-enabled wheel 且 major == 12（12.x runtime 都能跑本项目的算子）；
-#   - 可接受集合：cu128 / cu126 两种官方 wheel 都接受，小版本漂移只 warn（见模块 docstring）。
-EXPECTED_CUDA_RUNTIME = (12, 8)                  # 声明值（warn 判定）
-ACCEPTED_CUDA_RUNTIME_MAJOR = 12                 # hard：runtime major
-ACCEPTED_CUDA_RUNTIMES = ((12, 8), (12, 6))      # cu128 / cu126 官方 wheel
-MIN_CUDA_DRIVER = (12, 8)                        # advisory：nvidia-smi 的 "CUDA Version"
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from src import hardware as HW  # noqa: E402
+
+EXPECTED_PY = HW.PLATFORM["python"]
+EXPECTED_TORCH = HW.PLATFORM["torch"]
+EXPECTED_TORCH_NPU = HW.PLATFORM["torch_npu"]
+EXPECTED_CANN = HW.PLATFORM["cann"]
+EXPECTED_ARCH = HW.PLATFORM["arch"]
+TARGET_ACCELERATOR = HW.PLATFORM["accelerator"]
+ACCEL_MODEL = HW.PLATFORM["accelerator_model"]
+
+# CUDA 兜底口径（仅当实际加速器是 cuda 时使用；见模块 docstring）
+ACCEPTED_CUDA_RUNTIME_MAJOR = 12
+ACCEPTED_CUDA_RUNTIMES = ((12, 8), (12, 6))
+EXPECTED_CUDA_RUNTIME = (12, 8)
+MIN_CUDA_DRIVER = (12, 8)
+
 MIN_FREE_GB_DEFAULT = 8.0
-DISK_BUDGET_GB = 30.0
+DISK_BUDGET_GB = float(HW.PLATFORM["disk_gb"])
+RAM_BUDGET_GB = float(HW.PLATFORM["ram_gb"])
 
 # 依赖分档（R3 修复 + R5-M1）。
 #   REQUIRED_PY_DEPS：训练/分析主路径硬依赖；profile=full 且缺失 -> hard。
 #   OPTIONAL_PY_DEPS：有文档化降级路径；profile=full 且缺失 -> warn + degraded_paths。
 # **本表版本一律不钉死**（值为 None 表示"只查是否存在，不比较版本"）。
-# 注意范围：这句话只覆盖**额外轻量包**；`torch`/Python/CUDA 由镜像**硬约束**
-# （`torch_version` 是 hard 检查，EXPECTED_TORCH="2.7.1"），两者不矛盾。
+# 注意范围：这句话只覆盖**额外轻量包**；`torch`/`torch_npu`/CANN/Python 由镜像**硬约束**
+# （`torch_version`/`torch_npu_version`/`cann_version` 是 hard 检查，声明值见 src/hardware.py），
+# 两者不矛盾。
 # torch 的 wheel 本身
-# 不依赖 numpy（2.7.1 的 Requires-Dist 无 numpy），因此 numpy 也在 required 里由 pip 补装；
+# 不依赖 numpy（2.7.1/2.8.0 的 Requires-Dist 均无 numpy），因此 numpy 也在 required 里由 pip 补装；
 # 把某个具体小版本写成硬约束会在
 # 镜像升级时误报。精确版本一致性由 `versions/locks/cloud_frozen.txt`（云端
 # `pip freeze` 回填）保证，本模块只做**存在性**门禁。
@@ -129,9 +143,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--json", type=str, default=None, help="write JSON report here")
     p.add_argument("--min-free-gb", type=float, default=MIN_FREE_GB_DEFAULT)
     p.add_argument(
-        "--allow-non-a100",
+        "--allow-non-target-device",
+        "--allow-non-a100",              # 兼容旧名（四审时期的叫法）
+        dest="allow_non_target_device",
         action="store_true",
-        help="downgrade GPU/torch checks from hard to warn (local dev machine)",
+        help="把设备/架构/torch 检查从 hard 降为 warn（本机开发机用；不影响依赖分档）",
     )
     p.add_argument(
         "--profile", choices=("base", "full"), default="full",
@@ -191,9 +207,101 @@ def query_cuda_driver(timeout: float = 10.0) -> str | None:
     return parse_cuda_driver_from_smi(proc.stdout or "")
 
 
-def check_torch(rep: Report, allow_non_a100: bool) -> dict:
-    info: dict = {"torch_available": False}
-    level = "warn" if allow_non_a100 else "hard"
+def parse_cann_version_from_text(text: str) -> str | None:
+    """从 CANN 的版本文本里解析版本号（纯函数，可单测）。
+
+    支持三类来源的写法：
+      - `version.cfg` / `ascend_toolkit_install.info`：`version=8.3.RC2` / `Version=8.3.rc2`
+      - `npu-smi info`：`CANN Version: 8.3.RC2`
+      - `torch_npu.version.cann`：`8.3.rc2`
+    没有匹配时返回 None（调用方判失败，不静默放过）。
+    """
+    t = text or ""
+    m = re.search(r"(?:cann[_\s]*version|version)\s*[:=]\s*([0-9]+\.[0-9][0-9A-Za-z.\-]*)", t, re.I)
+    if m:
+        return HW.normalize_cann(m.group(1))
+    m = re.search(r"\b(\d+\.\d+(?:\.\s*rc\d+)?)\b", t, re.I)
+    return HW.normalize_cann(m.group(1)) if m else None
+
+
+def _cann_from_files() -> str | None:
+    """从 CANN 安装目录里的 version 文件读取（不依赖 torch_npu）。"""
+    cands: list[Path] = []
+    for env in ("ASCEND_HOME_PATH", "ASCEND_TOOLKIT_HOME", "ASCEND_OPP_PATH"):
+        v = os.environ.get(env)
+        if v:
+            cands += [Path(v) / "version.cfg", Path(v) / "ascend_toolkit_install.info",
+                      Path(v).parent / "version.cfg"]
+    cands += [Path("/usr/local/Ascend/ascend-toolkit/latest/version.cfg"),
+              Path("/usr/local/Ascend/ascend-toolkit/latest/ascend_toolkit_install.info")]
+    for c in cands:
+        try:
+            if c.is_file():
+                got = parse_cann_version_from_text(c.read_text(encoding="utf-8", errors="ignore"))
+                if got:
+                    return got
+        except Exception:                      # pragma: no cover - 环境相关
+            continue
+    return None
+
+
+def query_cann_version() -> tuple[str | None, str]:
+    """尽力探测 CANN 版本，返回 `(version, source)`。
+
+    顺序：`torch_npu.version.cann` → CANN 安装目录 version 文件 → `npu-smi info`。
+    全部失败返回 `(None, "unavailable")`。
+    """
+    try:
+        import torch_npu                        # noqa: PLC0415
+        v = getattr(getattr(torch_npu, "version", None), "cann", None)
+        if v:
+            return HW.normalize_cann(v), "torch_npu.version.cann"
+    except Exception:
+        pass
+    v = _cann_from_files()
+    if v:
+        return v, "ascend_toolkit/version.cfg"
+    exe = shutil.which("npu-smi")
+    if exe:
+        try:
+            proc = subprocess.run([exe, "info"], capture_output=True,
+                                  text=True, timeout=10, check=False)  # noqa: S603
+            v = parse_cann_version_from_text(proc.stdout or "")
+            if v:
+                return v, "npu-smi info"
+        except Exception:                      # pragma: no cover
+            pass
+    return None, "unavailable"
+
+
+def check_arch(rep: Report, allow_non_target: bool) -> dict:
+    """编译架构：目标机必须是 aarch64（arm64 轮子）。"""
+    level = "warn" if allow_non_target else "hard"
+    machine = HW.norm_arch()
+    ok = HW.arch_matches(machine)
+    rep.add("machine_arch", ok, level,
+            f"uname -m={machine} (目标 {EXPECTED_ARCH}；arm64/aarch64 视为一致"
+            + ("；本机开发模式只 warn" if allow_non_target else "") + ")")
+    return {"machine": machine, "expected": EXPECTED_ARCH, "ok": bool(ok)}
+
+
+def _bf16_probe(torch_mod, accel: str) -> bool:
+    """真实跑一次 bf16 小算子（910B 支持 bf16；报告必须来自实测而不是假定）。"""
+    try:
+        dev = torch_mod.device(HW.device_string(accel))
+        a = torch_mod.ones((8, 8), dtype=torch_mod.bfloat16, device=dev)
+        b = torch_mod.ones((8, 8), dtype=torch_mod.bfloat16, device=dev)
+        c = a @ b
+        return float(c.float().sum().item()) == 64.0 * 1.0 and str(c.dtype).endswith("bfloat16")
+    except Exception:
+        return False
+
+
+def check_torch_and_accel(rep: Report, allow_non_target: bool) -> dict:
+    """torch / torch_npu / CANN / 加速器设备检查（hard 与 warn 三层，见模块 docstring）。"""
+    info: dict = {"torch_available": False, "target_accelerator": TARGET_ACCELERATOR,
+                  "platform": HW.describe()}
+    level = "warn" if allow_non_target else "hard"
     try:
         import torch  # noqa: PLC0415
     except Exception as exc:  # pragma: no cover - depends on environment
@@ -202,69 +310,93 @@ def check_torch(rep: Report, allow_non_a100: bool) -> dict:
     info["torch_available"] = True
     info["torch_version"] = torch.__version__
     info["torch_cuda_version"] = getattr(torch.version, "cuda", None)
-    info["cudnn_version"] = torch.backends.cudnn.version() if torch.cuda.is_available() else None
 
-    ok_ver = torch.__version__.split("+")[0] == EXPECTED_TORCH
-    rep.add(
-        "torch_version",
-        ok_ver,
-        level,
-        f"torch {torch.__version__} (expected {EXPECTED_TORCH})",
-    )
+    want_mm = HW.version_major_minor(EXPECTED_TORCH)
+    got_mm = HW.version_major_minor(torch.__version__)
+    rep.add("torch_version", got_mm == want_mm, level,
+            f"torch {torch.__version__} (hard: major.minor=={want_mm[0]}.{want_mm[1]})")
+    rep.add("torch_version_declared", torch.__version__.split("+")[0] == EXPECTED_TORCH, "warn",
+            f"torch {torch.__version__} vs 声明 {EXPECTED_TORCH}（patch/构建串漂移不阻塞）")
 
-    # R4-B1 + R5-B1：hard 只要求"CUDA-enabled wheel + 12.x runtime"；
-    # 是否等于声明值（12.8）另行 warn，避免再次把 Gate 钉死在某个 wheel 小版本上。
-    cuda_ver = getattr(torch.version, "cuda", None)
-    declared = _mm("%d.%d" % EXPECTED_CUDA_RUNTIME)
-    accepted = tuple("%d.%d" % v for v in ACCEPTED_CUDA_RUNTIMES)
-    if cuda_ver:
-        got_mm = _mm(cuda_ver)
-        ok_hard = _mm_tuple(cuda_ver)[0] == ACCEPTED_CUDA_RUNTIME_MAJOR
-        rep.add("cuda_runtime_version", ok_hard, level,
-                f"torch.version.cuda={cuda_ver} (hard 要求 runtime major=="
-                f"{ACCEPTED_CUDA_RUNTIME_MAJOR}；声明值 {declared}，可接受 {list(accepted)})")
-        info["cuda_runtime_matches_declared"] = got_mm == declared
-        rep.add("cuda_runtime_declared", got_mm == declared, "warn",
-                f"torch.version.cuda={got_mm} vs 声明 {declared}（cu128 镜像；"
-                f"可接受 {list(accepted)} 内的任意值，小版本漂移不阻塞）")
-    else:
-        info["cuda_runtime_matches_declared"] = False
-        rep.add("cuda_runtime_version", False, level,
-                "torch.version.cuda is None (CPU-only wheel?)")
-        rep.add("cuda_runtime_declared", False, "warn",
-                f"无法判定 runtime 是否为 {declared}（torch.version.cuda 为 None）")
+    # torch_npu：NPU 路径的硬依赖（它负责注册 torch.npu）
+    try:
+        import torch_npu  # noqa: PLC0415
+        tn_ver = getattr(torch_npu, "__version__", "?")
+        info["torch_npu_version"] = tn_ver
+        rep.add("torch_npu_version", HW.version_major_minor(tn_ver) == want_mm, level,
+                f"torch_npu {tn_ver} (hard: major.minor=={want_mm[0]}.{want_mm[1]}，"
+                f"必须与 torch 同小版本)")
+        rep.add("torch_npu_version_declared", str(tn_ver).split("+")[0] == EXPECTED_TORCH_NPU,
+                "warn", f"torch_npu {tn_ver} vs 声明 {EXPECTED_TORCH_NPU}")
+    except Exception as exc:
+        info["torch_npu_version"] = None
+        rep.add("torch_npu_version", False, level,
+                f"cannot import torch_npu: {exc!r}（目标机为 Ascend NPU，缺它则 torch.npu 不可用）")
 
-    # R4-B1：驱动能力只做 advisory（warn），缺失/偏低都不阻塞训练。
-    drv = query_cuda_driver()
-    info["cuda_driver_version"] = drv
-    want_drv = _mm("%d.%d" % MIN_CUDA_DRIVER)
-    if drv:
-        rep.add("cuda_driver_version", _mm_tuple(drv) >= MIN_CUDA_DRIVER, "warn",
-                f"nvidia-smi CUDA Version={drv} (平台声明 {want_drv}；"
-                "驱动能力由平台保证，advisory 不阻塞)")
-    else:
-        rep.add("cuda_driver_version", False, "warn",
-                "nvidia-smi 不可用或未报 CUDA Version（advisory，不影响 hard 判定）")
+    cann, cann_src = query_cann_version()
+    info["cann_version"] = cann
+    info["cann_source"] = cann_src
+    want_cann_mm = tuple(HW.PLATFORM["cann_accepted_major_minor"])
+    cann_mm = HW.cann_major_minor(cann) if cann else (-1, -1)
+    rep.add("cann_version", cann is not None and cann_mm == want_cann_mm, level,
+            f"CANN {cann} (from {cann_src}; hard: major.minor=={want_cann_mm[0]}.{want_cann_mm[1]})")
+    rep.add("cann_version_declared", HW.normalize_cann(cann) == HW.normalize_cann(EXPECTED_CANN),
+            "warn", f"CANN {cann} vs 声明 {EXPECTED_CANN}（rc/补丁漂移不阻塞）")
 
-    cuda_avail = torch.cuda.is_available()
-    info["cuda_available"] = cuda_avail
-    rep.add("cuda_available", cuda_avail, level, f"torch.cuda.is_available()={cuda_avail}")
-    if not cuda_avail:
+    accel = HW.detect_accelerator(torch)
+    info["accelerator"] = accel
+    info["accelerator_is_target"] = accel == TARGET_ACCELERATOR
+    rep.add("accelerator_available", accel == TARGET_ACCELERATOR, level,
+            f"detect_accelerator={accel}（目标 {TARGET_ACCELERATOR}；"
+            f"torch.npu.is_available 决定 NPU 路径）")
+    if accel == "cpu":
+        info["torch_source"] = "platform image (do NOT pip install torch/torch_npu)"
         return info
 
-    cap = torch.cuda.get_device_capability(0)
-    name = torch.cuda.get_device_name(0)
-    total_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-    info.update({"gpu_name": name, "gpu_capability": list(cap), "gpu_total_gb": round(total_gb, 1)})
-    rep.add("gpu_is_a100", cap == (8, 0), level, f"{name} sm_{cap[0]}{cap[1]} {total_gb:.1f} GiB")
-    bf16 = bool(torch.cuda.is_bf16_supported())
+    frontend = torch.npu if accel == "npu" else torch.cuda
+    try:
+        name = frontend.get_device_name(0)
+        props = frontend.get_device_properties(0)
+        total_gb = float(getattr(props, "total_memory", 0)) / (1024 ** 3)
+        info.update({"device_name": name, "device_total_gb": round(total_gb, 1),
+                     "device_count": int(frontend.device_count())})
+    except Exception as exc:                   # pragma: no cover - 平台相关
+        info["device_query_error"] = repr(exc)
+        rep.add("device_query", False, level, f"无法读取设备信息：{exc!r}")
+        return info
+    if accel == "npu":
+        rep.add("device_is_910b", ACCEL_MODEL.lower() in str(name).lower(), level,
+                f"{name}（目标 {ACCEL_MODEL}）{total_gb:.1f} GiB HBM；count={info['device_count']}")
+    else:
+        cap = torch.cuda.get_device_capability(0)
+        info["gpu_capability"] = list(cap)
+        rep.add("device_is_910b", False, "warn",
+                f"{name} sm_{cap[0]}{cap[1]} —— 实际是 CUDA 机器，与声明的 Ascend 目标不符")
+    bf16 = _bf16_probe(torch, accel)
     info["bf16_supported"] = bf16
-    rep.add("bf16_supported", bf16, level, f"torch.cuda.is_bf16_supported()={bf16}")
-    info["torch_source"] = "platform image (do NOT pip install torch)"
+    rep.add("bf16_supported", bf16, level, f"实测 {accel} 上 bf16 matmul={bf16}")
+    if accel == "cuda":
+        cuda_ver = getattr(torch.version, "cuda", None)
+        declared = _mm("%d.%d" % EXPECTED_CUDA_RUNTIME)
+        if cuda_ver:
+            rep.add("cuda_runtime_version",
+                    _mm_tuple(cuda_ver)[0] == ACCEPTED_CUDA_RUNTIME_MAJOR, "warn",
+                    f"torch.version.cuda={cuda_ver}（CUDA 兜底口径：major=="
+                    f"{ACCEPTED_CUDA_RUNTIME_MAJOR}；声明 {declared}）")
+        drv = query_cuda_driver()
+        info["cuda_driver_version"] = drv
+        rep.add("cuda_driver_version", bool(drv) and _mm_tuple(drv) >= MIN_CUDA_DRIVER, "warn",
+                f"nvidia-smi CUDA Version={drv}（advisory）")
+    info["torch_source"] = "platform image (do NOT pip install torch/torch_npu)"
     return info
 
 
-def check_py_deps(rep: Report, allow_non_a100: bool,
+def check_torch(rep: Report, allow_non_target: bool) -> dict:
+    """向后兼容别名（旧调用点/单测仍可用）。"""
+    return check_torch_and_accel(rep, allow_non_target)
+
+
+def check_py_deps(rep: Report, allow_non_target_device: bool,
                   profile: str = "full") -> tuple[dict, dict]:
     """依赖探测，返回 (已安装版本 info, degraded_paths)。
 
@@ -336,7 +468,7 @@ def check_disk(rep: Report, path: Path, min_free_gb: float) -> dict:
         f"(require >= {min_free_gb} GiB)",
     )
     if total_gb > DISK_BUDGET_GB * 1.5:
-        # 本机磁盘通常远大于 30 GB；只是提示，不判定失败
+        # 本机磁盘通常远大于目标机的 64 GiB；只是提示，不判定失败
         rep.add(
             "disk_budget_context",
             True,
@@ -414,8 +546,9 @@ def main() -> int:
 
     rep = Report()
     check_python(rep)
-    torch_info = check_torch(rep, args.allow_non_a100)
-    deps_info, degraded_paths = check_py_deps(rep, args.allow_non_a100, args.profile)
+    arch_info = check_arch(rep, args.allow_non_target_device)
+    torch_info = check_torch_and_accel(rep, args.allow_non_target_device)
+    deps_info, degraded_paths = check_py_deps(rep, args.allow_non_target_device, args.profile)
     disk_infos = []
     for dp in disk_paths:
         d = check_disk(rep, dp, args.min_free_gb)
@@ -454,17 +587,9 @@ def main() -> int:
         payload = {
             "schema_version": 1,
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "expected": {
-                "python": f"{EXPECTED_PY[0]}.{EXPECTED_PY[1]}",
-                "torch": EXPECTED_TORCH,
-                # R4-B1/R5-B1：明确区分 runtime 与 driver，避免再次拿 torch.version.cuda 比驱动
-                "cuda_runtime": _mm("%d.%d" % EXPECTED_CUDA_RUNTIME),
-                "cuda_runtime_accepted": [_mm("%d.%d" % v) for v in ACCEPTED_CUDA_RUNTIMES],
-                "cuda_runtime_hard_major": ACCEPTED_CUDA_RUNTIME_MAJOR,
-                "cuda_driver_min": _mm("%d.%d" % MIN_CUDA_DRIVER),
-                "disk_budget_gb": DISK_BUDGET_GB,
-            },
-            "allow_non_a100": args.allow_non_a100,
+            "expected": HW.describe(),
+            "allow_non_target_device": args.allow_non_target_device,
+            "arch": arch_info,
             "profile": args.profile,
             "platform": platform.platform(),
             "executable": sys.executable,

@@ -5,7 +5,7 @@
   "project": {
     "version": "v4",
     "phase": "E0",
-    "summary": "E0 本地契约 Gate 13/13 PASS（云端 Gate 待 P0 实机）；计划全部完成（46 份 / 6,871 行，由 tools/plan_stats.py 实测）；三审 R3-C1..C3/H1..H5/M1..M5、四审 R4-B1..B3/H1..H3/M1..M6、五审 R5-B1/H1/H2/M1/M2/L1..L3 与六审 R6-M1/M2/L1..L3 已修复并回归验证；改进 proposal 已落进 PLAN.md / E6 与 src/",
+    "summary": "E0 本地契约 Gate 13/13 PASS（云端 Gate 待 P0 实机）；计划全部完成（46 份 / 6,875 行，由 tools/plan_stats.py 实测）；三审 R3-C1..C3/H1..H5/M1..M5、四审 R4-B1..B3/H1..H3/M1..M6、五审 R5-B1/H1/H2/M1/M2/L1..L3 与六审 R6-M1/M2/L1..L3 已修复并回归验证；改进 proposal 已落进 PLAN.md / E6 与 src/",
     "last_updated": "2026-09-19T21:10:00+00:00"
   },
   "stages": [
@@ -105,12 +105,12 @@
     {
       "stage": "E1",
       "title": "纯 DL 行级基线",
-      "status": "pending",
+      "status": "in_progress",
       "p": [
         {
           "id": "P0",
           "title": "行级输入管线与分片缓存",
-          "status": "pending",
+          "status": "in_progress",
           "evidence": [
             "src/features/basic.py",
             "src/data/dataset.py"
@@ -119,7 +119,7 @@
         {
           "id": "P1",
           "title": "行级 MLP + 对齐损失 + 5 折 OOF",
-          "status": "pending",
+          "status": "in_progress",
           "evidence": [
             "E1/code/train_row.py",
             "src/models/row_mlp.py",
@@ -135,7 +135,7 @@
         },
         "report": null
       },
-      "note": "E1 尚未开始：两个 P 均为 pending，代码待写。阶段状态必须与 P 状态一致（R3-H4），不得在 P 全 pending 时标 in_progress。"
+      "note": "E1 代码已实现并本机验证：src/data/row_dataset.py（折内 fit + F1 分片缓存）、src/training/{loop,metrics,checkpoint}.py、src/inference/predictor.py、E1/code/train_row.py（两阶段：inner-OOF 选 best_epoch 与 τ）；本机 CPU smoke（8 井/2 epoch）六项 mandatory checks 全绿；**80 井 5 折 OOF 与硬 Gate（≥78.0）待 Ascend 910B 云端任务**。"
     },
     {
       "stage": "E2",

@@ -182,7 +182,7 @@ python3 predict.py --use-version CONST --data_dir ../data --output /tmp/r.json
 本机（开发机）**没有 torch、没有 GPU**，因此：
 
 - `E0_local_contract_gate` 的全部检查都只用标准库 + numpy，可本机复算；
-- `E0_cloud_gate` 必须在平台的 A100 训练任务里跑（见 `docs/platform_setup.md`）；
+- `E0_cloud_gate` 必须在平台的 Ascend 910B 训练任务里跑（见 `docs/platform_setup.md`）；
 - 这是**计划内的例外**：E0/P1–P3 的本地复算先于 E0/P0 完成，P0 的状态为 `blocked`，
   不影响本机侧的契约层开发。
 

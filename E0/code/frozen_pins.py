@@ -13,8 +13,9 @@
 
 安全性质（白名单式）
 --------------------
-只输出 `KEEP` 里的包，因此结果**在构造上不可能**包含 `torch` / `nvidia-*` /
-`cuda-*` / `triton`（pip 一律不许触碰镜像预装的 CUDA 栈）；`pip` / `setuptools` /
+只输出 `KEEP` 里的包，因此结果**在构造上不可能**包含 `torch` / `torch_npu` /
+`nvidia-*` / `cuda-*` / `triton` / `ascend*` / `cann*`（pip 一律不许触碰镜像预装的
+加速栈 —— 目标平台已从 CUDA 换成 **Ascend + CANN**）；`pip` / `setuptools` /
 `wheel` 与全部传递依赖也会被忽略（它们由 pip 按依赖关系自行解析）。
 
     python3 v4/E0/code/frozen_pins.py --frozen versions/locks/cloud_frozen.txt
@@ -27,8 +28,12 @@ from pathlib import Path
 
 # 直接依赖（required 5 个 + 可选推荐 1 个），与 check_env.REQUIRED_PY_DEPS 对齐
 KEEP: tuple[str, ...] = ("numpy", "pandas", "scipy", "scikit-learn", "einops", "tensorboard")
-# 禁止由本项目 pip 安装的系列（仅用于回归断言：结果集必须与它们无交集）
-FORBIDDEN: tuple[str, ...] = ("torch", "nvidia-", "cuda-", "triton")
+# 禁止由本项目 pip 安装的系列（仅用于回归断言：结果集必须与它们无交集）。
+# 单一事实源 = src/hardware.py::FORBIDDEN_INSTALL_PREFIXES（含 torch_npu/npu/ascend/cann）。
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from src import hardware as _HW  # noqa: E402
+
+FORBIDDEN: tuple[str, ...] = tuple(_HW.FORBIDDEN_INSTALL_PREFIXES)
 
 
 def _norm(name: str) -> str:

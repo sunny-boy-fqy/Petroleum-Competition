@@ -189,8 +189,8 @@ git log --oneline -1                     # 记下这个 revision —— 平台�
 | 仓库地址 | **HTTPS**：`https://github.com/sunny-boy-fqy/Petroleum-Competition.git`（平台侧无 SSH key；scp 形式 `git@github.com:...` 会被表单正则直接拒绝） |
 | 分支 | **`main`**（平台默认值）；远端 `main` 与 `master` 同指一个 commit，填 `master` 也能拉到 |
 | **启动命令**（≤500 字符） | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode all` |
-| 资源配置 | **Nvidia A100 \* 1**（80 GB 显存），4000m vCPU / 16 GiB 内存 |
-| 镜像 | 【我的镜像】→ `v4-train-py311-torch271-cu128`（步骤 1 构建）；未构建则先用官方 PyTorch 2.7.1 / CUDA 12.8 / Python 3.11 镜像 |
+| 资源配置 | **Ascend 910B \* 1**（64 GB HBM），4000m vCPU / 16 GiB 内存 |
+| 镜像 | 【我的镜像】→ `v4-train-py311-torch280-npu280-cann83rc2`（步骤 1 构建）；未构建则先用官方 PyTorch 2.8.0 + torch_npu 2.8.0 / CANN 8.3rc2 / Python 3.11 / arm64 镜像 |
 | 训练数据集 / 验证数据集 | 可不挂载（数据在云盘 `/data`）；若平台数据集功能里有原始井数据，可挂载后在 `run_train.sh` 里加 `--from-dir` |
 | 超参数 | 可不填（v4 全部走 `run_train.sh` 的参数）；如平台要求，填 `mode=all` |
 | 运行时长 | E0 自检/数据部署：0h30m；E1：2h；E3：20h；E8：40h（软预算，见 PLAN §3.2） |
@@ -199,7 +199,7 @@ git log --oneline -1                     # 记下这个 revision —— 平台�
 
 | # | 任务名 | 启动命令 | 预期 |
 |---|---|---|---|
-| 1 | `v4-bootstrap` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env` | 打印 torch 2.7.1 / A100 sm_80 / bf16 / 磁盘剩余；把 `E0_env.json`、`E0_disk_budget.json` 写入 `/data/v4/reports/` |
+| 1 | `v4-bootstrap` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env` | 打印 torch 2.8.0 / Ascend 910B / bf16 / 磁盘剩余；把 `E0_env.json`、`E0_disk_budget.json` 写入 `/data/v4/reports/` |
 | 2 | `v4-data` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data` | 解压数据到 `/data/v4/data`，`RESULT: OK` |
 | 3 | `v4-e0` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode e0` | 数据卡 + 常数基线 70.490735 + 折指纹 + 契约自检；`E0_gate.json` passed=true |
 | 4 | `v4-smoke` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode smoke` | 1 折 / 2 epoch / 8 井，验证训练链路（需 E1 代码实现后） |
@@ -209,9 +209,9 @@ git log --oneline -1                     # 记下这个 revision —— 平台�
 
 ---
 
-## 五、磁盘 30 GB 的实测纪律（重要）
+## 五、磁盘 64 GiB 的实测纪律（重要）
 
-平台给出的 **30 GB** 是**该资源规格的磁盘配额**，而 `/code/workspace`（临时代码）与 `/data`（云盘）
+平台给出的 **64 GiB** 是**该资源规格的磁盘配额**，而 `/code/workspace`（临时代码）与 `/data`（云盘）
 是否在同一文件系统**必须实测确认**，不能假设。第一个任务（`--mode env`）就会打印 `df -h` 结果。
 
 ```bash
@@ -313,7 +313,7 @@ with RunLogger(f"E3_unet_fold{fold}") as log:
 
    | 环节 | 可能原因 | 一次实验即可判定 |
    |---|---|---|
-   | 拉镜像 / 起容器 | 自定义镜像被删、构建失效，或与所选资源不兼容（官方镜像文档明确要求"检查所选资源是否与镜像环境兼容"） | 换**官方镜像**（PyTorch 2.7.1 / CUDA 12.8 / py3.11）跑同一条探针 |
+   | 拉镜像 / 起容器 | 自定义镜像被删、构建失效，或与所选资源不兼容（官方镜像文档明确要求"检查所选资源是否与镜像环境兼容"） | 换**官方镜像**（PyTorch 2.8.0 + torch_npu 2.8.0 / CANN 8.3rc2 / py3.11 / arm64）跑同一条探针 |
    | 拉代码 | 平台侧出网到 `github.com` 失败/超时（平台内网 ≠ 本机网络；本机能 push 不代表平台能 clone） | 换**本地上传**（`dist/v4_code_src.zip`）或**我的云盘**代码源跑同一条探针 |
    | 调度 | 该规格暂无资源 | 状态应为 `排队中`，不是 `失败` |
 

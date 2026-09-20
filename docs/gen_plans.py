@@ -24,14 +24,14 @@ E_STAGES = [
         why=[
             "评分口径与本地评分器实现若与官方有偏差，所有后续迭代都是在优化错误目标；v1 冻结的全常量基线 OOF = **70.4907** 是校验锚点。",
             "标签里 66.719% 是联合常量占位；**SW 是单一标签尺度（百分数，实测有效 8.305–99.9，`SW<1` 为 0 行）**——E0-R2 已证伪“99.9 与 [0,1] 双尺度”假设，`SW_SMALL_BRANCH` 作为遗留对照路径**永久关闭**；把 SW 误当小数尺度是最大的静默失分点，必须在写模型之前用单元测试锁死。",
-            "云端是预装镜像（CUDA 12.8 / torch 2.7.1 / py3.11，无 conda）+ 仅 30 GB 磁盘；环境与磁盘必须在训练开始前实测确认。",
+            "云端是预装镜像（CANN 8.3rc2 / torch 2.8.0 + torch_npu 2.8.0 / py3.11 / arm64，无 conda）+ 仅 64 GiB 磁盘；环境与磁盘必须在训练开始前实测确认。",
         ],
         inputs=["`../data/train`（80 井）、`../data/test`（10 井）", "`rules.md` §5–§8", "`../v1/src/well_folds.json`（按井 5 折）", "`资料库/12` §1–§5（口径与工程化落地）"],
         outputs=["`reports/E0_data_card.json`", "`reports/E0_env.json`、`reports/E0_disk_budget.json`", "`reports/E0_score_check.json`（常数基线 70.4907）", "`reports/E0_gate.json`、`reports/E0_gate_prereg.json`", "`artifacts/E0/folds.json`、`versions/folds_sha256.json`"],
         code=["`src/data/parse.py`（自写解析，只依赖标准库+numpy）", "`src/data/labels.py`（三状态判据 + SW 尺度常量）", "`src/score.py`（官方评分复算）", "`src/inference/contract.py`（提交契约校验）", "`E0/code/check_env.py`、`E0/code/setup_deps.sh`", "`E0/code/run_all.py`（一键复算）"],
         done=[
             "`E0/code/run_all.py` 一条命令复算出：80/10 井、730,268/95,948 行、三状态计数、折指纹、常数基线 70.4907（±1e-4）。",
-            "`check_env.py` 的 hard 检查全过（torch 2.7.1 / A100 / bf16 / 磁盘可用 ≥ 8 GB），结果写入 `E0_env.json`。",
+            "`check_env.py` 的 hard 检查全过（torch 2.8.0 + torch_npu 2.8.0 / Ascend 910B / CANN 8.3rc2 / bf16 / 磁盘可用 ≥ 8 GB），结果写入 `E0_env.json`。",
             "提交契约单测通过：构造的假 `result.json` 能被 `validate_payload` 正确接受/拒绝。",
             "**全程不需要 torch**（数据与提交侧只依赖标准库+numpy/pandas）。",
         ],
@@ -44,7 +44,7 @@ E_STAGES = [
         why=[
             "在引入序列主干之前，必须先知道\"只看当前深度点\"能拿到多少分，否则无法证明序列上下文的价值（`资料库/08` §0.3 第 1 层）。",
             "行级基线训练极快（分钟级），是验证损失实现、数据管线、OOF 流程是否正确的最高性价比手段。",
-            "v2 E4/P3 的 CPU MLP 是 NO-GO，但那是逐点+无 GPU+小容量；E1 要在 A100 上给出\"正确实现下的行级上限\"，作为 E3 的对照。",
+            "v2 E4/P3 的 CPU MLP 是 NO-GO，但那是逐点+无 NPU/GPU+小容量；E1 要在 Ascend 910B 上给出\"正确实现下的行级上限\"，作为 E3 的对照。",
             "改进 proposal（§3/§4）：若连续头仍用 `0.1+softplus(g)` 并被 SW 的 99.9 主导 `L_aux`，E3/E4 只会更快地优化一个错误目标；因此 POR/SW 参数化、`L_aux` 归一化、`masked_mean` 防 NaN 与 PERM 截断必须在 E1 就定稿，并配 `POR=0`/`POR<0.1` 切片单测。",
         ],
         inputs=["E0 冻结的数据卡、折、评分器", "`资料库/12` §2.4 的对齐损失参考实现"],
@@ -56,7 +56,7 @@ E_STAGES = [
     dict(
         e="E2", name="特征工程与数据管线",
         nature="**特征与吞吐阶段。每组特征必须独立消融。**",
-        goal="建立 `F_phys`/`F_win`/`F_well` 三组特征、数据增强与按井分片缓存，并把 16 GiB 内存与 30 GB 磁盘的工程约束固化为可复用的数据管线。",
+        goal="建立 `F_phys`/`F_win`/`F_well` 三组特征、数据增强与按井分片缓存，并把 16 GiB 内存与 64 GiB 磁盘的工程约束固化为可复用的数据管线。",
         why=[
             "序列主干需要稠密数值输入；物理交会特征（`资料库/01`/`02`）与窗口统计（`资料库/07` §6）在 v1 已被证明有效（C1→C1W +1.0562）。",
             "16 GiB 系统内存是真正的瓶颈：必须把\"按井分片 + 按需读取 + 即时增强\"写成管线，否则 E3 一开始就会 OOM。",
@@ -185,7 +185,7 @@ E_STAGES = [
         goal="产出最终候选权重与自包含提交包；在干净目录用官方命令一次性复现；执行提交；同时预构建 B0 fallback 保险包。",
         why=[
             "`rules.md` §6.2/§8.3 要求\"训练+推理\"可独立复现、结果一致、环境可复现，复现失败直接取消资格。",
-            "评测机不保证有 GPU，因此推理必须 CPU 可跑、确定性、< 30 min。",
+            "评测机不保证有加速器，因此推理必须 CPU 可跑、确定性、< 30 min。",
             "v4 是纯 DL 管线，没有 B0 patch 隔离兜底，因此必须**预先**构建 B0 fallback 保险包（从冻结 v1 E7 源码构建、官方 `--data_dir` 兼容）。",
         ],
         inputs=["E9 通过的候选", "`../v1/submission_e7`（fallback 源）"],
@@ -214,11 +214,11 @@ E_STAGES = [
 P_STAGES = {
 "E0": [
  ("P0","环境与磁盘实测（云端第一次运行）",
-  "在云端跑 `check_env.py` / `disk_guard.py` / `setup_deps.sh`，把 torch 2.7.1+cu128、A100 sm_80、bf16、Python 3.11、可用磁盘与 pip freeze 全部落盘为事实。",
+  "在云端跑 `check_env.py` / `disk_guard.py` / `setup_deps.sh`，把 torch 2.8.0 + torch_npu 2.8.0、Ascend 910B(64G)、bf16、Python 3.11、可用磁盘与 pip freeze 全部落盘为事实。",
   "未实测的环境假设会在 E3 训练数小时后才暴露（OOM / 版本不兼容 / 磁盘写满），代价极高。",
   ["`E0/code/setup_deps.sh`","`E0/code/check_env.py`","`src/data/disk_guard.py`"],
   ["`reports/E0_env.json`","`reports/E0_disk_budget.json`","`versions/locks/cloud_frozen.txt`"],
-  ["所有 hard 级检查全过（判据不是固定项数，也不因 `--allow-non-a100` 放宽依赖检查）；磁盘预算按挂载点报告且 Gate 的 `disk_budget_ok` 读 `--data-root`（`/data`）级别"],
+  ["所有 hard 级检查全过（判据不是固定项数，也不因 `--allow-non-target-device` 放宽依赖检查）；磁盘预算按挂载点报告且 Gate 的 `disk_budget_ok` 读 `--data-root`（`/data`）级别"],
   ["装任何会触碰 torch/nvidia-* 的包","在磁盘未知的情况下开始 E3"]),
  ("P1","数据卡、哨兵规则与标签三状态",
   "自写解析器读取 90 口井（按表头名对齐），冻结缺失哨兵规则、三状态判据（缺测/联合常量/有效）与目标值域统计，产出数据卡与折指纹。",
@@ -517,7 +517,7 @@ def render_e(st: dict) -> str:
         L.append(f"- {x}")
     L.append("")
     L.append("## 9. 通用约束（继承总计划）\n")
-    L.append("- 训练/推理分离：本机（无 GPU）负责代码与契约，云端（1×A100 80GB，CUDA 12.8 / torch 2.7.1 / py3.11，**30 GB 磁盘**）负责训练。")
+    L.append("- 训练/推理分离：本机（无 NPU/GPU）负责代码与契约，云端（1×Ascend 910B 64GB，CANN 8.3rc2 / torch 2.8.0 + torch_npu 2.8.0 / py3.11 / arm64，**64 GiB 磁盘**）负责训练。")
     L.append("- 禁止 `pip install torch` 或变更镜像基础栈；额外轻量包须 `--no-cache-dir` 并清缓存。")
     L.append("- 一切阈值/权重/早停只在 **inner-OOF** 上选；outer 折只推理一次。")
     L.append("- 训练脚本必须支持 `--resume`、`--time-budget-h`、每 epoch checkpoint 与 `assert_disk_headroom(8.0)`。")

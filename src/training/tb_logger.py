@@ -6,7 +6,7 @@
 
 关键点
 ------
-1. `tensorboard` **不装在镜像里**（30 GB 磁盘 + 我们只做 JSON/CSV 日志），
+1. `tensorboard` **不装在镜像里**（64 GiB 磁盘 + 我们只做 JSON/CSV 日志），
    因此本模块用 try/except 探测；平台镜像通常自带 `torch.utils.tensorboard`，
    若不可用则**静默降级**为 JSONL（永远可写）。
 2. `TENSORBOARD_LOGDIR` 由 `run_train.sh` 导出到 `$V4_DATA_ROOT/v4/tb`（**持久**，

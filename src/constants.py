@@ -129,7 +129,9 @@ GUARDRAIL_ABOARD_MARGIN: float = 0.5
 PASS_LINE: float = 75.0
 
 # ---------------------------------------------------------------- 磁盘/内存预算（云端）
-DISK_BUDGET_GB: float = 30.0
+# 2026-09-20 平台规格变更：Ascend910B-1-64G → 磁盘 64 GiB（原 A100 规格为 30 GB）。
+# 与 `src/hardware.py::PLATFORM["disk_gb"]` 同源，由 tests/test_hardware.py 锁定不得漂移。
+DISK_BUDGET_GB: float = 64.0
 DISK_MIN_FREE_GB: float = 8.0
 DISK_CLEANUP_GB: float = 5.0
 DISK_ABORT_GB: float = 3.0

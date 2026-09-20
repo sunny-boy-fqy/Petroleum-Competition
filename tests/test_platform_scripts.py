@@ -183,51 +183,62 @@ class TestCommittedE0CacheEvidence(unittest.TestCase):
         self.assertGreater(sw["valid_rows_only"]["min"], 1.0)
 
 
-class TestCheckEnvCudaSemantics(unittest.TestCase):
-    """R4-B1 + R5-B1：`torch.version.cuda` 是 **runtime**，不是驱动能力。
+class TestCheckEnvTargetProfile(unittest.TestCase):
+    """2026-09-20 目标平台：**Ascend 910B + CANN 8.3rc2 + torch 2.8.0 + torch_npu 2.8.0**。
 
-    四审前硬断言 `torch.version.cuda == 12.6`（驱动声明值）→ 云端 `--mode env` 必然
-    `exit 11`，`E0_env.json` / `E0_disk_budget.json` 永远产不出来、`E0_cloud_gate` 永远
-    blocked。现在的实际镜像是 torch 2.7.1 + CUDA 12.8，因此口径改为三层：
-    hard = "CUDA-enabled wheel 且 runtime major == 12"；warn = 是否等于声明值 12.8；
-    advisory = 驱动能力 >= 12.8。**不得**再出现把某个具体 wheel 小版本钉死的 hard 断言，
-    否则 cu126/cu128 之间的正常漂移会再次把 Gate 卡死。
+    沿用四审 R4-B1 的教训：hard 只断言"能跑"的底线（major.minor / major），
+    声明值（`2.8.0` / `8.3rc2`）一律只做 warn，否则 rc 或补丁漂移会再次把 Gate 卡死。
+    硬件画像的单一事实源是 `src/hardware.py::PLATFORM`。
     """
 
     @classmethod
     def setUpClass(cls):
         cls.mod = _load_check_env()
 
-    def test_declared_stack_is_torch271_cu128(self):
-        self.assertEqual(self.mod.EXPECTED_TORCH, "2.7.1")
-        self.assertEqual(tuple(self.mod.EXPECTED_CUDA_RUNTIME), (12, 8))
-        self.assertEqual(tuple(self.mod.MIN_CUDA_DRIVER), (12, 8))
-        self.assertEqual(self.mod.ACCEPTED_CUDA_RUNTIME_MAJOR, 12)
-        self.assertIn((12, 8), tuple(self.mod.ACCEPTED_CUDA_RUNTIMES))
-        self.assertIn((12, 6), tuple(self.mod.ACCEPTED_CUDA_RUNTIMES))
+    def test_declared_stack_is_ascend_910b(self):
+        self.assertEqual(self.mod.EXPECTED_TORCH, "2.8.0")
+        self.assertEqual(self.mod.EXPECTED_TORCH_NPU, "2.8.0")
+        self.assertEqual(self.mod.EXPECTED_CANN, "8.3rc2")
+        self.assertEqual(self.mod.EXPECTED_ARCH, "aarch64")
+        self.assertEqual(self.mod.TARGET_ACCELERATOR, "npu")
+        self.assertEqual(self.mod.DISK_BUDGET_GB, 64.0)
 
-    def test_old_wrong_constant_is_gone(self):
+    def test_hard_checks_are_major_minor_not_exact_pins(self):
+        """torch / torch_npu / CANN 的 hard 判定不得把具体小版本或 rc 钉死。"""
+        src = _read("E0/code/check_env.py")
+        for name, field in (("torch_version", "torch.__version__"),
+                            ("torch_npu_version", "tn_ver")):
+            m = re.search(r'rep\.add\("%s",\s*([^,]+),' % name, src)
+            self.assertIsNotNone(m, f"找不到 {name} 注册")
+            self.assertRegex(m.group(1), r"(version_major_minor|_mm|want_mm)",
+                             f"{name} 的 hard 判定必须走 major.minor 比较，实际 {m.group(1)!r}")
+        m = re.search(r'rep\.add\("cann_version",\s*([^,]+),', src)
+        self.assertIsNotNone(m)
+        self.assertRegex(m.group(1), r"(cann_major_minor|cann_mm|want_cann_mm)",
+                         f"CANN 的 hard 判定必须走 major.minor 比较，实际 {m.group(1)!r}")
+        # 声明值只能出现在 *_declared 那类 warn 检查里
+        for decl in ("torch_version_declared", "torch_npu_version_declared",
+                     "cann_version_declared"):
+            mm = re.search(r'rep\.add\("%s",\s*[^,]+,\s*"(\w+)"' % decl, src)
+            self.assertIsNotNone(mm, f"找不到 {decl} 注册")
+            self.assertEqual(mm.group(1), "warn", f"{decl} 必须是 warn 级")
+
+    def test_old_cuda_only_constants_are_gone(self):
         src = _read("E0/code/check_env.py")
         self.assertNotIn("EXPECTED_CUDA_MAJOR_MINOR", src)
         self.assertNotIn('rep.add("cuda_version"', src)
+        self.assertNotIn("gpu_is_a100", src)
+        # CUDA 只作为"兜底分支"存在，不得再是主路径
+        self.assertIn('accel == "cuda"', src)
 
-    def test_cuda_runtime_hard_check_is_major_not_exact_pin(self):
-        """hard 检查不得把 runtime 小版本钉死（这正是上次 Gate 挂掉的根因）。"""
+    def test_dev_flag_downgrades_device_not_deps(self):
+        """`--allow-non-target-device` 只放宽设备/架构/torch，不得放宽依赖分档。"""
         src = _read("E0/code/check_env.py")
-        m = re.search(r"ok_hard\s*=\s*(.+)", src)
-        self.assertIsNotNone(m, "找不到 ok_hard 判定")
-        expr = m.group(1)
-        self.assertIn("ACCEPTED_CUDA_RUNTIME_MAJOR", expr)
-        # 不得拿"声明值"（EXPECTED_CUDA_RUNTIME）当 hard 条件
-        self.assertNotIn("EXPECTED_CUDA_RUNTIME", expr)
-        # 注册点必须消费 ok_hard，而不是就地写一个具体值比较
-        self.assertRegex(src, r'rep\.add\("cuda_runtime_version",\s*ok_hard,\s*level')
-
-    def test_declared_runtime_mismatch_is_only_warn(self):
-        src = _read("E0/code/check_env.py")
-        m = re.search(r'rep\.add\("cuda_runtime_declared",\s*[^,]+,\s*"(\w+)"', src, re.S)
-        self.assertIsNotNone(m, "找不到 cuda_runtime_declared 注册")
-        self.assertEqual(m.group(1), "warn")
+        self.assertIn('"--allow-non-target-device"', src)
+        self.assertIn('dest="allow_non_target_device"', src)
+        self.assertIn('"--allow-non-a100"', src, "旧名必须保留为别名，避免旧脚本失效")
+        # 依赖分档只看 profile
+        self.assertIn('required_level = "warn" if profile == "base" else "hard"', src)
 
     def test_parse_cuda_driver_from_smi(self):
         f = self.mod.parse_cuda_driver_from_smi
@@ -238,23 +249,28 @@ class TestCheckEnvCudaSemantics(unittest.TestCase):
         self.assertIsNone(f("no cuda version here"))
         self.assertIsNone(f(""))
 
-    def test_expected_json_block_splits_runtime_and_driver(self):
-        src = _read("E0/code/check_env.py")
-        self.assertIn('"cuda_runtime"', src)
-        self.assertIn('"cuda_runtime_accepted"', src)
-        self.assertIn('"cuda_runtime_hard_major"', src)
-        self.assertIn('"cuda_driver_min"', src)
-        # 旧的单一 "cuda" 键会让读者再次把 runtime 当驱动
-        self.assertNotIn('"cuda": f"', src)
+    def test_expected_json_comes_from_hardware_single_source(self):
+        """`E0_env.json::expected` 必须由 `src/hardware.py::describe()` 派生。
 
-    def test_both_checks_are_registered(self):
+        此前"文档写一份、代码写一份、报告再写一份"导致目标平台变更时漂移；
+        现在 expected 块只有一个来源，CUDA 相关的四个旧键也随之消失。
+        """
         src = _read("E0/code/check_env.py")
-        self.assertIn('"cuda_runtime_version"', src)
-        self.assertIn('"cuda_driver_version"', src)
-        # 驱动能力必须是 advisory（warn），不能 hard fail
+        self.assertIn('"expected": HW.describe()', src)
+        for gone in ('"cuda_runtime"', '"cuda_runtime_accepted"',
+                     '"cuda_runtime_hard_major"', '"cuda_driver_min"'):
+            self.assertNotIn(gone, src, f"{gone} 已被 hardware.describe() 取代")
+
+    def test_npu_checks_are_registered(self):
+        src = _read("E0/code/check_env.py")
+        for key in ('"torch_npu_version"', '"cann_version"', '"accelerator_available"',
+                    '"device_is_910b"', '"machine_arch"', '"torch_npu_version_declared"',
+                    '"cann_version_declared"'):
+            self.assertIn(key, src, f"缺少 NPU 口径检查 {key}")
+        # CUDA 分支（若有）只能是 advisory
         m = re.search(r'rep\.add\("cuda_driver_version",[^)]*?"(hard|warn)"', src, re.S)
-        self.assertIsNotNone(m)
-        self.assertEqual(m.group(1), "warn")
+        if m:
+            self.assertEqual(m.group(1), "warn")
 
     def test_pyarrow_is_optional_not_required(self):
         """R5-M1：分片缓存是 `.npz`，没有任何代码 import pyarrow；
@@ -825,7 +841,7 @@ class TestDependencyFactsAreSingleSourced(unittest.TestCase):
                 self.assertIn(name, self.ALLOWED, f"Dockerfile 出现未列入清单的包：{pkg!r}")
 
     def test_no_claim_that_torch_provides_numpy(self):
-        """torch 2.7.1 的 PyPI `Requires-Dist` 里**没有** numpy，不得再写"torch 自带 numpy"。
+        """torch 的 PyPI `Requires-Dist` 里**没有** numpy（2.7.1 与 2.8.0 均如此），不得再写"torch 自带 numpy"。
 
         这条不是文案洁癖：一旦有人相信"numpy 必然存在"，就会把它从 required 清单里删掉，
         而 numpy 是本项目口径层的唯一硬依赖（`portability.HAS_NUMPY`）。
@@ -851,12 +867,14 @@ class TestDependencyFactsAreSingleSourced(unittest.TestCase):
                          sorted(chk.REQUIRED_PY_DEPS))
         # 2) setup_deps.sh 的 lock 过滤规则产出的包集合必须恰好等于 REQUIRED_PY_DEPS
         src = _read("E0/code/setup_deps.sh")
-        m = re.search(r"grep -vE '([^']*)' \"\$LOCK\"", src)
-        self.assertIsNotNone(m, "找不到 setup_deps.sh 的 lock 过滤正则")
-        pattern = m.group(1)
+        m = re.search(r"grep -viE '\^\(([^)]*)\)'", src)
+        self.assertIsNotNone(m, "找不到 setup_deps.sh 的加速栈排除正则")
+        pattern = "^(?:" + m.group(1) + ")"
         self.assertNotIn("numpy", pattern,
                          "R5-M2：setup_deps.sh 不得把 numpy 排除在安装之外（required 里有它）")
-        self.assertIn("torch", pattern, "torch 必须仍被排除（禁止 pip 触碰镜像 torch）")
+        for must in ("torch", "npu", "ascend", "cann"):
+            self.assertIn(must, pattern,
+                          f"{must} 必须被排除（禁止 pip 触碰镜像加速栈）")
         rx = re.compile(pattern)
         lock_pkgs = []
         for raw in _read("versions/locks/cloud.txt").splitlines():
@@ -912,9 +930,10 @@ class TestFrozenPins(unittest.TestCase):
 
     SYNTHETIC = "\n".join([
         "# synthetic pip freeze",
-        "torch==2.7.1+cu128",
+        "torch==2.8.0",
+        "torch_npu==2.8.0",
+        "torch-npu==2.8.0",
         "nvidia-cuda-runtime-cu12==12.6.77",
-        "nvidia-cudnn-cu12==9.5.1.17",
         "triton==3.3.1",
         "cuda-python==12.6.0",
         "numpy==2.1.3",
@@ -957,7 +976,8 @@ class TestFrozenPins(unittest.TestCase):
                 self.assertFalse(name.startswith(bad),
                                  f"frozen 结果不得包含 {bad}* （实际 {name}）")
         # 再来一个只有禁装系列的 freeze：必须得到空结果
-        only_bad = "torch==2.7.1\nnvidia-cudnn-cu12==9.5\ntriton==3.3.1\ncuda-python==1.0\n"
+        only_bad = ("torch==2.8.0\ntorch_npu==2.8.0\nascend-toolkit==1.0\ncann==8.3\n"
+                    "nvidia-cudnn-cu12==9.5\ntriton==3.3.1\ncuda-python==1.0\n")
         self.assertEqual(self.mod.parse_freezes(only_bad), {})
 
     def test_name_normalization_follows_pep503(self):

@@ -1,6 +1,6 @@
 # v4：深度学习单主干、评分对齐损失、全量自包含管线
 
-> **一句话**：用 1× A100 80GB 训练一条**纯深度学习**管线（深度序列主干 + **逐目标原子头 `q_por/q_perm/q_sw`** + 联合占位辅助头 `q_joint` + 逐目标连续头），以**与官方评分同构的可微损失**优化，解码用**逐目标硬切换 `τ_t`**（阈值只在 inner-OOF 上按官方总分选），提交**自包含、CPU 可推理**的模型包。
+> **一句话**：用 1× Ascend 910B 64GB 训练一条**纯深度学习**管线（深度序列主干 + **逐目标原子头 `q_por/q_perm/q_sw`** + 联合占位辅助头 `q_joint` + 逐目标连续头），以**与官方评分同构的可微损失**优化，解码用**逐目标硬切换 `τ_t`**（阈值只在 inner-OOF 上按官方总分选），提交**自包含、CPU 可推理**的模型包。
 
 ## 快速导航
 
@@ -77,8 +77,8 @@ cd v4 && git add -A && git commit -m "..." && git push origin HEAD:master HEAD:m
 | | 本机（开发机） | 云端（Intern InkStone 训练任务） |
 |---|---|---|
 | 角色 | 写代码、生成数据包、跑口径层单测、组装提交包 | 训练、OOF 推理、集成 |
-| 硬件 | 无 GPU、`v2/.venv` 有 numpy/pandas、**无 torch** | **1× A100 80GB**、4000m vCPU、**16 GiB 系统内存**、**30 GB 磁盘** |
-| 软件 | 系统 Python 3.12（仅用于口径层） | **CUDA 12.8 / PyTorch 2.7.1 / Python 3.11**（平台镜像预装，**无 conda**，不得改 torch 版本；额外轻量包可 `pip install --no-cache-dir`） |
+| 硬件 | 无 NPU/GPU、`v2/.venv` 有 numpy/pandas、**无 torch** | **1× Ascend 910B 64GB**、4000m vCPU、**16 GiB 系统内存**、**64 GiB 磁盘** |
+| 软件 | 系统 Python 3.12（仅用于口径层） | **CANN 8.3rc2 / PyTorch 2.8.0 + torch_npu 2.8.0 / Python 3.11 / arm64**（平台镜像预装，**无 conda**，不得改 torch/torch_npu 版本；额外轻量包可 `pip install --no-cache-dir`） |
 | 目录 | `../data`、`./reports` | 代码 `/code/workspace/<仓库名>`（临时，用 `find` 定位，别硬编码）；数据与产物 `/data/v4/*`（持久） |
 
 **四条铁律**
@@ -115,8 +115,8 @@ E0 契约 → E1 行级基线 → E2 特征 → E3 序列主干 → E4 多尺度
 | 仓库地址 | `https://github.com/sunny-boy-fqy/Petroleum-Competition.git`（**不是** `git@…`） |
 | 分支 | **`main`**（平台默认；`main`/`master` 同指一个 commit） |
 | 启动命令 | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode all` |
-| 资源 | Nvidia **A100 × 1**（80 GB 显存） |
-| 镜像 | 见 [`docs/image_requirements.md`](docs/image_requirements.md)（训练任务场景；torch 2.7.1 / CUDA 12.8 / py3.11） |
+| 资源 | **Ascend 910B × 1**（64 GB HBM） |
+| 镜像 | 见 [`docs/image_requirements.md`](docs/image_requirements.md)（训练任务场景；CANN 8.3rc2 / torch 2.8.0 + torch_npu 2.8.0 / py3.11 / arm64） |
 | 运行时长 | 自检/数据 0h30m；E1 2h；E3 20h；E8 40h（软预算） |
 
 任务序列（每个都可独立成任务，见 [`docs/platform_setup.md`](docs/platform_setup.md) §四）：
@@ -140,12 +140,12 @@ python3 v4/predict.py --use-version CONST --data_dir ../data --output /tmp/r.jso
 
 ## 当前状态
 
-- [x] **计划全部完成**：总计划 888 行 + 12 个阶段计划（759 行）+ 33 个 P 级详细计划（5,224 行），**合计 6,871 行**（由 `tools/plan_stats.py` 实测）
+- [x] **计划全部完成**：总计划 892 行 + 12 个阶段计划（759 行）+ 33 个 P 级详细计划（5,224 行），**合计 6,875 行**（由 `tools/plan_stats.py` 实测）
 - [x] 状态台账 `versions/status.json`、候选注册表 `versions/candidates.json`、目录总览 `docs/PROJECT_FILES.md`
 - [x] 环境/磁盘自检脚本（`E0/code/check_env.py`、`src/data/disk_guard.py`、`E0/code/setup_deps.sh`）
 - [x] 锁文件与 Gate/引用模板
 - [x] **E0 口径层已实现并通过本地契约 Gate 13/13**（`reports/E0_local_contract_gate.json`）：按表头名对齐解析器（13 曲线输入 + 无泄漏回归）、三状态标签判据与目标分布统计、官方评分器（drop 口径 70.490735 + 恒等式校验）、按井 5 折导出与指纹、分片缓存（32.4 MB）、提交契约校验、`predict.py` 端到端冒烟（10 井 / 95,948 行 / 1.4 s CPU）
-- [ ] E0 云端 Gate（`env_hard_checks_passed` + `disk_budget_ok`）—— 需在平台 A100 任务运行 `run_train.sh --mode env`
+- [ ] E0 云端 Gate（`env_hard_checks_passed` + `disk_budget_ok`）—— 需在平台 Ascend 任务运行 `run_train.sh --mode env`
 - [ ] E1–E10 模型与训练代码（E1/P0 行级管线与 E1/P1 训练器待写）
 - [x] **改进 proposal 已落进计划与代码**：`PLAN.md` §5.1/§5.2.1/§5.3/§5.4/§6.4/§8.2/§10 与 E1/E3–E8 的 P 级计划；
       `src/models/row_mlp.py`（`q_joint` + `q_por/q_perm/q_sw` + `por_max·sigmoid(g)` + SW 折内仿射归一化）、

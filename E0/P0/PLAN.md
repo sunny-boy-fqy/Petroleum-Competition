@@ -12,17 +12,17 @@
 
 ## 1. 目标
 
-在云端实机确认 CUDA 12.8 / PyTorch 2.7.1 / Python 3.11 / A100 sm_80 / bf16 可用，并实测 30 GB 磁盘的可用余量与分布，产出可复算的 `E0_env.json` 与 `E0_disk_budget.json`。
+在云端实机确认 CANN 8.3rc2 / PyTorch 2.8.0 + torch_npu 2.8.0 / Python 3.11 / Ascend 910B(64G) / bf16 可用，并实测 64 GiB 磁盘的可用余量与分布，产出可复算的 `E0_env.json` 与 `E0_disk_budget.json`。
 
 ## 2. 为什么需要这一步
 
-1. 未实测的环境假设会在 E3 训练数小时后才暴露（OOM / 版本不兼容 / 磁盘写满），返工成本是 A100 机时；
-2. 30 GB 预算是本项目最硬的资源约束，而 `/code/workspace`（临时）与 `/data`（云盘）是否同一文件系统必须实测，不能假设；
+1. 未实测的环境假设会在 E3 训练数小时后才暴露（OOM / 版本不兼容 / 磁盘写满），返工成本是 Ascend 机时；
+2. 64 GiB 预算是本项目最硬的资源约束，而 `/code/workspace`（临时）与 `/data`（云盘）是否同一文件系统必须实测，不能假设；
 3. 镜像内 torch 小版本漂移（2.7 vs 2.8）、以及 **2.6 起 `torch.load(weights_only=True)` 的默认值变更**，都会在训练数小时后才暴露成 AttributeError/反序列化错误，必须前置断言。
 
 ## 3. 输入契约
 
-- 云端训练任务（Git 仓库代码来源，A100 资源，PyTorch 2.7.1/CUDA 12.8/py3.11 镜像）
+- 云端训练任务（Git 仓库代码来源，Ascend 910B 资源，PyTorch 2.8.0+torch_npu 2.8.0/CANN 8.3rc2/py3.11/arm64 镜像）
 - `v4/E0/code/check_env.py`、`v4/E0/code/setup_deps.sh`、`v4/src/data/disk_guard.py`
 
 ## 4. 输出契约
@@ -46,12 +46,12 @@
 | 参数 | 默认值 | 搜索范围/说明 | 选择位置 |
 |---|---|---|---|
 | `--min-free-gb` | 8.0 | 8–12 | 磁盘硬门禁；实测后若过紧则上调 |
-| `--allow-non-a100` | false | — | 仅本机开发时开启：**只放宽 GPU/torch 检查**，不放宽依赖检查 |
+| `--allow-non-target-device` | false | — | 仅本机开发时开启：**只放宽 设备/架构/torch 检查**，不放宽依赖检查 |
 | `NUM_WORKERS` | 4 | 2–6 | 16 GiB 内存下的安全值，见总计划 §3.1-3 |
 
 ## 7. 完成判据
 
-- `check_env.py` 输出 **hard failures: 0**（判据是「**所有 hard 级检查全过**」，**不是固定项数**，也不因 `--allow-non-a100` 而放宽依赖检查——该开关只放宽 GPU/torch 检查）；非主路径可选依赖（`onnx` / `onnxruntime`）失败时写入顶层 `degraded_paths` 并降级为 warn，不阻塞训练
+- `check_env.py` 输出 **hard failures: 0**（判据是「**所有 hard 级检查全过**」，**不是固定项数**，也不因 `--allow-non-target-device` 而放宽依赖检查——该开关只放宽 设备/架构/torch 检查）；非主路径可选依赖（`onnx` / `onnxruntime`）失败时写入顶层 `degraded_paths` 并降级为 warn，不阻塞训练
 - `E0_disk_budget.json` **按挂载点**报告（`paths` + `worst_level` + `primary_path` + `data_root_checked`），且 Gate 的 `disk_budget_ok` 读取 **DATA-ROOT（`$V4_DATA_ROOT` = `/data`）** 级别——不是 `/`
 - `E0_env.json` 含全部可选依赖的 `available/versions` 与 `degraded_paths`
 - `cloud_frozen.txt` 已生成并与 `versions/locks/cloud.txt` 一致或已更新
@@ -66,10 +66,10 @@
 
 | 风险信号 | 早期表现 | 对策 |
 |---|---|---|
-| 镜像里不是 torch 2.7.1（例如 2.8） | `torch_version` hard failure | 按镜像实际版本同步改 `check_env.py::EXPECTED_TORCH`、`versions/locks/cloud.txt` 与 docs；**不要**pip 降级 torch |
+| 镜像里不是 torch 2.8.0（或 torch_npu 与 torch 小版本不一致） | `torch_version` hard failure | 按镜像实际版本同步改 `check_env.py::EXPECTED_TORCH`/`EXPECTED_TORCH_NPU`/`EXPECTED_CANN`、`versions/locks/cloud.txt` 与 docs；**不要**pip 降级 torch |
 | CUDA runtime 与声明值不一致（cu126 wheel） | `cuda_runtime_declared` warn | 只记录事实；hard 底线是 runtime major==12，不因此阻断 Gate（R4-B1 教训） |
 | 系统内存被镜像/其它进程占用 | `free -g` 显示可用 < 14 GiB | 把 `num_workers` 降到 2，并在 E2 关闭特征缓存 |
-| `/data` 与 `/code` 同盘且总容量仅 30 GB | `df` 显示同一 Filesystem | 按总计划 §3.4.1 安全规则收缩：特征缓存 ≤0.5 GB、集成成员 ≤2、模型宽度减半 |
+| `/data` 与 `/code` 同盘且总容量仅 64 GiB | `df` 显示同一 Filesystem | 按总计划 §3.4.1 安全规则收缩：特征缓存 ≤0.5 GB、集成成员 ≤2、模型宽度减半 |
 | pip 计划替换 torch | `setup_deps.sh` 预检命中 | 脚本自动中止（exit 3）；改为只用镜像自带版本 |
 
 ## 10. 停止规则
