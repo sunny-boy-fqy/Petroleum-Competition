@@ -56,8 +56,10 @@ v4/
 │   │   ├── tcn.py                E3 **非因果** TCN（居中 pad、dilation→512、weight norm）
 │   │   ├── mmoe.py               E8/P0 MMoE（E 专家 + 每任务门控，**与 SeqHead 同键**；
 │   │   │                         瓶颈窄化保证参数量对等 + 门控熵/负载均衡 + 任务梯度余弦）
-│   │   └── well_head.py          E8/P1 井级 attention-pool → 逐目标井级偏置 Δ（容量 ≤ 主干 1/8、
-│   │                             λ=0 精确恒等、无井身份键审计）
+│   │   ├── well_head.py          E8/P1 井级 attention-pool → 逐目标井级偏置 Δ（容量 ≤ 主干 1/8、
+│   │   │                         λ=0 精确恒等、无井身份键审计）
+│   │   └── patchtf.py            E4/P0 Patch Transformer（深度维 patch + 归一化 overlap-add；
+│   │                             channel-independent / 相对位置开关；SDPA；states 逐行隐状态）
 │   ├── losses/score_aligned.py   三段式对齐损失（Charbonnier + softplus + 尺度归一化 L_aux + 逐目标原子 BCE + 边界聚焦）
 │   ├── inference/
 │   │   ├── contract.py           提交契约校验（10 井/95,948 行/字段/有限性/SW 尺度守卫）
@@ -126,12 +128,13 @@ v4/
 │   ├── test_features_e2.py       F2 特征组注册表/缓存键/溯源 368 行/无目标派生审计
 │   ├── test_models_seq.py        序列头键一致性 / U-Net 跳连 / TCN 非因果探针
 │   ├── test_models_e8.py         MMoE 同键+参数量对等+门控熵 / 井级分支容量与 λ=0 恒等 / EMA 影子
+│   ├── test_patchtf_e4.py        patch 几何覆盖 / 三种权重精确还原 / 奇数长度同长输出 / CI·位置消融
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
 │   ├── test_e1_pipeline.py       E1 端到端（合成井 → Gate/prereg/候选，需 torch）
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**426 项**；本地无 torch 解释器 103 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**443 项**；本地无 torch 解释器 120 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
