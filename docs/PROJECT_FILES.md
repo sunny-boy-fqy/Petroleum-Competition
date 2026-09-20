@@ -122,7 +122,9 @@ v4/
 │   │                            well_branch.py（井级 attention-pool 分支开/关强制消融 + λ 内折搜索 +
 │   │                            逐井非退化比例 + 容量 ≤ 主干/8 + 无井身份审计 → E8_well_branch.json + Gate）、
 │   │                            ensemble.py（纯 numpy：成员同源性 + inner-OOF 选权/线性 stacking +
-│   │                            按井配对 CI + 采纳判定 + EMA/SWA/top-k 臂到位状态 → E8_ensemble_report.json）
+│   │                            按井配对 CI + 采纳判定 + EMA/SWA/top-k 臂到位状态 → E8_ensemble_report.json）、
+│   │                            pseudo_label.py（transductive 逐井分位/均值对齐：只用测试输入分布，
+│   │                            测试侧含标签键即拒绝（rc 7）；逐井单调性 + 合法性标注 → E8_transductive.json）
 │   └── E6/code/                 train_state.py（原子状态头两阶段：阶段 1 原子+联合头、阶段 2 冻结
 │   │                            原子头训连续头 + 切片权重；τ 内折选；逐目标 AUC/Acc/P·R·F1；
 │   │                            无插值检查；标签打乱负对照；E6_atomic_report.json + Gate；
@@ -192,6 +194,7 @@ v4/
 │   ├── test_e8_mmoe.py           E8/P0 结构对照（三臂参数量可比、逐目标表、门控熵/梯度冲突收据）
 │   ├── test_e8_well_branch.py    E8/P1 井级分支（λ=0 与纯主干逐分相同、容量/身份收据、开/关消融）
 │   ├── test_e8_ensemble.py       E8/P2 集成驱动（互补→adopted、同源→标注且 no_go、只有 inner 才选权）
+│   ├── test_e8_transductive.py   E8/P1 transductive（反泄漏护栏 rc7、分布漂移下对齐生效、过校正被拒）
 │   ├── test_loss_ablation_lib.py E7/P0 库层（λ1 三条退火曲线、L_aux 绝对 vs 归一化尺度不变、
 │   │                             PERM 截断开关、边界聚焦、total_loss 透传）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
@@ -199,7 +202,7 @@ v4/
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**638 项**；本地无 torch 解释器 192 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**646 项**；本地无 torch 解释器 192 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
