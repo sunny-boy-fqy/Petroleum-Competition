@@ -99,7 +99,9 @@ v4/
 │   └── E5/code/                 e5_common.py（冻结骨干/隐状态/两阶段单头训练/配对 CI/Gate 公共件）、
 │                                head_por.py（POR 头 + 连续切片·占位行分项 + 0.1 下界反例消融）、
 │                                head_perm.py（PERM 三档 z 输出 + 桶头对照 + 尾部单调性报告）、
-│                                head_sw.py（SW 单尺度 0–100 契约 + 有效/占位分项 + 禁止尺度反例）
+│                                head_sw.py（SW 单尺度 0–100 契约 + 有效/占位分项 + 禁止尺度反例）、
+│                                evaluate_targets.py（三目标 OOF 汇总：可复算/井序对齐/联合判据/
+│                                swing 检查 → E5_per_target.json + E5_gate.json，纯 numpy）
 │
 ├── versions/                 事实源
 │   ├── registry.json            可运行版本注册表
@@ -148,12 +150,13 @@ v4/
 │   ├── test_e5_pipeline.py       E5/P0 端到端（随机骨干预检：报告/分项/消融/不判 PASS）+ 接线
 │   ├── test_e5_perm_pipeline.py  E5/P1 端到端（PERM 契约有限且 >0、尾部报告、桶头/linear 臂、路由）
 │   ├── test_e5_sw_pipeline.py    E5/P2 端到端（单尺度契约、有效/占位分项、禁止尺度臂暴露代价）
+│   ├── test_e5_aggregate.py      E5 汇总（可复算/井序对齐/联合判据/swing 可加性/缺件显式降级）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
 │   ├── test_e1_pipeline.py       E1 端到端（合成井 → Gate/prereg/候选，需 torch）
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**527 项**；本地无 torch 解释器 159 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**535 项**；本地无 torch 解释器 159 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包

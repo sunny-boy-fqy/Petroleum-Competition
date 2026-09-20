@@ -228,13 +228,15 @@ run_stage() {
         e5_script="$HERE/E5/code/head_por.py"
         e5_args=()
         e5_expect=""
+        e5_all=0
         for a in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
           if [[ "$e5_expect" == "target" ]]; then
             case "${a,,}" in
               por)  e5_script="$HERE/E5/code/head_por.py" ;;
               perm) e5_script="$HERE/E5/code/head_perm.py" ;;
               sw)   e5_script="$HERE/E5/code/head_sw.py" ;;
-              *) log "!! E5 --target 只支持 por/perm/sw，got $a"; return 1 ;;
+              all)  e5_all=1 ;;
+              *) log "!! E5 --target 只支持 por/perm/sw/all，got $a"; return 1 ;;
             esac
             e5_expect=""
             continue
@@ -243,12 +245,29 @@ run_stage() {
           e5_args+=("$a")
         done
         if [[ "$e5_expect" == "target" ]]; then log "!! --target 缺少取值"; return 1; fi
-        if [[ ! -f "$e5_script" ]]; then
-          log "!! $e5_script 尚未实现（见 E5/*/PLAN.md）"; return 1
-        fi
-        python3 "$e5_script" \
-          --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
-          --run-root "$RUN_ROOT" "${e5_args[@]+"${e5_args[@]}"}" 2>&1 | tee -a "$LOG" ;;
+        if [[ "$e5_all" == "1" ]]; then
+          # 三目标顺序执行（任一失败即停），最后做联合汇总（per-target + E5_gate）
+          for e5_name in head_por head_perm head_sw; do
+            e5_script="$HERE/E5/code/$e5_name.py"
+            if [[ ! -f "$e5_script" ]]; then
+              log "!! $e5_script 尚未实现（见 E5/*/PLAN.md）"; return 1
+            fi
+            log "--- [E5] $e5_name"
+            python3 "$e5_script" \
+              --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
+              --run-root "$RUN_ROOT" "${e5_args[@]+"${e5_args[@]}"}" 2>&1 | tee -a "$LOG" \
+              || { log "!! [E5] $e5_name 失败"; return 1; }
+          done
+          python3 "$HERE/E5/code/evaluate_targets.py" \
+            --reports-dir "$REPORTS_DIR" --run-root "$RUN_ROOT" 2>&1 | tee -a "$LOG"
+        else
+          if [[ ! -f "$e5_script" ]]; then
+            log "!! $e5_script 尚未实现（见 E5/*/PLAN.md）"; return 1
+          fi
+          python3 "$e5_script" \
+            --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
+            --run-root "$RUN_ROOT" "${e5_args[@]+"${e5_args[@]}"}" 2>&1 | tee -a "$LOG"
+        fi ;;
     *)  log "!! 阶段 $STAGE 尚未实现（见 v4/PLAN.md §七 与各 E*/PLAN.md）"; return 1 ;;
   esac
 }
