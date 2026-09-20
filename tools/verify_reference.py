@@ -46,7 +46,12 @@ def main() -> int:
     # ---------------- 折文件
     try:
         folds = F.load_folds()
+        # source_path 现在是仓库相对路径（可移植）；兼容旧的绝对路径写法
         path = Path(folds["source_path"])
+        if not path.is_absolute():
+            path = V4 / path
+        if not path.is_file() and folds.get("source_path_abs"):
+            path = Path(folds["source_path_abs"])
         raw = path.read_bytes()
         byte_sha = hashlib.sha256(raw).hexdigest()
         sizes = {f: sum(1 for v in folds["fold_of_well"].values() if v == f)

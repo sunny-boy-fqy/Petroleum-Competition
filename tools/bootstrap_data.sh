@@ -22,7 +22,8 @@
 # R6-L1：显式给出的 `--manifest` 路径不存在 -> exit 4；manifest 缺 `tarball.sha256`
 #         -> exit 3（不得打印 "tarball sha256 OK" 假装校验通过）。
 #
-# 用法（在本机或云端均可执行）：
+# 用法（**本机**在项目父目录执行可用 `v4/` 前缀；**云端**请用 run_train.sh
+#      --mode data，或先 V4="$(dirname "$(find /code/workspace -name run_train.sh | head -1)")"）：
 #   bash v4/tools/bootstrap_data.sh                      # 自动搜索（含 $DATA_ROOT）
 #   bash v4/tools/bootstrap_data.sh --tarball /data/v4_data.tar.gz
 #   V4_DATA_TARBALL=/data/v4_data.tar.gz bash v4/tools/bootstrap_data.sh
@@ -180,11 +181,23 @@ def n_wells(split):
     return len(list(d.glob("*.txt"))) if d.is_dir() else 0
 
 def n_rows(split):
-    """原始 txt 行数减去 2 行表头（列名行 + 单位行）。"""
+    """原始 txt 行数减去 2 行表头（列名行 + 单位行）。
+
+    review R7：这个口径与 `parse.py`（跳过空行）存在潜在差异，因此先**显式检查**
+    数据区没有空行 —— 有空行时总数会漂移，必须让部署**响亮地失败**而不是静默对不上。
+    """
     d = dest / split
     if not d.is_dir():
         return 0
-    return sum(sum(1 for _ in open(f, encoding="utf-8-sig")) - 2 for f in d.glob("*.txt"))
+    total = 0
+    for f in d.glob("*.txt"):
+        lines = open(f, encoding="utf-8-sig").read().splitlines()
+        blank = sum(1 for ln in lines[2:] if not ln.strip())
+        if blank:
+            raise SystemExit(f"!! {f.name} 数据区含 {blank} 个空行："
+                             "行数口径（总行数-2 表头）会与 parse.py 不一致，请先确认数据")
+        total += len(lines) - 2
+    return total
 
 n_tr, n_te = n_wells("train"), n_wells("test")
 rows_tr, rows_te = n_rows("train"), n_rows("test")

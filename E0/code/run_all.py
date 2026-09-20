@@ -413,13 +413,18 @@ def main() -> int:
                             {"well": rec_.well_id, "reason": f"{tname_} == inputs[:,{k_}]"})
     leak_report["full_90_wells"] = {
         "checked": full_leak["checked"],
+        "expected": C.EXPECTED_N_TRAIN_WELLS + C.EXPECTED_N_TEST_WELLS,
         "violations": len(full_leak["violations"]),
-        "passed": not full_leak["violations"],
+        # R7-3：只看 `violations == 0` 会**假绿** —— 井数为 0（数据目录空/路径写错）时
+        # 同样满足，而 scope 却声称"等价于 tools/check_data_leak.py"（那边 R5-H1 已加
+        # 覆盖性断言）。这里补上同一条：必须恰好检查到 80+10 口井。
+        "passed": (full_leak["checked"] == C.EXPECTED_N_TRAIN_WELLS + C.EXPECTED_N_TEST_WELLS
+                   and not full_leak["violations"]),
         "examples": full_leak["violations"][:5],
     }
     leak_report["passed"] = (not leak_report["violations"]) and leak_report["full_90_wells"]["passed"]
     leak_report["scope"] = ("全量 90 井（train+test）逐井检查 13 列输入且输入列与任何目标列不完全相等；"
-                            "等价于 tools/check_data_leak.py")
+                            "并断言 checked == 80+10（覆盖性），与 tools/check_data_leak.py 的 R5-H1 逻辑一致")
 
 
     # ---------------- 折指纹
@@ -445,8 +450,8 @@ def main() -> int:
         cache_root_portable, cache_root_is_portable = portable_path(cache_root)
         warn_if_ephemeral(cache_root)
         echo(f"构建分片缓存 -> {cache_root}")
-        man = DS.build_cache(train_dir if not args.limit else train_dir,
-                             test_dir, cache_root, limit=args.limit, verbose=False)
+        man = DS.build_cache(train_dir, test_dir, cache_root,
+                             limit=args.limit, verbose=False)
         # 校验：输入列数（R4-M6：**两个 split 都查**，此前只查 train 的 80 个 shard）、
         # 目标不进入输入
         viol = []

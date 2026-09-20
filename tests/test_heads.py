@@ -45,10 +45,13 @@ class TestForward(unittest.TestCase):
         """R4-B2：`q_*` 必须是 sigmoid(logit)（门控用），不是 logit 本身。"""
         m = build_model(16, hidden=16, layers=1, seed=11).eval()
         out = m(torch.randn(32, 16))
-        self.assertTrue(torch.allclose(out["q_atom"], torch.sigmoid(out["q_atom_logit"]),
-                                       atol=0, rtol=0))
-        self.assertTrue(torch.allclose(out["q_joint"], torch.sigmoid(out["q_joint_logit"]),
-                                       atol=0, rtol=0))
+        # review R7：`atol=0, rtol=0` 要求逐位相等，换个求值顺序就会假失败。
+        # 这里要锁的不变量是"q_* 是 logit 的 sigmoid"，不是浮点实现的位模式，
+        # 因此用 float32 量级的容差（eps≈1.2e-7，取 1e-6 留一个数量级余量）。
+        for prob, logit in (("q_atom", "q_atom_logit"), ("q_joint", "q_joint_logit")):
+            self.assertTrue(torch.allclose(out[prob], torch.sigmoid(out[logit]),
+                                           atol=1e-6, rtol=1e-6),
+                            f"{prob} != sigmoid({logit})")
         self.assertTrue(bool(((out["q_atom"] >= 0) & (out["q_atom"] <= 1)).all()))
 
     def test_ph_logit_is_alias_of_q_joint_logit(self):

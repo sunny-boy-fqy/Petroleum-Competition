@@ -29,6 +29,20 @@ def sha256_file(path: str | Path, chunk: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
+def _portable_source(p: Path) -> str:
+    """证据里的路径必须**跨机可复现**（review R7）。
+
+    折文件在仓库内时记**仓库相对路径**（如 `versions/reference/v1_well_folds.json`），
+    这样 `versions/folds_sha256.json` 不会写死作者机的 `/home/<user>/...`；
+    在仓库外（例如云端 `/data/v4/data/folds/...`）才保留绝对路径 —— 那是事实，
+    无法用仓库相对形式表达，且同时记在 `source_path_abs` 里。
+    """
+    try:
+        return str(p.resolve().relative_to(Path(__file__).resolve().parents[2]))
+    except ValueError:
+        return str(p)
+
+
 def find_folds_file(v4_root: str | Path | None = None) -> Path:
     """按优先级定位折文件。
 
@@ -62,7 +76,10 @@ def load_folds(path: str | Path | None = None) -> dict[str, Any]:
     fold_of = {w: int(raw["fold_of_well"][w]) for w in well_list}
     n_folds = int(raw.get("n_folds", C.N_FOLDS))
     return {
-        "source_path": str(p),
+        # review R7：证据里的路径必须**跨机可复现** —— 仓库内记相对路径；
+        # 绝对路径另存 source_path_abs（仅作人类可读的现场记录）。
+        "source_path": _portable_source(p),
+        "source_path_abs": str(p),
         "source_sha256": sha256_file(p),
         "seed": raw.get("seed"),
         "n_folds": n_folds,

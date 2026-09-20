@@ -90,12 +90,21 @@ class TestRunTrainOrdering(unittest.TestCase):
         self.assertIn("check_env_profile full", data_body)
 
     def test_disk_guard_checks_data_root_explicitly(self):
-        """R3-H2：不带 --data-root 时 level 描述的是 `/`，与 30 GB 配额无关。"""
-        for m in re.finditer(r"disk_guard\.py[^\n]*(?:\n[^\n]*)*?(?=\n\s*(?:log|if|else|fi|$))",
-                             self.src):
-            block = m.group(0)
+        """R3-H2：不带 --data-root 时 level 描述的是 `/`，与 30 GB 配额无关。
+
+        review R7：原实现只对正则**匹配到的**块做断言，正则失效时循环体一次都不执行，
+        测试就"零断言通过"。现在先要求至少匹配到一个块。
+        """
+        blocks = [m.group(0) for m in
+                  re.finditer(r"disk_guard\.py[^\n]*(?:\n[^\n]*)*?(?=\n\s*(?:log|if|else|fi|$))",
+                              self.src)]
+        self.assertTrue(blocks, "静态断言没匹配到任何 disk_guard 调用 —— 正则失效等于空转")
+        checked = 0
+        for block in blocks:
             if "--json" in block or "--min-free-gb" in block:
+                checked += 1
                 self.assertIn("--data-root", block, block)
+        self.assertTrue(checked, "disk_guard 调用块里没找到 --json/--min-free-gb（正则已过期）")
 
     def test_run_e0_copies_all_e0_evidence(self):
         """R3-H5：此前只回拷 3 个文件，data card 与 score_check/prereg 会互相矛盾。"""
@@ -336,6 +345,32 @@ class TestCommittedE0GateRecompute(unittest.TestCase):
         checks = rep["mandatory_checks"]
         self.assertIn("contract_ok", checks)
         self.assertEqual(checks["contract_ok"], checks["contract_selftest"])
+
+    def test_leak_report_requires_full_coverage(self):
+        """R7-3：`full_90_wells` 只看 violations==0 会假绿（0 井也 passed）。
+
+        源码必须同时断言覆盖性（checked == 80+10），且已提交的证据必须真的覆盖 90 井。
+        """
+        src = _read("E0/code/run_all.py")
+        self.assertIn('"expected": C.EXPECTED_N_TRAIN_WELLS + C.EXPECTED_N_TEST_WELLS', src)
+        m = re.search(r'"passed": \(full_leak\["checked"\].*?\)', src, re.S)
+        self.assertIsNotNone(m, "full_90_wells.passed 不再包含覆盖性断言")
+        self.assertIn('full_leak["checked"] ==', m.group(0))
+        card = json.loads((V4 / "reports" / "E0_data_card.json").read_text(encoding="utf-8"))
+        f90 = card["input_leak_regression"]["full_90_wells"]
+        self.assertEqual(f90["checked"], f90["expected"], f90)
+        self.assertEqual(f90["expected"], 90)
+        self.assertTrue(f90["passed"], f90)
+
+    def test_folds_evidence_path_is_portable(self):
+        """R7：证据里的折文件路径必须是仓库相对形式（不写死作者机绝对路径）。"""
+        folds = json.loads((V4 / "versions" / "folds_sha256.json").read_text(encoding="utf-8"))
+        self.assertFalse(folds["source_path"].startswith("/"), folds["source_path"])
+        self.assertEqual(folds["source_path"], "versions/reference/v1_well_folds.json")
+        self.assertEqual(folds["source_sha256"],
+                         "f7c2c58bd035294f0e0d80a9103c366877836249fcd6db42269269c85d94b87e")
+        # 读取方必须能解析相对路径
+        self.assertIn("V4 / path", _read("tools/verify_reference.py"))
 
 
 class TestBootstrapDataTarballResolution(unittest.TestCase):
@@ -1053,6 +1088,42 @@ class TestStartCommandsAreLocationIndependent(unittest.TestCase):
         """启动命令上限 500 字符（平台硬约束）。"""
         for suffix in (" --mode env", " --mode data", " --mode e0", " --mode all"):
             self.assertLess(len(self.RESOLVER + suffix), 500)
+
+    def test_cloud_commands_never_use_a_bare_v4_prefix(self):
+        """review R7 第 5 条的分类版：`v4/...` 只在**本机**上下文里合法。
+
+        本机开发机上目录**确实叫** `v4/`（项目父目录下），所以 `python3 v4/tools/...`
+        是正确的；但云端克隆目录不叫 `v4`，**以「云端」为上下文**的命令绝不能出现
+        `v4/` 前缀。这里按代码块内的注释跟踪上下文，逐行断言。
+        """
+        files = ["README.md", "docs/platform_setup.md", "docs/training_tasks.md",
+                 "dist/README.md", "E0/P0/PLAN.md", "E1/P0/PLAN.md"]
+        checked = 0
+        for rel in files:
+            if not (V4 / rel).is_file():
+                continue
+            for block in TestDependencyFactsAreSingleSourced._fenced_blocks(_read(rel)):
+                ctx = None
+                for line in block:
+                    s = line.strip()
+                    if not s:
+                        continue
+                    if s.startswith("#"):
+                        if "云端" in s:
+                            ctx = "cloud"
+                        elif "本机" in s:
+                            ctx = "local"
+                        continue
+                    if ctx != "cloud":
+                        continue
+                    checked += 1
+                    # 只抓**相对**的 `v4/`（命令开头的仓库目录前缀）；
+                    # `/data/v4/...` 是数据路径、`$V4/...` 是环境变量，都合法。
+                    self.assertIsNone(
+                        re.search(r"(?<![A-Za-z0-9_/$])v4/", s),
+                        f"{rel} 的云端命令出现本机才有效的 `v4/`：{s}")
+        self.assertGreater(checked, 0,
+                           "没解析到任何「云端」上下文命令 —— 上下文跟踪失效，断言空转")
 
 
 def _in_git_worktree() -> bool:

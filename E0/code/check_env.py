@@ -73,7 +73,10 @@ DISK_BUDGET_GB = 30.0
 # 依赖分档（R3 修复 + R5-M1）。
 #   REQUIRED_PY_DEPS：训练/分析主路径硬依赖；profile=full 且缺失 -> hard。
 #   OPTIONAL_PY_DEPS：有文档化降级路径；profile=full 且缺失 -> warn + degraded_paths。
-# **版本一律不钉死**（值为 None 表示"只查是否存在，不比较版本"）：torch 的 wheel 本身
+# **本表版本一律不钉死**（值为 None 表示"只查是否存在，不比较版本"）。
+# 注意范围：这句话只覆盖**额外轻量包**；`torch`/Python/CUDA 由镜像**硬约束**
+# （`torch_version` 是 hard 检查，EXPECTED_TORCH="2.7.1"），两者不矛盾。
+# torch 的 wheel 本身
 # 不依赖 numpy（2.7.1 的 Requires-Dist 无 numpy），因此 numpy 也在 required 里由 pip 补装；
 # 把某个具体小版本写成硬约束会在
 # 镜像升级时误报。精确版本一致性由 `versions/locks/cloud_frozen.txt`（云端
@@ -292,7 +295,9 @@ def check_py_deps(rep: Report, allow_non_a100: bool,
             got = getattr(m, "__version__", "?")
             info[mod] = got
             if want is None:                       # 只查存在性（R5-M1）
-                rep.add(f"dep_{mod}", True, "warn",
+                # review R7：level 描述的是"这项检查若失败有多严重"，因此 required 依赖
+                # 通过时也应记为 required_level（此前一律记 "warn"，语义误导）。
+                rep.add(f"dep_{mod}", True, "warn" if optional else required_level,
                         f"{mod} {got} (存在性检查通过；版本不钉死)"
                         + ("  [optional/advisory]" if optional else ""))
                 continue

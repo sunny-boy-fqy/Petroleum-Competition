@@ -105,7 +105,7 @@ E0 契约 → E1 行级基线 → E2 特征 → E3 序列主干 → E4 多尺度
 
 | 字段 | 值 |
 |---|---|
-| 代码来源 | **Git 仓库**（本仓库）；分支 `main` |
+| 代码来源 | **Git 仓库**（本仓库）；分支 **`master`**（不是 `main`） |
 | 启动命令 | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode all` |
 | 资源 | Nvidia **A100 × 1**（80 GB 显存） |
 | 镜像 | 见 [`docs/image_requirements.md`](docs/image_requirements.md)（训练任务场景；torch 2.7.1 / CUDA 12.8 / py3.11） |

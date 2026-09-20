@@ -217,33 +217,37 @@ def check_status_summary(payload: dict) -> list[str]:
 EVIDENCE_JSON_RELPATH = ("reports", "E0_plan_stats.json")
 
 
-def check_evidence(payload: dict) -> list[str]:
+def check_evidence(payload: dict, path: str | Path | None = None) -> list[str]:
     """R4-H2：`reports/E0_plan_stats.json` 是**证据副本**，必须与 `measure()` 逐字段相等。
 
     四审发现它停在旧值（730/708/4988/6426），而 PLAN/README/status 都已同步到 6781；
     `check_status.py` 与 `test_plan_stats.py` 都不查这个 JSON，于是它成了一份
     "已提交但过期"的手写副本。现在把它纳入同一次 `--check`（并可由 `--json` 重生成、
     由 `tools/sync_plan_stats.py` 自动同步），从机制上消除再次过期的可能。
+
+    `path` 允许校验**别处的副本**（例如测试里的临时文件），默认仍是 repo 内那份 ——
+    测试因此不必再覆写已提交的文件（review R7-7）。
     """
-    p = V4.joinpath(*EVIDENCE_JSON_RELPATH)
+    rel = "/".join(EVIDENCE_JSON_RELPATH)
+    p = Path(path) if path is not None else V4.joinpath(*EVIDENCE_JSON_RELPATH)
     if not p.is_file():
-        return [f"{'/'.join(EVIDENCE_JSON_RELPATH)}: 证据 JSON 缺失"
+        return [f"{rel}: 证据 JSON 缺失"
                 "（运行 tools/sync_plan_stats.py 或 tools/plan_stats.py --json 生成）"]
     try:
         d = json.loads(p.read_text(encoding="utf-8"))
     except Exception as exc:                                     # noqa: BLE001
-        return [f"{'/'.join(EVIDENCE_JSON_RELPATH)}: 无法解析 {exc!r}"]
+        return [f"{rel}: 无法解析 {exc!r}"]
     errs: list[str] = []
     for key in ("total_plan_files", "total_lines"):
         if int(d.get(key, -1)) != int(payload[key]):
-            errs.append(f"{'/'.join(EVIDENCE_JSON_RELPATH)}: {key}={d.get(key)} 与实测 "
+            errs.append(f"{rel}: {key}={d.get(key)} 与实测 "
                         f"{payload[key]} 不一致（证据 JSON 已过期）")
     for section in ("main", "stage", "p_level"):
         got = d.get(section) or {}
         want = payload[section]
         for key in ("files", "lines", "avg"):
             if int(got.get(key, -1)) != int(want[key]):
-                errs.append(f"{'/'.join(EVIDENCE_JSON_RELPATH)}: {section}.{key}="
+                errs.append(f"{rel}: {section}.{key}="
                             f"{got.get(key)} 与实测 {want[key]} 不一致（证据 JSON 已过期）")
     return errs
 

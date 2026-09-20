@@ -132,20 +132,29 @@ class TestPlanStatsEvidenceJson(unittest.TestCase):
         self.assertTrue(V4.joinpath(*PS.EVIDENCE_JSON_RELPATH).is_file())
 
     def test_stale_evidence_is_detected(self):
+        """过期副本必须被检出 —— 但**不得**覆写已提交的文件（review R7-7）。
+
+        原实现把 `reports/E0_plan_stats.json` 就地改成过期值、再在 finally 里还原：
+        崩溃/断电会污染仓库文件，并行跑其它检查器时还有瞬时不一致窗口。
+        现在写进临时目录，用 `check_evidence(payload, path=...)` 校验。
+        """
         import json
+        import tempfile
+        committed = V4.joinpath(*PS.EVIDENCE_JSON_RELPATH).read_text(encoding="utf-8")
         p = PS.measure(); p["gate"] = PS._local_gate_counts()
-        orig = V4.joinpath(*PS.EVIDENCE_JSON_RELPATH)
-        backup = orig.read_text(encoding="utf-8")
-        try:
-            d = json.loads(backup)
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td) / "E0_plan_stats.json"
+            d = json.loads(committed)
             d["total_lines"] = 1                       # 模拟四审看到的过期副本
             d["stage"]["lines"] = 708
-            orig.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
-            errs = PS.check_evidence(p)
+            tmp.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+            errs = PS.check_evidence(p, path=tmp)
             self.assertTrue(any("total_lines" in e for e in errs), errs)
             self.assertTrue(any("stage.lines" in e for e in errs), errs)
-        finally:
-            orig.write_text(backup, encoding="utf-8")
+            # 同一 payload 对**真实**证据文件必须无错（且文件始终未被改动）
+            self.assertEqual(PS.check_evidence(p), [])
+            self.assertEqual(V4.joinpath(*PS.EVIDENCE_JSON_RELPATH).read_text(encoding="utf-8"),
+                             committed, "本测试不得修改已提交的证据文件")
         self.assertEqual(PS.check_evidence(p), [])
 
     def test_sync_writes_the_evidence_json(self):

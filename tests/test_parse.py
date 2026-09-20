@@ -96,11 +96,48 @@ class TestWellParsing(unittest.TestCase):
         self.assertEqual(lacking[0], "c7611b0148bb4b878c00bc6d1367a136")
 
     def test_sentinel_handling(self):
-        rec = P.parse_well(self.train_files[0], with_targets=True)
+        """哨兵必须变成 NaN —— 且必须是**由原始文本算出的**断言，不能同义反复。
+
+        review R7-6：原断言 `isnan(inputs).any() or isfinite(inputs).all()` 恒为真
+        （无 NaN 时第二项成立、有 NaN 时第一项成立），解析器即使把哨兵改成 `0.0`
+        也照样通过。这里直接从原始 txt 的**输入列**里数出哨兵个数，再要求解析结果
+        的 NaN 数不少于它 —— 这才真正锁住"哨兵→NaN"不变式。
+        """
         import numpy as np
-        # 输入中的哨兵必须变为 NaN（而不是 -99999）
-        self.assertTrue(np.isnan(rec.inputs).any() or np.isfinite(rec.inputs).all())
+        from src.data import parse as _P
+        n_raw_sentinel = 0
+        rec = None
+        for f in self.train_files:
+            lines = Path(f).read_text(encoding="utf-8-sig").splitlines()
+            header = [h.strip() for h in lines[0].split(",")]
+            idx = [header.index(c) for c in C.INPUT_COLUMNS if c in header]
+            n_here = 0
+            for line in lines[2:]:                       # 跳过列名行与单位行
+                toks = line.split(",")
+                for i in idx:
+                    if i >= len(toks):
+                        continue
+                    tok = toks[i].strip()
+                    if not tok:
+                        continue
+                    try:
+                        v = float(tok)
+                    except ValueError:
+                        continue
+                    if v < C.MISSING_LT:                 # -99999 / -9999 / 任何 < -1000
+                        n_here += 1
+            if n_here > 0:
+                rec, n_raw_sentinel = _P.parse_well(f, with_targets=True), n_here
+                break
+        self.assertIsNotNone(rec, "训练集里应至少有一口井的输入列含哨兵（否则本测试无效）")
+        self.assertGreater(n_raw_sentinel, 0)
+        n_nan = int(np.isnan(rec.inputs).sum())
+        self.assertGreaterEqual(n_nan, n_raw_sentinel,
+                                f"原始输入列有 {n_raw_sentinel} 个哨兵，解析后只有 {n_nan} 个 NaN")
+        # 哨兵原值不得残留，也不得被换成任何哨兵常量
         self.assertFalse((rec.inputs < C.MISSING_LT).any())
+        for s in C.SENTINELS:
+            self.assertFalse((rec.inputs == s).any(), f"哨兵原值 {s} 残留在输入里")
 
 
 class TestFeatureBuilder(unittest.TestCase):

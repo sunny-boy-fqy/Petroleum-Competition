@@ -17,6 +17,11 @@ V4 = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(V4))
 from src import constants as C  # noqa: E402
 
+# review R7：总分恒等式的容差写成具名常量（此前是裸的 1e-5，与文档里的
+# 其它容差（如 PLAN §9.3 的提交逐点复现 ≤1e-6）容易被混为一谈）。
+# 依据：cv 里的分数是 float32 百分数，三目标加权和的舍入误差量级 ~1e-5。
+TOTAL_IDENTITY_ATOL = 1e-5
+
 VALID_STATUS = {"local_only", "shortlisted", "submitted", "frozen_best", "rejected"}
 
 
@@ -33,7 +38,7 @@ def main() -> int:
             want = 100.0 * (C.SCORE_WEIGHTS["POR"] * cv["por"]
                             + C.SCORE_WEIGHTS["PERM"] * cv["perm"]
                             + C.SCORE_WEIGHTS["SW"] * cv["sw"])
-            if abs(want - cv["total"]) > 1e-5:
+            if abs(want - cv["total"]) > TOTAL_IDENTITY_ATOL:
                 errs.append(f"{cid}: total {cv['total']} != weighted sum {want:.7f}")
         # R2-M7：missing_mode 必须显式写 "drop"（不再允许 None）
         if cv.get("missing_mode") != "drop":

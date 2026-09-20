@@ -107,7 +107,13 @@ def check_gates(st: dict, errs: list[str]) -> None:
                 continue
             checks = _report_checks(f)
             if checks is None:
-                continue                       # 报告没有 check 表（如 cloud gate）→ 跳过项数比对
+                # 报告没有可解析的 check 表（如 cloud gate 的 mandatory_checks 形状不同）。
+                # review R7：此前无条件 `continue`，于是 status 声明的项数被**静默**跳过核对；
+                # 若声明了 mandatory_total/passed 却核不了，必须显式报错。
+                if "mandatory_total" in gk or "mandatory_passed" in gk:
+                    errs.append(f"{label}: {rep} 缺少可解析的 check 表，"
+                                f"无法核对 status 声明的 mandatory_total/passed")
+                continue
             n_pass = sum(1 for v in checks.values() if v)
             if "mandatory_total" in gk and int(gk["mandatory_total"]) != len(checks):
                 errs.append(f"{label}: status 声明 mandatory_total={gk['mandatory_total']}，"

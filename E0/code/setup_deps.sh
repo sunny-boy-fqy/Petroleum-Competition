@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # v4 云端一次性依赖安装（30 GB 磁盘纪律版）
 #
-# 用法：
+# 用法（**本机**：在项目父目录执行，`v4/` 是本机真实的目录名；
+#       云端由 run_train.sh 以 $HERE 调用，不要照抄下面的 `v4/` 前缀）：
 #   bash v4/E0/code/setup_deps.sh                 # 按 versions/locks/cloud.txt（**不钉版本**）
 #   bash v4/E0/code/setup_deps.sh --dry-run       # 只预检并打印将要安装的包
 #   bash v4/E0/code/setup_deps.sh --from-frozen   # 按 cloud_frozen.txt 的**精确版本**安装
@@ -23,11 +24,9 @@ for _a in "$@"; do
   esac
 done
 
-cd "$(dirname "$0")/../.."   # -> v4/
+cd "$(dirname "$0")/../.."   # -> v4/（review R7：此前重复 cd 了两次）
 # 可用 `V4_FROZEN_LOCK` 指向别处的 freeze 文件（默认 repo 内那份；相对路径按 v4/ 解析）
 FROZEN="${V4_FROZEN_LOCK:-versions/locks/cloud_frozen.txt}"
-
-cd "$(dirname "$0")/../.."   # -> v4/
 DATA_ROOT="${V4_DATA_ROOT:-/data}"
 REPORTS_DIR="${V4_REPORTS_DIR:-/data/v4/reports}"
 CACHE_ROOT="${V4_CACHE_ROOT:-/data/v4/cache}"
@@ -74,9 +73,22 @@ PY
 )
 echo "free disk on $DATA_ROOT: ${FREE_GB} GiB"
 
-if python3 -c "import sys; sys.exit(0 if float('${FREE_GB}') < 8 else 1)"; then
-  echo "!! free < 8 GiB —— 按 PLAN.md §3.4.1 的安全规则：不安装任何额外包，仅使用镜像自带 torch（numpy 是硬前提，缺它也必须先补上）。"
-  echo "   请先清理后重跑本脚本。"
+# review R7：原写法 `sys.exit(0 if float(x) < 8 else 1)` 语义反读，且 `nan < 8` 为 False
+# 会把"测不出余量"当成"余量充足"直接放行。现在写成"足够才继续"，并把 nan 视为不足：
+# 拿不到磁盘事实时按 PLAN.md §3.4.1「先测后用，不许假设」处理 —— 装包前必须能证明有空间。
+if python3 -c "
+import sys
+try:
+    free = float('${FREE_GB}')
+except ValueError:
+    free = float('nan')          # 无法测量 -> 视同不足
+sys.exit(0 if free >= 8 else 1)
+"; then
+  echo "磁盘余量 ${FREE_GB} GiB >= 8 GiB，继续安装。"
+else
+  echo "!! 可用余量 ${FREE_GB} GiB < 8 GiB（或无法测量）—— 按 PLAN.md §3.4.1 的安全规则："
+  echo "   不安装任何额外包，仅使用镜像自带 torch（numpy 是口径层硬前提，缺它也必须先补上）。"
+  echo "   请先清理 $CACHE_ROOT 或旧 checkpoint 后重跑本脚本。"
   exit 2
 fi
 
