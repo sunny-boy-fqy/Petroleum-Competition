@@ -56,8 +56,8 @@ def save_registry(data: dict[str, Any], path: str | Path | None = None) -> Path:
     return p
 
 
-def versions() -> dict[str, dict]:
-    return load_registry()["versions"]
+def versions(path: str | Path | None = None) -> dict[str, dict]:
+    return load_registry(path)["versions"]
 
 
 def available_versions() -> list[str]:
@@ -71,19 +71,19 @@ def get(version: str) -> dict:
     return vs[version]
 
 
-def latest() -> str | None:
-    return load_registry().get("latest")
+def latest(path: str | Path | None = None) -> str | None:
+    return load_registry(path).get("latest")
 
 
-def list_lines() -> list[str]:
+def list_lines(path: str | Path | None = None) -> list[str]:
     out = [f"{'version':<10} {'available':<10} {'type':<10} OOF        description",
            "-" * 84]
-    for k, v in versions().items():
+    for k, v in versions(path).items():
         oof = "-" if v.get("oof_total") is None else f"{v['oof_total']:.6f}"
         out.append(f"{k:<10} {str(bool(v.get('available'))):<10} {v.get('type',''):<10} "
                    f"{oof:<10} {v.get('desc','')}")
     out.append("-" * 84)
-    out.append(f"latest: {latest()}")
+    out.append(f"latest: {latest(path)}")
     return out
 
 
@@ -204,6 +204,71 @@ def freeze_candidate(candidate_id: str, path: str | Path | None = None,
     if sha256:
         extra["frozen_sha256"] = str(sha256)
     return set_candidate_status(candidate_id, "frozen_best", path, extra=extra)
+
+
+# ---------------------------------------------------------------- 版本表写回（E6/P2、E10）
+def register_pipeline(version: str, checkpoint: str | Path, *, oof_total: float | None = None,
+                      desc: str | None = None, entrypoint: str | None = None,
+                      available: bool = True, completed: bool = True,
+                      make_latest: bool = False, extra: dict[str, Any] | None = None,
+                      path: str | Path | None = None) -> Path:
+    """把**已训练**的管线版本写进 `versions/registry.json`（`predict.py` 的唯一来源）。
+
+    纪律：`available=True` 只能由**真的存在权重**的调用方设置（这里强制校验文件存在，
+    避免"注册了却没有权重"导致 `predict.py` 半路报错）；`latest` 只在 `make_latest` 时改写。
+    """
+    ckpt = Path(checkpoint)
+    if available and not ckpt.is_file():
+        raise FileNotFoundError(f"register_pipeline: 权重不存在 {ckpt}（不许注册不可用版本）")
+    doc = load_registry(path)
+    vs = doc.setdefault("versions", {})
+    entry = {
+        "type": "pipeline",
+        "available": bool(available),
+        "completed": bool(completed),
+        "desc": desc or f"v4 管线 {version}",
+        "entrypoint": entrypoint or "src/inference/predictor.py",
+        "checkpoint": str(ckpt),
+        "oof_total": (None if oof_total is None else float(oof_total)),
+        "registered_at": _now(),
+    }
+    if extra:
+        entry.update(_jsonable(extra))
+    vs[version] = {**vs.get(version, {}), **entry}
+    if make_latest:
+        doc["latest"] = version
+    return save_registry(doc, path)
+
+
+def set_version(version: str, *, available: bool | None = None,
+                completed: bool | None = None, path: str | Path | None = None,
+                **fields: Any) -> Path:
+    """局部更新某个版本的字段（未提供的键保持原值）；未知版本抛错。"""
+    doc = load_registry(path)
+    vs = doc.setdefault("versions", {})
+    if version not in vs:
+        raise KeyError(f"未知版本 {version!r}；已注册 {sorted(vs)}")
+    if available is not None:
+        vs[version]["available"] = bool(available)
+    if completed is not None:
+        vs[version]["completed"] = bool(completed)
+    if fields:
+        vs[version].update(_jsonable(fields))
+    vs[version]["updated_at"] = _now()
+    return save_registry(doc, path)
+
+
+def set_latest(version: str, path: str | Path | None = None) -> Path:
+    """把 `latest` 指向某版本；**只允许指向 available 的版本**（否则 predict 会半路失败）。"""
+    doc = load_registry(path)
+    vs = doc.setdefault("versions", {})
+    if version not in vs:
+        raise KeyError(f"未知版本 {version!r}；已注册 {sorted(vs)}")
+    if not vs[version].get("available"):
+        raise ValueError(f"版本 {version!r} 尚不可用，不能设为 latest")
+    doc["latest"] = version
+    return save_registry(doc, path)
+
 
 
 def _now() -> str:

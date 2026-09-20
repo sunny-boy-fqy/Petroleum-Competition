@@ -63,7 +63,7 @@ v4/
 │   │   └── target_heads.py       E5 逐目标头（PorHead 四种参数化+表示能力收据、PermHead
 │   │                             截断/桶头/分位、SwHead 单尺度 0–100 + 精确认原子）
 │   ├── losses/score_aligned.py   三段式对齐损失（Charbonnier + softplus + 尺度归一化 L_aux + 逐目标原子 BCE + 边界聚焦）
-│   ├── inference/
+│   ├── inference/（`predict.py` 已接线 PD1：manifest→权重→逐井解码→契约校验）
 │   │   ├── contract.py           提交契约校验（10 井/95,948 行/字段/有限性/SW 尺度守卫）
 │   │   ├── atomic_gate.py        **逐目标硬切换 τ_t** + joint_guard + 平台区中点选择 + 误判代价（numpy，无 torch）
 │   │   └── predictor.py          manifest→权重→逐井预测→提交载荷（CPU 主路径 + 契约校验）
@@ -85,6 +85,8 @@ v4/
 │   │   └── tb_logger.py          TensorBoard + JSONL 日志（平台迭代曲线；无 tensorboard 时降级）
 │   ├── versioning/registry.py    版本注册表读写（predict.py 的版本来源）+ 候选状态机
 │   │                             （upsert/status/freeze，submitted 不可覆盖，原子写）
+│   │                             + 管线版本写回 register_pipeline/set_version/set_latest
+│   │                             （available=True 必须有权重文件；latest 只能指向可用版本）
 │   └── ensemble/blend.py         E8 集成融合（纯 numpy）：inner-OOF 单纯形权重、同源性报告、
 │                                 井级配对 cluster bootstrap 显著性、EMA/SWA（融合连续头，
 │                                 原子硬切换必须在融合之后）
@@ -163,12 +165,14 @@ v4/
 │   ├── test_state_train_e6.py    E6 两阶段件（切片权重/冻结原子头真的不被更新/负对照/泄漏审计）
 │   ├── test_e6_pipeline.py       E6/P0 端到端（逐目标指标齐全、τ 内折、无插值、负对照、可 resume）
 │   ├── test_e6_tau.py            E6/P1 τ 搜索（网格/平台、逐目标指标、joint_guard、候选登记、缺件失败）
+│   ├── test_predict_pd1.py       版本表写回纪律 + `predict.py --use-version PD1` 端到端（提交契约、
+│   │                             确定性、SW 尺度、缺权重/未接线版本明确报错）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
 │   ├── test_e1_pipeline.py       E1 端到端（合成井 → Gate/prereg/候选，需 torch）
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**563 项**；本地无 torch 解释器 167 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**573 项**；本地无 torch 解释器 172 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包

@@ -33,9 +33,12 @@ from src.versioning import registry as REG          # noqa: E402
 
 
 # ---------------------------------------------------------------- 版本表
-def _versions() -> dict[str, dict]:
-    """可运行版本表：来自 `versions/registry.json`（审查 M5：不再硬编码）。"""
-    return REG.versions()
+def _versions(registry_path: str | None = None) -> dict[str, dict]:
+    """可运行版本表：来自 `versions/registry.json`（审查 M5：不再硬编码）。
+
+    `--registry` 可指向别的注册表（测试与多版本并行实验用；默认读仓库内那一份）。
+    """
+    return REG.versions(registry_path)
 
 
 DEFAULT_VERSION = "PD1"
@@ -62,8 +65,60 @@ def predict_const(test_dir: Path) -> dict:
 PREDICTORS = {"CONST": predict_const}
 
 
-def build_payload(version: str, data_dir: Path, model_name: str | None = None) -> dict:
-    info = _versions()[version]
+def _resolve_checkpoint(info: dict) -> Path:
+    """从版本表解析权重路径：绝对路径直用；相对路径相对**仓库根**（`v4/`）。"""
+    ck = info.get("checkpoint")
+    if not ck:
+        raise SystemExit(f"[predict] 版本缺少 checkpoint 字段：{info.get('desc')}")
+    p = Path(ck)
+    if not p.is_absolute():
+        p = V4 / p
+    if not p.is_file():
+        raise SystemExit(f"[predict] checkpoint 不存在：{p}")
+    return p
+
+
+def predict_pd1(test_dir: Path, info: dict, batch_size: int = 65536,
+                device: str = "cpu") -> tuple[list, dict]:
+    """纯 DL 管线推理（**CPU 主路径**）：manifest → 权重 → 逐井解码 → 提交载荷。
+
+    * 特征变换与训练**逐位同源**：`build_row_features` + 折内 `RowScaler`（从 manifest 读回）；
+    * `missing` 由 `~isfinite(inputs)` 现场导出（与写分片缓存时的口径完全一致）；
+    * 原子硬切换用 manifest 里的 `tau_atom`（若训练时选了 τ）；SW 只做 [0,100] 软裁剪。
+    """
+    import numpy as np
+
+    from src.data import parse as _P                       # noqa: PLC0415
+    from src.features import basic as F                    # noqa: PLC0415
+    from src.inference import predictor as PR              # noqa: PLC0415
+    from src.training import metrics as M                  # noqa: PLC0415
+
+    ckpt = _resolve_checkpoint(info)
+    manifest = PR.load_manifest(ckpt)
+    model = PR.load_model(ckpt, manifest, device=device)
+    per_well: dict = {}
+    n_rows = 0
+    for rec in _P.load_split(test_dir, with_targets=False):
+        inputs = np.asarray(rec.inputs, dtype="float32")
+        depth = np.asarray(rec.depth, dtype="float32")
+        missing = (~np.isfinite(inputs)).astype("int8")
+        X = manifest.row_scaler.transform(F.build_row_features(inputs, missing, depth))
+        out = PR.predict_x(model, X, batch_size=batch_size, device=device)
+        cont = M.decode_continuous(out)
+        tau = manifest.tau_atom
+        pred = M.atom_gate(cont, out["q_atom"], tau) if tau is not None else cont
+        per_well[rec.well_id] = {"depth": depth, "pred": pred}
+        n_rows += int(X.shape[0])
+    payload_data = PR.build_payload(per_well, model_name=f"v4-PD1")
+    return payload_data["resultData"], {"checkpoint": str(ckpt), "n_rows": n_rows,
+                                        "n_wells": len(per_well),
+                                        "tau_atom": manifest.tau_atom,
+                                        "device": device}
+
+
+def build_payload(version: str, data_dir: Path, model_name: str | None = None,
+                  registry_path: str | None = None) -> dict:
+    info = _versions(registry_path)[version]
     if not info["available"]:
         raise SystemExit(
             f"[predict] version '{version}' is registered but NOT trained yet.\n"
@@ -71,6 +126,18 @@ def build_payload(version: str, data_dir: Path, model_name: str | None = None) -
             "  先完成对应阶段（见 v4/PLAN.md §七）后再运行；"
             "如需校验提交契约，请用 --use-version CONST。"
         )
+    if version == "PD1":
+        rows, _summary = predict_pd1(data_dir, info)
+        return {
+            "modelId": "",
+            "modelName": model_name or f"v4-{version}",
+            "version": "1.0",
+            "resultData": rows,
+        }
+    if version not in PREDICTORS:
+        raise SystemExit(
+            f"[predict] 版本 {version!r} 已注册为 available 但推理入口未接线；"
+            f"已接线：{sorted(PREDICTORS)} + PD1。请补 predict.py 的 PREDICTORS 分支。")
     fn = PREDICTORS[version]
     return {
         "modelId": "",
@@ -80,11 +147,11 @@ def build_payload(version: str, data_dir: Path, model_name: str | None = None) -
     }
 
 
-def cmd_list_versions() -> int:
-    vs = _versions()
-    for line in REG.list_lines():
+def cmd_list_versions(registry_path: str | None = None) -> int:
+    for line in REG.list_lines(registry_path):
         print(line)
-    print(f"default: {DEFAULT_VERSION}  (可用: {REG.available_versions()})")
+    avail = [k for k, v in _versions(registry_path).items() if v.get("available")]
+    print(f"default: {DEFAULT_VERSION}  (可用: {avail})")
     return 0
 
 
@@ -101,6 +168,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--validate-only", action="store_true",
                     help="只校验 --data_dir 是否可用，不写结果")
     ap.add_argument("--print-deps", action="store_true")
+    ap.add_argument("--registry", default=None,
+                    help="版本注册表路径（默认 versions/registry.json）")
     args = ap.parse_args(argv)
 
     if args.print_deps:
@@ -108,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.list_versions:
-        return cmd_list_versions()
+        return cmd_list_versions(args.registry)
 
     if args.data_dir is None:
         ap.error("--data_dir is required (official CLI, rules.md §6.3)")
@@ -123,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
         ap.error(f"no *.txt wells found under {data_dir}")
 
     version = args.use_version or DEFAULT_VERSION
-    if version not in _versions():
+    if version not in _versions(args.registry):
         ap.error(f"unknown version '{version}'; run --list-versions")
 
     n_test = len(list(test_dir.glob("*.txt")))
@@ -134,14 +203,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.validate_only:
         print(json.dumps({"data_dir": str(data_dir), "test_dir": str(test_dir),
                           "n_wells": n_test, "version": version,
-                          "available": _versions()[version]["available"]},
+                          "available": _versions(args.registry)[version]["available"]},
                          ensure_ascii=False, indent=2))
         return 0
 
     if args.output is None:
         ap.error("--output is required")
 
-    payload = build_payload(version, test_dir, args.model_name)
+    payload = build_payload(version, test_dir, args.model_name, args.registry)
 
     res = CT.validate_payload(payload, test_dir=test_dir,
                               expected_rows=args.expected_rows,
