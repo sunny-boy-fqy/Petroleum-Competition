@@ -79,6 +79,8 @@ v4/
 │   │   ├── seq_loop.py           E3 序列训练循环（chunk 批 + **分块重叠推理+加权拼接**）
 │   │   ├── ema.py                E8/P2 EMA 影子（decay∈{0.99,0.999,0.9995}，逐 step；context_ema 精确还原）
 │   │   ├── frozen.py             E5 冻结骨干取逐行隐状态（原生 forward_states / 前向钩子兜底 + 内存收据）
+│   │   ├── state_train.py        E6/P0 两阶段件（切片权重永不为 0、阶段 2 冻结/降 lr 原子头、
+│   │   │                         标签打乱负对照、输入列/原子标记泄漏审计）
 │   │   ├── checkpoint.py         bf16 state_dict + manifest（含连续头标尺与 L_aux 尺度）+ 滚动淘汰 + resume 校验
 │   │   └── tb_logger.py          TensorBoard + JSONL 日志（平台迭代曲线；无 tensorboard 时降级）
 │   ├── versioning/registry.py    版本注册表读写（predict.py 的版本来源）+ 候选状态机
@@ -151,12 +153,13 @@ v4/
 │   ├── test_e5_perm_pipeline.py  E5/P1 端到端（PERM 契约有限且 >0、尾部报告、桶头/linear 臂、路由）
 │   ├── test_e5_sw_pipeline.py    E5/P2 端到端（单尺度契约、有效/占位分项、禁止尺度臂暴露代价）
 │   ├── test_e5_aggregate.py      E5 汇总（可复算/井序对齐/联合判据/swing 可加性/缺件显式降级）
+│   ├── test_state_train_e6.py    E6 两阶段件（切片权重/冻结原子头真的不被更新/负对照/泄漏审计）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
 │   ├── test_e1_pipeline.py       E1 端到端（合成井 → Gate/prereg/候选，需 torch）
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**535 项**；本地无 torch 解释器 159 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**549 项**；本地无 torch 解释器 163 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
