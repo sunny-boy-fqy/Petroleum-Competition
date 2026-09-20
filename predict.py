@@ -65,17 +65,37 @@ def predict_const(test_dir: Path) -> dict:
 PREDICTORS = {"CONST": predict_const}
 
 
-def _resolve_checkpoint(info: dict) -> Path:
-    """从版本表解析权重路径：绝对路径直用；相对路径相对**仓库根**（`v4/`）。"""
-    ck = info.get("checkpoint")
-    if not ck:
-        raise SystemExit(f"[predict] 版本缺少 checkpoint 字段：{info.get('desc')}")
+def _resolve_path(ck) -> Path:
+    """绝对路径直用；相对路径相对**仓库根**（`v4/`）。"""
     p = Path(ck)
     if not p.is_absolute():
         p = V4 / p
+    return p
+
+
+def _resolve_checkpoint(info: dict) -> Path:
+    """单权重版本的 checkpoint（`checkpoint` 字段）。"""
+    ck = info.get("checkpoint")
+    if not ck:
+        raise SystemExit(f"[predict] 版本缺少 checkpoint 字段：{info.get('desc')}")
+    p = _resolve_path(ck)
     if not p.is_file():
         raise SystemExit(f"[predict] checkpoint 不存在：{p}")
     return p
+
+
+def _resolve_checkpoints(info: dict) -> list[Path]:
+    """**折集成**版本的权重清单（`checkpoints` 列表）：E6/P2 的 5 折平均走这条路径。"""
+    cks = info.get("checkpoints")
+    if not cks:
+        return [_resolve_checkpoint(info)]
+    paths = [_resolve_path(c) for c in cks]
+    missing = [str(p) for p in paths if not p.is_file()]
+    if missing:
+        raise SystemExit(f"[predict] 折权重缺失：{missing}")
+    if not paths:
+        raise SystemExit("[predict] checkpoints 为空列表")
+    return paths
 
 
 def predict_pd1(test_dir: Path, info: dict, batch_size: int = 65536,
@@ -93,27 +113,45 @@ def predict_pd1(test_dir: Path, info: dict, batch_size: int = 65536,
     from src.inference import predictor as PR              # noqa: PLC0415
     from src.training import metrics as M                  # noqa: PLC0415
 
-    ckpt = _resolve_checkpoint(info)
-    manifest = PR.load_manifest(ckpt)
-    model = PR.load_model(ckpt, manifest, device=device)
+    ckpts = _resolve_checkpoints(info)
+    manifests = [PR.load_manifest(c) for c in ckpts]
+    ref = manifests[0]
+    # 折集成的硬前提：所有折的**标尺与特征口径必须一致**，否则"平均"没有意义
+    for i, man in enumerate(manifests[1:], start=1):
+        if man.raw.get("row_scaler") != ref.raw.get("row_scaler"):
+            raise SystemExit(f"[predict] 折 {i} 的 row_scaler 与 fold0 不一致，禁止平均")
+        if list(man.raw.get("feature_names", [])) != list(ref.raw.get("feature_names", [])):
+            raise SystemExit(f"[predict] 折 {i} 的 feature_names 与 fold0 不一致，禁止平均")
+    taus = [man.tau_atom for man in manifests]
+    if len(ckpts) > 1 and any(t != taus[0] for t in taus[1:]):
+        raise SystemExit(f"[predict] 折间 tau_atom 不一致：{taus}（不允许静默取第一折）")
+    models = [PR.load_model(c, man, device=device) for c, man in zip(ckpts, manifests)]
+    tau = taus[0]
     per_well: dict = {}
     n_rows = 0
     for rec in _P.load_split(test_dir, with_targets=False):
         inputs = np.asarray(rec.inputs, dtype="float32")
         depth = np.asarray(rec.depth, dtype="float32")
         missing = (~np.isfinite(inputs)).astype("int8")
-        X = manifest.row_scaler.transform(F.build_row_features(inputs, missing, depth))
-        out = PR.predict_x(model, X, batch_size=batch_size, device=device)
-        cont = M.decode_continuous(out)
-        tau = manifest.tau_atom
-        pred = M.atom_gate(cont, out["q_atom"], tau) if tau is not None else cont
+        X = ref.row_scaler.transform(F.build_row_features(inputs, missing, depth))
+        acc = None
+        for model in models:
+            out = PR.predict_x(model, X, batch_size=batch_size, device=device)
+            cur = np.column_stack([out["por"], out["perm_z"], out["sw"], out["q_atom"]])
+            acc = cur if acc is None else acc + cur
+        acc = acc / float(len(models))                    # 折平均（连续头 + 门控概率）
+        out_avg = {"por": acc[:, 0], "perm_z": acc[:, 1], "sw": acc[:, 2], "q_atom": acc[:, 3:]}
+        cont = M.decode_continuous(out_avg)
+        pred = M.atom_gate(cont, out_avg["q_atom"], tau) if tau is not None else cont
         per_well[rec.well_id] = {"depth": depth, "pred": pred}
         n_rows += int(X.shape[0])
-    payload_data = PR.build_payload(per_well, model_name=f"v4-PD1")
-    return payload_data["resultData"], {"checkpoint": str(ckpt), "n_rows": n_rows,
-                                        "n_wells": len(per_well),
-                                        "tau_atom": manifest.tau_atom,
-                                        "device": device}
+    payload_data = PR.build_payload(per_well, model_name="v4-PD1")
+    return payload_data["resultData"], {"checkpoints": [str(c) for c in ckpts],
+                                        "n_folds": len(ckpts), "n_rows": n_rows,
+                                        "n_wells": len(per_well), "tau_atom": tau,
+                                        "device": device,
+                                        "aggregate": ("single" if len(ckpts) == 1
+                                                      else "fold_mean")}
 
 
 def build_payload(version: str, data_dir: Path, model_name: str | None = None,

@@ -316,6 +316,10 @@ def run(args) -> int:
     oof = {"cont": [], "q_atom": [], "q_joint": [], "y_true": [], "mask": [],
            "fold_of_row": [], "well_index": [], "tau_row": []}
     oof_wells: list[str] = []
+    # E6/P2（build_pd1.py）需要**外折 OOF**：每折 val 只推理一次，用于 cv.json 与 OOF 汇总
+    oof_out = {"cont": [], "q_atom": [], "q_joint": [], "y_true": [], "mask": [],
+               "gated": [], "fold_of_row": [], "well_index": [], "tau_row": []}
+    oof_out_wells: list[str] = []
     for k in fold_list:
         tk = time.time()
         tr_wells, va_wells = RD.fold_wells(folds, k)
@@ -336,8 +340,9 @@ def run(args) -> int:
         t_in_tr = assemble(cache, inner_tr, spec, scaler, phys)
         t_in_va = assemble(cache, inner_val, spec, scaler, phys)
         f_in_tr, f_in_va = to_fold(t_in_tr, dev), to_fold(t_in_va, dev)
-        f_tr = to_fold(assemble(cache, tr_wells, spec, scaler, phys), dev)
-        f_va = to_fold(assemble(cache, va_wells, spec, scaler, phys), dev)
+        t_tr, t_va = assemble(cache, tr_wells, spec, scaler, phys), \
+            assemble(cache, va_wells, spec, scaler, phys)
+        f_tr, f_va = to_fold(t_tr, dev), to_fold(t_va, dev)
 
         # ---------------- 阶段 1：主干 + 原子头 + 联合头
         torch.manual_seed(args.seed)
@@ -452,6 +457,18 @@ def run(args) -> int:
                    ckpt, lambda: build_model(n_features, hidden=args.hidden,
                                              layers=args.layers, dropout=args.dropout)),
                "seconds": round(time.time() - tk, 2)}
+        oof_out["cont"].append(np.asarray(cont, dtype="float64"))
+        oof_out["q_atom"].append(np.asarray(pred["q_atom"], dtype="float64"))
+        oof_out["q_joint"].append(np.asarray(pred["q_joint"], dtype="float64").reshape(-1))
+        oof_out["y_true"].append(np.asarray(lva["y"], dtype="float64"))
+        oof_out["mask"].append(np.asarray(lva["mask"], dtype="float64"))
+        oof_out["gated"].append(np.asarray(gated, dtype="float64"))
+        oof_out["fold_of_row"].append(np.full(int(np.asarray(lva["y"]).shape[0]), k))
+        oof_out["tau_row"].append(np.tile(tau[None, :],
+                                          (int(np.asarray(lva["y"]).shape[0]), 1)))
+        oof_out["well_index"].append(np.asarray(t_va.well_index, dtype="int64")
+                                     + len(oof_out_wells))
+        oof_out_wells += [str(w) for w in t_va.well_ids]
         fold_records.append(rec)
         tracker.add_fold(k, rec["seconds"], h1["n_epochs_run"] + h2["n_epochs_run"],
                          extra={"state_auc": rec["state_auc"]})
@@ -460,6 +477,12 @@ def run(args) -> int:
               f"tau={[round(float(v), 3) for v in tau]} frozen_ok={q_frozen_ok} "
               f"{rec['seconds']:.1f}s", flush=True)
 
+    if oof_out["cont"]:
+        out_oof_path = run_dir / f"oof{('_' + args.tag) if args.tag else ''}.npz"
+        np.savez_compressed(
+            out_oof_path,
+            **{k: np.concatenate(v) for k, v in oof_out.items()},
+            well_ids=np.asarray(oof_out_wells, dtype=object))
     if oof["cont"]:
         oof_path = run_dir / f"inner_oof{('_' + args.tag) if args.tag else ''}.npz"
         np.savez_compressed(
@@ -531,6 +554,7 @@ def run(args) -> int:
         "no_interpolation": all(r["no_interpolation"]["ok"] for r in fold_records),
         "input_no_label_leak_full": audit,
         "checkpoints": ckpts, "inner_oof_path": str(oof_path),
+        "oof_path": (str(out_oof_path) if oof_out["cont"] else None),
         "folds_detail": fold_records,
         "label_shuffle_control": shuffle,
         "contract": {"perm_positive": True, "finite": True, "no_le": True},

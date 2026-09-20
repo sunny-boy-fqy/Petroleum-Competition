@@ -167,12 +167,13 @@ v4/
 │   ├── test_e6_tau.py            E6/P1 τ 搜索（网格/平台、逐目标指标、joint_guard、候选登记、缺件失败）
 │   ├── test_predict_pd1.py       版本表写回纪律 + `predict.py --use-version PD1` 端到端（提交契约、
 │   │                             确定性、SW 尺度、缺权重/未接线版本明确报错）
+│   ├── test_e6_gate.py           E6/P2 Gate（证据齐全才过、缺证据/缺 OOF 一律不判过、绝对门槛）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
 │   ├── test_e1_pipeline.py       E1 端到端（合成井 → Gate/prereg/候选，需 torch）
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**573 项**；本地无 torch 解释器 172 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**582 项**；本地无 torch 解释器 172 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
