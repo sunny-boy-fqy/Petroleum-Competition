@@ -169,6 +169,7 @@ v4/
 │
 ├── reports/                  必须进 git 的**门禁证据快照**（权威副本在 $V4_REPORTS_DIR=/data/v4/reports）
 │   ├── E0_gate.json              本地契约 Gate 判定（mandatory 13/13，passed=true）
+│   ├── E0_goal_audit.json        目标达成度审计（E0–E10 全部 OK + 云端待办清单）
 │   ├── E0_cloud_gate.json        云端 Gate（blocked_pending_cloud_run）
 │   ├── E0_data_card.json         数据卡（计数/状态/schema 异常；shard_cache.cache_root 为可复现形式）
 │   ├── E0_score_check.json       常数基线锚点与总分恒等式
@@ -234,6 +235,7 @@ v4/
 │   ├── test_pipeline_check.py    流水线完整性（真仓库 0 问题；缺脚本/缺分支/报告名不一致都能查出）
 │   ├── test_chain_e2e.py         全链路串联（E1→E6→E9 aggregate→E9 choose→E10 dry-run，同一合成缓存，
 │   │                             断言各阶段产物按契约落地且不污染仓库事实源）
+│   ├── test_goal_audit.py        达成度审计（真仓库本地完整、云端待办覆盖 E1–E10、空仓库判 GAP）
 │   ├── test_loss_ablation_lib.py E7/P0 库层（λ1 三条退火曲线、L_aux 绝对 vs 归一化尺度不变、
 │   │                             PERM 截断开关、边界聚焦、total_loss 透传）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
@@ -241,7 +243,7 @@ v4/
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**726 项**；本地无 torch 解释器 202 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**730 项**；本地无 torch 解释器 202 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
@@ -249,6 +251,8 @@ v4/
 │   ├── verify_reference.py       校验冻结折文件与数据指纹
 │   ├── check_consistency.py      候选注册表与评分口径自洽校验
 │   ├── check_pipeline.py         流水线完整性（E1–E10 脚本/接线/入口/报告命名，缺失即失败）
+│   ├── audit_goal.py             目标达成度审计（逐阶段 代码/单测/报告名/接线/文档 +
+│   │                             横向模块 + 云端待办显式列出 → reports/E0_goal_audit.json）
 │   ├── check_status.py           状态台账与实物一致性校验
 │   ├── check_data_leak.py        全量 90 井输入-标签泄漏回归
 │   ├── plan_stats.py             计划行数统计（唯一事实源；`--check` 逐条断言阶段/P/平均/总量）

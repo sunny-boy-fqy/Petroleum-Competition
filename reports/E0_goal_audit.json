@@ -1,0 +1,307 @@
+{
+  "ok": true,
+  "local_complete": true,
+  "repo": "/home/fangqiyu/projects/Petroleum-Competition/v4",
+  "pipeline_check": {
+    "ok": true,
+    "problems": []
+  },
+  "stages": {
+    "E0": {
+      "ok": true,
+      "code_missing": [],
+      "tests": [
+        "tests/test_contract.py",
+        "tests/test_gates.py",
+        "tests/test_score.py",
+        "tests/test_plan_stats.py",
+        "tests/test_platform_scripts.py",
+        "tests/test_disk_guard.py",
+        "tests/test_hardware.py",
+        "tests/test_parse.py",
+        "tests/test_atomic_gate.py",
+        "tests/test_pipeline_check.py"
+      ],
+      "n_tests": 241,
+      "gate_tokens": [],
+      "gates_ok": true,
+      "wiring": true,
+      "documented": true,
+      "cloud_pending": []
+    },
+    "E1": {
+      "ok": true,
+      "code_missing": [],
+      "tests": [
+        "tests/test_e1_pipeline.py",
+        "tests/test_row_dataset.py",
+        "tests/test_training_core.py"
+      ],
+      "n_tests": 44,
+      "gate_tokens": [
+        "E1_gate.json",
+        "E1_metrics.json"
+      ],
+      "gates_ok": true,
+      "wiring": true,
+      "documented": true,
+      "cloud_pending": [
+        "E1 5 折 OOF ≥ 78.0（正式 Gate，需云端跑 80 井）",
+        "E10 全量重训、干净目录复现（官方 10 井 95,948 行）、B0 兜底当场验证"
+      ]
+    },
+    "E2": {
+      "ok": true,
+      "code_missing": [],
+      "tests": [
+        "tests/test_features_e2.py"
+      ],
+      "n_tests": 34,
+      "gate_tokens": [
+        "E2_ablation.json",
+        "E2_throughput.json",
+        "E2_mem_profile.json"
+      ],
+      "gates_ok": true,
+      "wiring": true,
+      "documented": true,
+      "cloud_pending": [
+        "E2 全折单组消融 + 内存画像（正式 Gate）"
+      ]
+    },
+    "E3": {
+      "ok": true,
+      "code_missing": [],
+      "tests": [
+        "tests/test_seq_pipeline.py",
+        "tests/test_models_seq.py"
+      ],
+      "n_tests": 28,
+      "gate_tokens": [
+        "E3_gate.json",
+        "E3_boundary_report.json"
+      ],
+      "gates_ok": true,
+      "wiring": true,
+      "documented": true,
+      "cloud_pending": [
+        "E3 5 折 OOF ≥ 81.0 + 感受野消融 + 边界体检（正式 Gate）"
+      ]
+    },
+    "E4": {
+      "ok": true,
+      "code_missing": [],
+      "tests": [
+        "tests/test_patchtf_e4.py",
+        "tests/test_e4_pipeline.py"
+      ],
+      "n_tests": 22,
+      "gate_tokens": [
+        "E4_gate.json",
+        "E4_patchtf.json"
+      ],
+      "gates_ok": true,
+      "wiring": true,
+      "documented": true,
+      "cloud_pending": [
+        "E4 网格搜索/CI·位置消融的正式数值（本地仅链路预检）"
+      ]
+    },
+    "E5": {
+      "ok": true,
+      "code_missing": [],
+      "tests": [
+        "tests/test_target_heads_e5.py",
+        "tests/test_frozen_e5.py",
+        "tests/test_e5_pipeline.py",
+        "tests/test_e5_perm_pipeline.py",
+        "tests/test_e5_sw_pipeline.py",
+        "tests/test_e5_aggregate.py"
+      ],
+      "n_tests": 64,
+      "gate_tokens": [
+        "E5_gate.json",
+        "E5_per_target.json"
+      ],
+      "gates_ok": true,
+      "wiring": true,
+      "documented": true,
+      "cloud_pending": [
+        "E5 三目标连续切片 Acc 的配对 CI（需冻结骨干权重）"
+      ]
+    },
+    "E6": {
+      "ok": true,
+      "code_missing": [],
+      "tests": [
+        "tests/test_state_train_e6.py",
+        "tests/test_e6_pipeline.py",
+        "tests/test_e6_tau.py",
+        "tests/test_e6_gate.py",
+        "tests/test_e6_p2.py",
+        "tests/test_metrics_auc.py",
+        "tests/test_registry_writes.py"
+      ],
+      "n_tests": 65,
+      "gate_tokens": [
+        "E6_gate.json",
+        "E6_atomic_report.json",
+        "E6_tau_search.json"
+      ],
+      "gates_ok": true,
+      "wiring": true,
+      "documented": true,
+      "cloud_pending": [
+        "E6 原子 Acc ≥ 0.99 / 召回 ≥ 0.98 / 联合 AUC ≥ 0.97（正式 Gate）"
+      ]
+    },
+    "E7": {
+      "ok": true,
+      "code_missing": [],
+      "tests": [
+        "tests/test_loss_ablation_lib.py",
+        "tests/test_e7_ablate_loss.py",
+        "tests/test_e7_decode.py"
+      ],
+      "n_tests": 32,
+      "gate_tokens": [
+        "E7_loss_ablation.json",
+        "E7_decode_search.json"
+      ],
+      "gates_ok": true,
+      "wiring": true,
+      "documented": true,
+      "cloud_pending": [
+        "E7 λ1/λ2/边界聚焦/PERM 截断的正式消融结论；exp7 L_phys 未实现（已在报告标注）"
+      ]
+    },
+    "E8": {
+      "ok": true,
+      "code_missing": [],
+      "tests": [
+        "tests/test_models_e8.py",
+        "tests/test_e8_mmoe.py",
+        "tests/test_e8_well_branch.py",
+        "tests/test_e8_transductive.py",
+        "tests/test_e8_ensemble.py"
+      ],
+      "n_tests": 49,
+      "gate_tokens": [
+        "E8_gate.json",
+        "E8_ensemble_report.json",
+        "E8_mmoe.json",
+        "E8_well_branch.json",
+        "E8_transductive.json"
+      ],
+      "gates_ok": true,
+      "wiring": true,
+      "documented": true,
+      "cloud_pending": [
+        "E8 MMoE/井级/transductive/集成的正式 CI 结论（需真实 OOF 成员）"
+      ]
+    },
+    "E9": {
+      "ok": true,
+      "code_missing": [],
+      "tests": [
+        "tests/test_e9_aggregate.py",
+        "tests/test_e9_choose.py",
+        "tests/test_e9_leakage.py",
+        "tests/test_e9_confirm.py",
+        "tests/test_e9_submit.py"
+      ],
+      "n_tests": 38,
+      "gate_tokens": [
+        "E9_validation_report.json",
+        "E9_submission_decision.json",
+        "E9_leakage_audit.json",
+        "E9_a_board_log.json"
+      ],
+      "gates_ok": true,
+      "wiring": true,
+      "documented": true,
+      "cloud_pending": [
+        "E9 护栏达标与 A 榜首轮成绩（需真实候选 + 平台配额）"
+      ]
+    },
+    "E10": {
+      "ok": true,
+      "code_missing": [],
+      "tests": [
+        "tests/test_e10_final_train.py",
+        "tests/test_e10_package.py",
+        "tests/test_e10_submit.py",
+        "tests/test_e10_b0.py",
+        "tests/test_predict_pd1.py"
+      ],
+      "n_tests": 43,
+      "gate_tokens": [
+        "E10_final_train.json",
+        "E10_reproduce_report.json",
+        "E10_submission_log.json",
+        "E10_B0_fallback.json"
+      ],
+      "gates_ok": true,
+      "wiring": true,
+      "documented": true,
+      "cloud_pending": [
+        "E10 全量重训、干净目录复现（官方 10 井 95,948 行）、B0 兜底当场验证"
+      ]
+    }
+  },
+  "cross_cutting": {
+    "推理入口": {
+      "ok": true,
+      "missing": []
+    },
+    "训练入口": {
+      "ok": true,
+      "missing": []
+    },
+    "PD1 注册": {
+      "ok": true,
+      "missing": []
+    },
+    "集成融合": {
+      "ok": true,
+      "missing": []
+    },
+    "序列主干": {
+      "ok": true,
+      "missing": []
+    },
+    "冻结骨干": {
+      "ok": true,
+      "missing": []
+    },
+    "两阶段件": {
+      "ok": true,
+      "missing": []
+    },
+    "解码层": {
+      "ok": true,
+      "missing": []
+    },
+    "EMA/SWA": {
+      "ok": true,
+      "missing": []
+    }
+  },
+  "test_suite": {
+    "n_test_files": 54,
+    "n_test_methods": 730
+  },
+  "cloud_pending": [
+    "E1 5 折 OOF ≥ 78.0（正式 Gate，需云端跑 80 井）",
+    "E2 全折单组消融 + 内存画像（正式 Gate）",
+    "E3 5 折 OOF ≥ 81.0 + 感受野消融 + 边界体检（正式 Gate）",
+    "E4 网格搜索/CI·位置消融的正式数值（本地仅链路预检）",
+    "E5 三目标连续切片 Acc 的配对 CI（需冻结骨干权重）",
+    "E6 原子 Acc ≥ 0.99 / 召回 ≥ 0.98 / 联合 AUC ≥ 0.97（正式 Gate）",
+    "E7 λ1/λ2/边界聚焦/PERM 截断的正式消融结论；exp7 L_phys 未实现（已在报告标注）",
+    "E8 MMoE/井级/transductive/集成的正式 CI 结论（需真实 OOF 成员）",
+    "E9 护栏达标与 A 榜首轮成绩（需真实候选 + 平台配额）",
+    "E10 全量重训、干净目录复现（官方 10 井 95,948 行）、B0 兜底当场验证"
+  ],
+  "note": "本审计只证明**本地契约层**交付完整；正式 Gate 数值、A 榜成绩与官方数据复现属于云端任务，见 cloud_pending"
+}
