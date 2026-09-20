@@ -179,6 +179,9 @@ run_e0() {
   # 使 $REPORTS_DIR 的 E0_*.json 集合自洽，而不是只在开发机上存在。
   python3 "$HERE/tools/plan_stats.py" --json "$REPORTS_DIR/E0_plan_stats.json" \
     2>&1 | tee -a "$LOG" || log "!! [e0] plan_stats 生成失败（不阻塞口径复算）"
+  # 流水线完整性：阶段脚本/入口/接线/报告命名一次性核对（失败不阻塞 E0，但会留下证据）
+  python3 "$HERE/tools/check_pipeline.py" --json "$REPORTS_DIR/E0_pipeline_check.json" \
+    2>&1 | tee -a "$LOG" || log "!! [e0] 流水线完整性检查未通过（见 E0_pipeline_check.json）"
   # 证据权威性：$REPORTS_DIR（云端 /data/v4/reports，云盘持久）= 权威来源，供 Gate / 复算引用；
   # repo 内 reports/ = 仅供 review / git diff 的快照，必须整体同步以免 data card 与
   # score-check / prereg 等互相矛盾（R3 修复：此前只 copy 3 个文件）。
@@ -217,6 +220,22 @@ run_stage() {
     E1) python3 "$HERE/E1/code/train_row.py" \
           --train-dir "$DATA_ROOT/v4/data/train" --cache-root "$CACHE_ROOT" \
           --out-dir "$RUN_ROOT/E1" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1 | tee -a "$LOG" ;;
+    E2)
+        # `--phase build|ablate|all`（build=F2 特征缓存/溯源；ablate=单组消融+吞吐）
+        e2_phase="all"
+        for a in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
+          case "${a,,}" in build|ablate|all) e2_phase="${a,,}" ;; esac
+        done
+        if [[ "$e2_phase" == "all" || "$e2_phase" == "build" ]]; then
+          log "--- [E2] 构建 F2 特征缓存 + 溯源/审计"
+          python3 "$HERE/E2/code/build_features.py" --cache-root "$CACHE_ROOT" \
+            --reports-dir "$REPORTS_DIR" 2>&1 | tee -a "$LOG"
+        fi
+        if [[ "$e2_phase" == "all" || "$e2_phase" == "ablate" ]]; then
+          log "--- [E2] 单组消融 + 吞吐画像"
+          python3 "$HERE/E2/code/ablate_groups.py" --cache-root "$CACHE_ROOT" \
+            --reports-dir "$REPORTS_DIR" --run-root "$RUN_ROOT" 2>&1 | tee -a "$LOG"
+        fi ;;
     E3) python3 "$HERE/E3/code/train_seq.py" \
           --train-dir "$DATA_ROOT/v4/data/train" --cache-root "$CACHE_ROOT" \
           --out-dir "$RUN_ROOT/E3" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1 | tee -a "$LOG" ;;

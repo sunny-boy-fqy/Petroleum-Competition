@@ -231,6 +231,7 @@ v4/
 │   ├── test_e10_submit.py        E10 复现与提交（干净目录复现/参考不一致判失败/日志追加/配额/冻结）
 │   ├── test_e10_b0.py            E10 B0 兜底包（自包含、干净目录复现 ≤1e-9、缺产物显式失败）+
 │   │                             run_train.sh 的 E7–E10 接线与 `bash -n`
+│   ├── test_pipeline_check.py    流水线完整性（真仓库 0 问题；缺脚本/缺分支/报告名不一致都能查出）
 │   ├── test_loss_ablation_lib.py E7/P0 库层（λ1 三条退火曲线、L_aux 绝对 vs 归一化尺度不变、
 │   │                             PERM 截断开关、边界聚焦、total_loss 透传）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
@@ -238,13 +239,14 @@ v4/
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**717 项**；本地无 torch 解释器 200 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**724 项**；本地无 torch 解释器 200 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
 │   ├── bootstrap_data.sh         部署数据到 /data（校验 sha256 + 行数 + 3 口畸形井）
 │   ├── verify_reference.py       校验冻结折文件与数据指纹
 │   ├── check_consistency.py      候选注册表与评分口径自洽校验
+│   ├── check_pipeline.py         流水线完整性（E1–E10 脚本/接线/入口/报告命名，缺失即失败）
 │   ├── check_status.py           状态台账与实物一致性校验
 │   ├── check_data_leak.py        全量 90 井输入-标签泄漏回归
 │   ├── plan_stats.py             计划行数统计（唯一事实源；`--check` 逐条断言阶段/P/平均/总量）
