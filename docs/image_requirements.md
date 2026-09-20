@@ -7,7 +7,7 @@
 
 > **2026-09-20 目标平台变更**：A100 + CUDA → **Ascend 910B + CANN**。
 > 规格 `Ascend910B-1-64G`：1× Ascend 910B（**64 GB HBM**）/ 4000m vCPU / 16 GiB RAM /
-> **64 GiB 磁盘**；镜像 = **CANN 8.3rc2 + PyTorch 2.8.0 + torch_npu 2.8.0 + Python 3.11 / arm64**。
+> **30 GB 云盘（/data）**；镜像 = **CANN 8.3rc2 + PyTorch 2.8.0 + torch_npu 2.8.0 + Python 3.11 / arm64**。
 > 唯一事实源是 [`src/hardware.py`](../src/hardware.py)（`PLATFORM`），
 > 本文件与 `check_env.py`、生成的计划都从它派生。
 
@@ -24,7 +24,7 @@
 | 架构 | **aarch64 / arm64** | 镜像里的 wheel 必须是 aarch64 轮子；本机 x86_64 只用 `--allow-non-target-device` 跑口径层 |
 | NPU | 1× **Huawei Ascend 910B（64 GB HBM）** | 资源规格选择；bf16 可用（`check_env.py` **实测**一次 bf16 matmul） |
 | 系统内存 | 16 GiB | **这是真正的瓶颈**，不是显存 → 按井分片读取、`num_workers=4` |
-| 磁盘 | 64 GiB | checkpoint 滚动淘汰 + 每 epoch `assert_disk_headroom(8.0)` |
+| 云盘 `/data` | **30 GB**（持久；可申请扩容） | checkpoint 滚动淘汰 + 每 epoch `assert_disk_headroom(8.0)` |
 
 代码侧的双保险：`v4/E0/code/check_env.py` 会硬断言上述版本/设备/架构，不通过即非零退出；
 `v4/src/portability.py` 对每个可选库做"探测 + 降级"，缺失也不会崩。
@@ -68,7 +68,7 @@ tensorboard
 |---|---|
 | `torch` / `torch_npu` / `torch-npu` | 会替换平台预装版本，破坏 `torch.npu` 与 CANN 的匹配关系 |
 | `torchvision` / `timm` | 引入数 GB 无关依赖 |
-| `nvidia-*` / `cuda-*` / `triton` | 目标机是 Ascend，装 CUDA 栈纯属浪费 64 GiB 磁盘 |
+| `nvidia-*` / `cuda-*` / `triton` | 目标机是 Ascend，装 CUDA 栈纯属浪费 30 GB 云盘 |
 | `ascend*` / `cann*` / `npu*`（pip 包） | CANN 由平台镜像提供；pip 装 NPU 运行时必然与镜像内 CANN 冲突 |
 | `flash-attn` / `xformers` / `apex` / `deepspeed` | 需现场编译 NPU/CUDA 扩展，构建易失败；注意力统一用 PyTorch 2.8 原生 `F.scaled_dot_product_attention` |
 | `pyarrow` | 分片缓存是 `.npz`（numpy），没有任何代码 `import pyarrow` |

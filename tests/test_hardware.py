@@ -22,9 +22,10 @@ class TestPlatformProfile(unittest.TestCase):
         self.assertEqual(HW.PLATFORM["resource_spec"], "Ascend910B-1-64G")
         self.assertEqual(HW.PLATFORM["accelerator"], "npu")
         self.assertEqual(HW.PLATFORM["accelerator_model"], "910B")
-        self.assertEqual(HW.PLATFORM["accelerator_memory_gb"], 64)
-        self.assertEqual(HW.PLATFORM["ram_gb"], 16)
-        self.assertEqual(HW.PLATFORM["disk_gb"], 64)
+        # 三量必须分开命名（2026-09-20 曾把云盘误写成 64 GiB）：
+        self.assertEqual(HW.PLATFORM["device_memory_gb"], 64, "64 GB 是**显存**（HBM）")
+        self.assertEqual(HW.PLATFORM["host_ram_gb"], 16, "16 GB 是**内存**")
+        self.assertEqual(HW.PLATFORM["cloud_disk_gb"], 30, "30 GB 是**云盘 /data 配额**")
         self.assertEqual(HW.PLATFORM["arch"], "aarch64")
         self.assertEqual(HW.PLATFORM["python"], (3, 11))
         self.assertEqual(HW.PLATFORM["torch"], "2.8.0")
@@ -38,9 +39,34 @@ class TestPlatformProfile(unittest.TestCase):
                          HW.version_major_minor(HW.PLATFORM["torch_npu"]))
 
     def test_constants_disk_budget_matches_profile(self):
-        """`constants.DISK_BUDGET_GB` 与硬件画像不得漂移（曾有 30 GB 的残留）。"""
-        self.assertEqual(C.DISK_BUDGET_GB, float(HW.PLATFORM["disk_gb"]))
-        self.assertEqual(C.RAM_BUDGET_GB, float(HW.PLATFORM["ram_gb"]))
+        """预算常量必须来自硬件画像的正确字段（磁盘=云盘配额，不是显存）。"""
+        self.assertEqual(C.DISK_BUDGET_GB, float(HW.PLATFORM["cloud_disk_gb"]))
+        self.assertEqual(C.RAM_BUDGET_GB, float(HW.PLATFORM["host_ram_gb"]))
+        self.assertEqual(C.DISK_BUDGET_GB, 30.0)
+
+    def test_three_sizes_are_never_confused(self):
+        """反混淆回归：云盘 ≠ 显存 ≠ 内存，且文档不得把它们写混。
+
+        真实事故（2026-09-20）：平台规格改成 `Ascend910B-1-64G | … | 16G | 64Gi` 后，
+        agent 把**云盘**从 30 GB 改成了 64 GiB —— 全部磁盘纪律会因此建立在错误容量上。
+        这条测试同时锁数值与文案。
+        """
+        self.assertNotEqual(HW.PLATFORM["cloud_disk_gb"], HW.PLATFORM["device_memory_gb"])
+        self.assertNotEqual(HW.PLATFORM["cloud_disk_gb"], HW.PLATFORM["host_ram_gb"])
+        profile = HW.describe()
+        self.assertEqual(profile["cloud_disk_gb"], 30)
+        self.assertEqual(profile["device_memory_gb"], 64)
+        self.assertEqual(profile["host_ram_gb"], 16)
+        # 文案：不得再出现"64 GiB 磁盘 / 云盘 64 / 磁盘配额 64"这类说法
+        bad = ("64 GiB 磁盘", "64GiB 磁盘", "磁盘 64 GiB", "云盘 64", "磁盘配额 64",
+               "64 GiB 磁盘纪律")
+        for rel in ("PLAN.md", "README.md", "docs/platform_setup.md", "docs/training_tasks.md",
+                    "docs/dependencies.md", "docs/image_requirements.md", "docs/PROJECT_FILES.md",
+                    "E0/code/check_env.py", "E0/code/setup_deps.sh", "src/data/disk_guard.py",
+                    "src/constants.py", "run_train.sh"):
+            src = (V4 / rel).read_text(encoding="utf-8")
+            for b in bad:
+                self.assertNotIn(b, src, f"{rel} 把云盘容量写成了显存容量：{b!r}")
 
 
 class TestCannVersionNormalization(unittest.TestCase):
@@ -142,7 +168,7 @@ class TestDocsFollowTheProfile(unittest.TestCase):
         files = ["PLAN.md", "README.md", "docs/platform_setup.md", "docs/training_tasks.md",
                  "docs/dependencies.md", "docs/image_requirements.md", "requirements.txt",
                  "run_train.sh", "E0/code/check_env.py", "E0/code/setup_deps.sh"]
-        bad = ("A100", "CUDA 12.8", "torch 2.7.1", "2.7.1+cu128", "30 GB", "sm_80")
+        bad = ("A100", "CUDA 12.8", "torch 2.7.1", "2.7.1+cu128", "sm_80")
         for rel in files:
             src = (V4 / rel).read_text(encoding="utf-8")
             for b in bad:
@@ -158,7 +184,8 @@ class TestDocsFollowTheProfile(unittest.TestCase):
         joined = "\n".join((V4 / f).read_text(encoding="utf-8")
                            for f in ("PLAN.md", "docs/dependencies.md",
                                      "docs/image_requirements.md", "EC/" + "x" if False else "README.md"))
-        for needle in ("Ascend 910B", "torch_npu", "CANN 8.3rc2", "2.8.0", "arm64"):
+        for needle in ("Ascend 910B", "torch_npu", "CANN 8.3rc2", "2.8.0", "arm64",
+                       "30 GB", "64 GB"):
             self.assertIn(needle, joined, f"文档必须声明 {needle}")
 
     def test_generators_use_the_new_profile(self):

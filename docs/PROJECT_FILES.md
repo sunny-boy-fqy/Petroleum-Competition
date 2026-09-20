@@ -34,16 +34,21 @@ v4/
 ├── src/                      项目级共享代码（**不 import torch 的口径层也在其中**）
 │   ├── constants.py              冻结常量（列序/哨兵/占位/权重/锚点/预算）
 │   ├── hardware.py               **目标平台画像唯一事实源**（Ascend 910B / CANN 8.3rc2 /
-│   │                             torch 2.8.0 + torch_npu 2.8.0 / arm64 / 16 GiB / 64 GiB）
+│   │                             torch 2.8.0 + torch_npu 2.8.0 / arm64 / 16 GB RAM / 64 GB 显存 / 30 GB 云盘）
 │   ├── portability.py            可选依赖探测与降级（numpy/pandas/pyarrow/torch/onnx）
 │   ├── score.py                  官方评分器（drop 口径）
 │   ├── data/
 │   │   ├── parse.py              按表头名对齐的解析器（处理 3 口非规范 schema 井）
 │   │   ├── labels.py             三状态判据、SW 尺度校验、PERM log 变换
 │   │   ├── dataset.py            按井分片缓存（raw/labels npz）
-│   │   ├── disk_guard.py         64 GiB 磁盘守卫（cleanup/save_and_exit/abort）
+│   │   ├── disk_guard.py         30 GB 云盘守卫（cleanup/save_and_exit/abort）
 │   │   └── row_dataset.py        E1/P0 行级装配：F1 分片缓存 + **折内** RowScaler/目标尺度
-│   ├── features/                 F1 行级特征（basic.py）+ E2 特征组（physics/window/well）
+│   ├── features/
+│   │   ├── basic.py              F1 行级特征（32 列：13 曲线 + DEPTH + 缺失位 + 深度编码）
+│   │   ├── physics.py            F_phys（16 派生 + 16 指示；Wyllie/密度/中子/IGR/电阻率交会）
+│   │   ├── window.py             F_win（居中窗 {11,51,201} × 6 统计 = 234 列）
+│   │   ├── well.py               F_well（井级 13×5 统计 + 5 标量 = 70 列，逐行广播）
+│   │   └── groups.py             **特征组注册表**（FeatureSpec/缓存/溯源/审计）
 │   ├── models/                   row_mlp（q_joint + q_por/q_perm/q_sw）/ unet1d / tcn / patchtf / heads / mmoe
 │   ├── losses/score_aligned.py   三段式对齐损失（Charbonnier + softplus + 尺度归一化 L_aux + 逐目标原子 BCE + 边界聚焦）
 │   ├── inference/
@@ -57,13 +62,16 @@ v4/
 │   │   ├── loop.py               训练循环：bf16 autocast（npu/cuda/cpu）、λ1 退火、梯度裁剪、
 │   │   │                         best-epoch 权重写回、时间预算、每 epoch 磁盘守卫、时间日志
 │   │   ├── metrics.py            预测→官方分数口径（连续/原子门/占位行命中率/原子头 P·R·F1）
+│   │   ├── fold_runner.py        **两阶段单折协议**（E1/E2/E3 共用：inner-OOF 选 epoch/τ）
 │   │   ├── checkpoint.py         bf16 state_dict + manifest（含连续头标尺与 L_aux 尺度）+ 滚动淘汰 + resume 校验
 │   │   └── tb_logger.py          TensorBoard + JSONL 日志（平台迭代曲线；无 tensorboard 时降级）
 │   ├── versioning/registry.py    版本注册表读写（predict.py 的版本来源）
 │   └── ensemble/blend.py         集成融合（E8）
 │
 ├── E0/ … E11/                12 个阶段，每层含 PLAN.md + P*/{PLAN.md,code/,docs/}
-│   └── E1/code/                 train_row.py（5 折 OOF + 两阶段 inner-OOF 选择 + Gate）
+│   ├── E1/code/                 train_row.py（5 折 OOF + 两阶段 inner-OOF 选择 + Gate）
+│   └── E2/code/                 build_features.py（F2 缓存/溯源/内存画像）、
+│                                ablate_groups.py（单组消融 + 增强消融 + 吞吐 + Gate）
 │
 ├── versions/                 事实源
 │   ├── registry.json            可运行版本注册表

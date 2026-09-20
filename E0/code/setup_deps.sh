@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v4 云端一次性依赖安装（64 GiB 磁盘纪律版；Ascend 910B / CANN 8.3rc2）
+# v4 云端一次性依赖安装（30 GB 云盘纪律版；Ascend 910B / CANN 8.3rc2；64 GiB 是显存）
 #
 # 用法（**本机**：在项目父目录执行，`v4/` 是本机真实的目录名；
 #       云端由 run_train.sh 以 $HERE 调用，不要照抄下面的 `v4/` 前缀）：
@@ -33,7 +33,7 @@ CACHE_ROOT="${V4_CACHE_ROOT:-/data/v4/cache}"
 mkdir -p "$REPORTS_DIR" 2>/dev/null || REPORTS_DIR="reports"
 mkdir -p "$REPORTS_DIR"
 
-# R3 修复：磁盘体检的权威路径必须是 data root（云端 /data 的 64 GiB 配额），
+# R3 修复：磁盘体检的权威路径必须是 data root（云端 /data 的 30 GB 云盘配额），
 # 不能默认检查 `/`。本机开发环境若 /data 与 $V4_DATA_ROOT 都不存在，则降级到
 # repo 目录，并明确打印**实际使用**的路径（而不是崩溃）。
 if [[ ! -d "$DATA_ROOT" ]]; then

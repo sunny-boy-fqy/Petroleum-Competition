@@ -14,7 +14,7 @@
 | CANN | **8.3rc2** | Ascend 运行时/工具包；hard 底线 **major.minor == 8.3**，rc/补丁漂移只 warn（R4-B1：**不要**把具体 rc 钉成 hard 断言） |
 | NPU | 1× **Ascend 910B（64 GB HBM）** | bf16 可用（`check_env.py` **实测**一次 bf16 matmul，不假定存在 `is_bf16_supported`） |
 | 系统内存 | 16 GiB | 真正瓶颈 → `num_workers=4` |
-| 磁盘 | 64 GiB | checkpoint 滚动淘汰 + `assert_disk_headroom` |
+| 云盘 `/data` | **30 GB**（持久；可申请扩容） | checkpoint 滚动淘汰 + `assert_disk_headroom` |
 
 > 硬件画像的**唯一事实源**是 [`src/hardware.py`](../src/hardware.py)（`PLATFORM` / `describe()`）；
 > `check_env.py`、本文档、`docs/image_requirements.md` 与生成的计划都由它派生，

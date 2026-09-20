@@ -201,7 +201,8 @@ class TestCheckEnvTargetProfile(unittest.TestCase):
         self.assertEqual(self.mod.EXPECTED_CANN, "8.3rc2")
         self.assertEqual(self.mod.EXPECTED_ARCH, "aarch64")
         self.assertEqual(self.mod.TARGET_ACCELERATOR, "npu")
-        self.assertEqual(self.mod.DISK_BUDGET_GB, 64.0)
+        self.assertEqual(self.mod.DISK_BUDGET_GB, 30.0, "云盘配额仍是 30 GB（64 GiB 是显存）")
+        self.assertEqual(self.mod.RAM_BUDGET_GB, 16.0)
 
     def test_hard_checks_are_major_minor_not_exact_pins(self):
         """torch / torch_npu / CANN 的 hard 判定不得把具体小版本或 rc 钉死。"""

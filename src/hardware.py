@@ -9,6 +9,21 @@
    否则改一处漏一处（E0-R2 的"SW 双尺度"就是这么漂移的）。
 2. 本模块**只依赖标准库**，因此无 torch / 非 arm64 的开发机也能导入它并跑口径层测试。
 
+数量口径纪律（**必须先读，这里踩过坑**）
+---------------------------------------
+平台资源行 `Ascend910B-1-64G | Ascend 910B * 1 | 4000m vCPU | 16G | 64Gi` 的三个数**不是一回事**：
+
+| 量 | 值 | 出处 |
+|---|---|---|
+| **显存（HBM）** | **64 GB** | 资源规格名里的 `-64G` / 资源表"显存"列 `64Gi` |
+| **内存（系统 RAM）** | **16 GB** | 资源表"内存"列 `16G` |
+| **云盘 `/data` 配额** | **30 GB** | 云盘页面"总容量"（官方文档 §我的云盘：`0 GB / 30GB`，可申请扩容） |
+
+2026-09-20 的规格变更里，agent 一度把**云盘**也写成 64 GiB —— 那会让全部磁盘纪律
+（`DISK_BUDGET_GB`、特征缓存上限、checkpoint 滚动窗口、`assert_disk_headroom`）
+建立在错误容量上。因此本模块把三者命名为 `device_memory_gb` / `host_ram_gb` /
+`cloud_disk_gb`，并由 `tests/test_hardware.py` 同时锁定数值与"文档不得混淆"。
+
 术语纪律（沿用 R4-B1 的教训）
 -----------------------------
 - `torch==2.8.0` 是**镜像预装的框架版本**（hard：major.minor 一致）；
@@ -30,10 +45,14 @@ PLATFORM: dict = {
     "accelerator_vendor": "Huawei Ascend",
     "accelerator_model": "910B",
     "accelerator_count": 1,
-    "accelerator_memory_gb": 64,
+    # ⚠️ 三个"看起来都是大小"的量必须分清（2026-09-20 曾把云盘误改成 64 GiB）：
+    #   device_memory_gb = **显存**（910B 的 HBM），来自资源规格名 `Ascend910B-1-64G`
+    #   host_ram_gb      = **内存**（系统 RAM），平台资源表的"内存"列 = 16G
+    #   cloud_disk_gb    = **云盘 /data 配额**（持久存储），平台云盘页显示 30 GB
+    "device_memory_gb": 64,
     "cpu_millicores": 4000,
-    "ram_gb": 16,
-    "disk_gb": 64,
+    "host_ram_gb": 16,
+    "cloud_disk_gb": 30,
     "arch": "aarch64",                 # 平台机器架构（arm64）
     "os": "linux",
     "python": (3, 11),

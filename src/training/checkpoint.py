@@ -6,7 +6,7 @@
    载入模型。*只有* 权重张量转 bf16，manifest 里的标量保持 python float。
 2. **manifest 与权重同源落盘**：连续头标尺（`por_max`/`sw_mu`/`sw_sigma`）与 `L_aux`
    尺度（`s_por`/`s_sw`）**必须**随 checkpoint 一起存 —— 否则推理期无法反变换（E1/P1 §7）。
-3. **滚动淘汰**：每个 run 目录只保留 `best.pt`、`last.pt`、`last_prev.pt`（64 GiB 磁盘纪律）。
+3. **滚动淘汰**：每个 run 目录只保留 `best.pt`、`last.pt`、`last_prev.pt`（30 GB 云盘纪律）。
 4. **可续训**：`load_for_resume` 同时恢复 optimizer 状态与 epoch 计数；`verify_resumable`
    在 Gate 里给出 `checkpoint_resumable` 的**可复算**证据（真的读回来一次）。
 

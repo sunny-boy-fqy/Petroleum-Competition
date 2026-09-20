@@ -14,7 +14,7 @@
 |---|---|---|---|
 | D1 | 单任务 wall-clock 上限 | **放宽——忽略 100h，能跑多久跑多久** | 不再设置单任务 100h 硬门禁；改为**软预算 + 强制 checkpoint/可续训**，任何任务被中断都能从最近 checkpoint 恢复。计划中所有“预算”均为软预算。 |
 | D5 | 云端软件栈 | **CANN 8.3rc2 + PyTorch 2.8.0 + torch_npu 2.8.0 + Python 3.11 / arm64 为镜像预装版本，不得变更/升级/另装 CUDA；无 conda；但 `pip` 可用，可安装额外的轻量纯 Python 依赖** | 允许 `pip install numpy/pandas/scipy/...`；**禁止** `pip install torch`（换版本）与任何需现场编译 NPU/CUDA 扩展的包（flash-attn/xformers/apex/deepspeed）。所有第三方依赖仍走「探测 + 降级」层，见 §3.3。 |
-| D6 | 云端可用磁盘 | **仅 64 GiB（含镜像已占部分）** | pip 只装轻量包并立即清缓存；强制「按需生成特征 + checkpoint 滚动淘汰 + 中间产物即时清理」，并用 `du` 实测。见 §3.4。 |
+| D6 | 云端可用磁盘 | **云盘 `/data` 30 GB（持久配额）** | pip 只装轻量包并立即清缓存；强制「按需生成特征 + checkpoint 滚动淘汰 + 中间产物即时清理」，并用 `du` 实测。见 §3.4。 |
 | D2 | 架构 | **深度序列主干 + 行级精度头** | 1D U-Net / TCN / Patch-Transformer 做深度上下文主干；行级精度头做逐点精修；再叠学习型原子门。见 §五。 |
 | D3 | 起点与保护 | **从零纯 DL 管线** | 不继承 B0 权重、不做 B0 patch 隔离；**但“逐目标常量占位必须精确命中”由模型内部的 `q_joint` 联合头 + `q_por/q_perm/q_sw` **逐目标原子头**共同承担**（自包含，不依赖 B0）。见 §五.3 与 §六.4。 |
 | D4 | 交付形态 | **权重随包 + CPU 可推理，训练可选** | 提交包含 `models/` 权重；`predict.py` 纯 CPU、确定性、无网络；`train.py` 可在 Ascend 910B 上完整重训但不是评测必需。见 §九.3。 |
@@ -159,7 +159,7 @@ E1–E11 全部处于 `pending`，按 §七 的顺序执行；每个 Gate 的阈
 **由此派生的四条硬性工程规则**：
 
 0. **环境不可变铁律（最高优先级）**：云端镜像**预装且不可替换**——CANN 8.3rc2、PyTorch 2.8.0 + torch_npu 2.8.0、Python 3.11 / **arm64**；**没有 conda**。因此：
-   - **禁止** `pip install torch` / `pip install torch_npu` / 升级 CANN / 更换 Python 版本 / 用 conda 建环境（会破坏镜像一致性，且 64 GiB 磁盘容不下第二份加速栈）；
+   - **禁止** `pip install torch` / `pip install torch_npu` / 升级 CANN / 更换 Python 版本 / 用 conda 建环境（会破坏镜像一致性，且 30 GB 云盘容不下第二份加速栈）；
    - **允许** `pip install` **额外的轻量纯 Python / 纯 wheel 依赖**（required 只有 `numpy`、`pandas`、`scipy`、`scikit-learn`、`einops`；`pyarrow`/`onnx`/`onnxruntime` **不需要**），但必须 `--no-cache-dir` 且装完 `pip cache purge`；
    - 所有第三方依赖仍**统一走 `portability` 探测层**（§3.3.2）：装了就用，没装就走 numpy/torch 兜底分支，**任何 `import` 失败都不得变成"请用户去装包"**；
    - 提交包里的 `requirements.txt` 是**声明**（`rules.md` §6.2/§8.3 要求列明环境），默认不被执行；评测环境用的是同一套预装镜像。
@@ -172,7 +172,7 @@ E1–E11 全部处于 `pending`，按 §七 的顺序执行；每个 Gate 的阈
    - 每个 worker 的常驻内存必须 < 300 MB（用 `torch.utils.data.get_worker_info()` 做断言式自检）；
    - 任何“先全量 concat 再训练”的写法一律禁止（这在 16 GiB 上会 OOM）；
    - 显存侧相反：64 GB HBM 允许把 batch 开到内存允许的最大值，用 bf16 提高吞吐（显存不是约束）。
-4. **磁盘纪律（64 GiB 上限，见 §3.4）**：只装必需轻量包并清缓存；**按需生成特征、按版本目录落盘、checkpoint 滚动淘汰**；把 `TORCH_HOME`/`XDG_CACHE_HOME` 重定向进项目目录以便统一清理；所有训练脚本每 epoch 调 `assert_disk_headroom(8.0)`。
+4. **磁盘纪律（云盘 30 GB 上限，见 §3.4）**：只装必需轻量包并清缓存；**按需生成特征、按版本目录落盘、checkpoint 滚动淘汰**；把 `TORCH_HOME`/`XDG_CACHE_HOME` 重定向进项目目录以便统一清理；所有训练脚本每 epoch 调 `assert_disk_headroom(8.0)`。
 
 **代码同步协议（用户已完成的既成事实 + agent 必须遵守的约定，2026-09-19 确认）**：
 
@@ -215,7 +215,7 @@ torch_npu : 2.8.0（预装，必须与 torch 同小版本；缺它 torch.npu 不
 CANN      : 8.3rc2（Ascend 运行时；hard 底线 major.minor==8.3）
 NPU       : 1× Ascend 910B（64 GB HBM），bf16 可用
 环境管理  : 无 conda；直接用系统 Python；pip 可装额外轻量包
-磁盘      : 64 GiB（含镜像本身）
+云盘 /data: 30 GB（持久配额，可申请扩容；**64 GiB 是显存**）
 ```
 
 **一次性依赖安装（`E0/code/setup_deps.sh`，只装"确实需要且体积小"的包）**：
@@ -227,7 +227,7 @@ export PIP_NO_CACHE_DIR=1
 python -m pip install --no-cache-dir numpy pandas scipy scikit-learn einops
 # 可选：平台任务详情页的"迭代曲线"；缺失时自动降级为 JSONL 标量，不阻塞训练
 python -m pip install --no-cache-dir tensorboard
-python -m pip cache purge          # 64 GiB 磁盘，装完立即清
+python -m pip cache purge          # 30 GB 云盘，装完立即清
 python -m pip freeze > v4/versions/locks/cloud_frozen.txt
 python v4/E0/code/check_env.py --json v4/reports/E0_env.json
 ```
@@ -236,7 +236,7 @@ python v4/E0/code/check_env.py --json v4/reports/E0_env.json
 > **不需要** `pyarrow` / `onnx` / `onnxruntime`：分片缓存是 `.npz`，没有任何代码
 > `import pyarrow`；CPU 推理主路径是 `torch.load(map_location="cpu")`。
 
-**安装纪律（针对 64 GiB，R5-M1：依赖由用户 pip 安装，我不自动装）**：
+**安装纪律（针对 30 GB 云盘，R5-M1：依赖由用户 pip 安装，我不自动装）**：
 - **我给出的 pip 清单**（用户执行；格式为一行一个包名）：
   `numpy` / `pandas` / `scipy` / `scikit-learn` / `einops` —— 与
   `E0/code/check_env.py::REQUIRED_PY_DEPS` 严格一致，并有单测锁定两者相等；
@@ -287,7 +287,7 @@ python v4/E0/code/check_env.py --json v4/reports/E0_env.json
 
 **规则**：`import` 可选库统一写成 `try: import X; HAS_X=True except ImportError: HAS_X=False`，并把探测结果写进 `reports/E0_env.json`（`{"pyarrow": true/false, "onnx": ..., "sklearn": ...}`），供后续阶段选择路径。**任何模块不得因为可选库缺失而崩溃**；同时**也不得因为可用就强依赖**（对 OOF/缓存这类产出，必须给出兜底格式）。
 
-### 3.4 云端磁盘预算（64 GiB，含镜像占用）
+### 3.4 云端磁盘预算（**云盘 `/data` 30 GB**；见 `src/hardware.py`）
 
 **先测后用，不许假设**。E0 的第一条命令就是测量镜像与文件系统的真实占用：
 
@@ -299,7 +299,7 @@ python v4/src/data/disk_guard.py --min-free-gb 8 --report /home,/tmp \
        --json v4/reports/E0_disk_budget.json
 ```
 
-#### 3.4.1 预算表（**可用量 = 64 GiB − 镜像已占**；表内为"项目自身"占用）
+#### 3.4.1 预算表（**可用量 = 云盘 30 GB 配额**；表内为"项目自身"占用）
 
 | 项目 | 预算 | 控制手段 |
 |---|---:|---|
@@ -827,7 +827,7 @@ v4 可能整体失败（纯 DL 在 80 井上不收敛优于树模型）。因此
 | **SW 尺度混淆** | SW Acc 掉 ~10 分 | E0 单元测试锁死（SW<1 = 0，单一标签尺度）；连续头**训练折仿射归一化 + 输出反变换**；契约层 SW 中位数守卫，禁止裁剪到 [0,1] |
 | **POR 容差过窄（±0.008）** | POR Acc 在 0.6 附近打转 | `q_por` 原子头硬输出**精确 0.1**；连续头用 `por_max·sigmoid(g)`（可到 0），不承担命中容差 |
 | **16 GiB 系统内存 OOM** | DataLoader 被杀、swap 抖动、训练中途 OOM-kill | `num_workers=4`、禁止全局井缓存、按井分片按需读、每 worker < 300 MB 自检 |
-| **64 GiB 磁盘打爆** | `pip install` 后剩余 < 5 GB；checkpoint 越攒越多 | 装完 `pip cache purge`；特征按版本目录落盘 + 旧版本即删；checkpoint 滚动窗口（best/last/last_prev）；每 epoch `assert_disk_headroom(8.0)`；E0 Gate 强制 `disk_budget_ok` |
+| **30 GB 云盘打爆** | `pip install` 后剩余 < 5 GB；checkpoint 越攒越多 | 装完 `pip cache purge`；特征按版本目录落盘 + 旧版本即删；checkpoint 滚动窗口（best/last/last_prev）；每 epoch `assert_disk_headroom(8.0)`；E0 Gate 强制 `disk_budget_ok` |
 | **PyTorch 2.4 API 不兼容** | 启动即 `AttributeError`/`ImportError` | `check_env.py` 前置断言；禁用 2.5+ API 与需编译扩展（flash-attn/xformers/apex）；注意力统一走 `F.scaled_dot_product_attention` |
 | **序列主干不优于行级模型** | E3 delta CI 含 0 或为负 | 感受野消融 → 检查窗口统计是否泄漏/是否被 batch 内打乱；最多两次结构修订后降级 |
 | **过拟合（80 井太少）** | inner 高、outer 低；折间方差大 | dropout/stochastic depth/weight decay；曲线随机掩码与深度抖动增强；早停用真实分数 |

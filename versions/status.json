@@ -140,21 +140,22 @@
     {
       "stage": "E2",
       "title": "特征工程与数据管线",
-      "status": "pending",
+      "status": "in_progress",
       "p": [
         {
           "id": "P0",
-          "status": "pending"
+          "status": "in_progress"
         },
         {
           "id": "P1",
-          "status": "pending"
+          "status": "in_progress"
         },
         {
           "id": "P2",
-          "status": "pending"
+          "status": "in_progress"
         }
-      ]
+      ],
+      "note": "E2 代码已实现并本机验证：src/features/{physics,window,well,groups}.py、src/data/augment.py、E2/code/{build_features,ablate_groups}.py；80 井 F2（368 列）缓存 0.503 GB / 峰值常驻 1.31 GiB（均达标）；1 折 8 井 exploratory 消融链路可跑（F_phys +0.42 / F_win +1.13 采纳、F_well −2.00 NO-GO，**样本太小不作结论**）；正式消融待云端全折"
     },
     {
       "stage": "E3",
@@ -349,12 +350,17 @@
     },
     "cloud": {
       "python": "3.11",
-      "torch": "2.7.1+cu128",
-      "cuda": "12.8",
-      "cuda_semantics": "hard = torch.version.cuda major == 12；warn = 是否等于声明值 12.8；advisory = nvidia-smi CUDA Version >= 12.8（R4-B1/R5-B1，禁止把 wheel 小版本写成 hard 断言）",
-      "gpu": "A100 80GB x1",
+      "torch": "2.8.0",
+      "torch_npu": "2.8.0",
+      "cann": "8.3rc2",
+      "arch": "aarch64",
+      "torch_npu_semantics": "hard = torch/torch_npu 的 major.minor 一致（缺 torch_npu 则 torch.npu 不可用）；warn = 是否等于声明值 2.8.0",
+      "cann_semantics": "hard = 可探测且 major.minor == (8,3)；warn = 归一化后是否等于声明值 8.3rc2（8.3.RC2/8.3.rc2 等价）；禁止把 rc 钉成 hard 断言",
+      "accelerator": "Ascend 910B x1",
+      "device_memory_gb": 64,
       "ram_gb": 16,
-      "disk_gb": 30,
+      "cloud_disk_gb": 30,
+      "resource_spec": "Ascend910B-1-64G",
       "verified": false,
       "pip_install_list": [
         "numpy",
@@ -366,7 +372,7 @@
       "pip_install_optional": [
         "tensorboard"
       ],
-      "note": "待 E0/P0 在云端实机确认；依赖由用户 pip 安装（agent 无法自动安装），清单与 check_env.py::REQUIRED_PY_DEPS 一致且有单测锁定"
+      "note": "待 E0/P0 在云端 Ascend 任务实机确认；依赖由用户 pip 安装（agent 无法自动安装），清单与 check_env.REQUIRED_PY_DEPS 同源；**64 GiB 是显存、30 GB 才是云盘配额、16 GB 是内存**，三者不得混淆"
     }
   },
   "pending_plan_artifacts": [

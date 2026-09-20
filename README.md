@@ -77,7 +77,7 @@ cd v4 && git add -A && git commit -m "..." && git push origin HEAD:master HEAD:m
 | | 本机（开发机） | 云端（Intern InkStone 训练任务） |
 |---|---|---|
 | 角色 | 写代码、生成数据包、跑口径层单测、组装提交包 | 训练、OOF 推理、集成 |
-| 硬件 | 无 NPU/GPU、`v2/.venv` 有 numpy/pandas、**无 torch** | **1× Ascend 910B 64GB**、4000m vCPU、**16 GiB 系统内存**、**64 GiB 磁盘** |
+| 硬件 | 无 NPU/GPU、`v2/.venv` 有 numpy/pandas、**无 torch** | **1× Ascend 910B 64GB**、4000m vCPU、**16 GiB 系统内存**、**30 GB 云盘（/data）** |
 | 软件 | 系统 Python 3.12（仅用于口径层） | **CANN 8.3rc2 / PyTorch 2.8.0 + torch_npu 2.8.0 / Python 3.11 / arm64**（平台镜像预装，**无 conda**，不得改 torch/torch_npu 版本；额外轻量包可 `pip install --no-cache-dir`） |
 | 目录 | `../data`、`./reports` | 代码 `/code/workspace/<仓库名>`（临时，用 `find` 定位，别硬编码）；数据与产物 `/data/v4/*`（持久） |
 

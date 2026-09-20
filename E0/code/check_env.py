@@ -3,8 +3,11 @@
 
 目标平台（2026-09-20 变更，**唯一事实源 = `src/hardware.py`**）
 -------------------------------------------------------------
-规格 `Ascend910B-1-64G`：Ascend 910B × 1（64 GB HBM）/ 4000m vCPU / 16 GiB RAM /
-64 GiB 磁盘；镜像 = CANN 8.3rc2 + PyTorch 2.8.0 + torch_npu 2.8.0 + Python 3.11 / **arm64**。
+规格 `Ascend910B-1-64G`：Ascend 910B × 1（**显存 64 GB HBM**）/ 4000m vCPU /
+**内存 16 GB** / **云盘 `/data` 30 GB**；镜像 = CANN 8.3rc2 + PyTorch 2.8.0 +
+torch_npu 2.8.0 + Python 3.11 / **arm64**。
+> ⚠️ 64 GiB 是**显存**不是磁盘；云盘配额是 **30 GB**（`src/hardware.py` 的
+> `device_memory_gb` / `host_ram_gb` / `cloud_disk_gb` 三者必须分清）。
 
 三层口径（沿用 R4-B1 的教训：**不要把某个具体小版本钉成硬门禁**）
 ----------------------------------------------------------------
@@ -80,8 +83,8 @@ EXPECTED_CUDA_RUNTIME = (12, 8)
 MIN_CUDA_DRIVER = (12, 8)
 
 MIN_FREE_GB_DEFAULT = 8.0
-DISK_BUDGET_GB = float(HW.PLATFORM["disk_gb"])
-RAM_BUDGET_GB = float(HW.PLATFORM["ram_gb"])
+DISK_BUDGET_GB = float(HW.PLATFORM["cloud_disk_gb"])
+RAM_BUDGET_GB = float(HW.PLATFORM["host_ram_gb"])
 
 # 依赖分档（R3 修复 + R5-M1）。
 #   REQUIRED_PY_DEPS：训练/分析主路径硬依赖；profile=full 且缺失 -> hard。
@@ -468,7 +471,7 @@ def check_disk(rep: Report, path: Path, min_free_gb: float) -> dict:
         f"(require >= {min_free_gb} GiB)",
     )
     if total_gb > DISK_BUDGET_GB * 1.5:
-        # 本机磁盘通常远大于目标机的 64 GiB；只是提示，不判定失败
+        # 本机磁盘通常远大于云端云盘配额（30 GB）；只是提示，不判定失败
         rep.add(
             "disk_budget_context",
             True,

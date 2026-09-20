@@ -8,7 +8,7 @@
 
 ## 1. 目标
 
-建立 `F_phys`/`F_win`/`F_well` 三组特征、数据增强与按井分片缓存，并把 16 GiB 内存与 64 GiB 磁盘的工程约束固化为可复用的数据管线。
+建立 `F_phys`/`F_win`/`F_well` 三组特征、数据增强与按井分片缓存，并把 16 GiB 内存与 30 GB 云盘的工程约束固化为可复用的数据管线。
 
 ## 2. 为什么这么设计
 
@@ -50,7 +50,7 @@
 
 ## 9. 通用约束（继承总计划）
 
-- 训练/推理分离：本机（无 NPU/GPU）负责代码与契约，云端（1×Ascend 910B 64GB，CANN 8.3rc2 / torch 2.8.0 + torch_npu 2.8.0 / py3.11 / arm64，**64 GiB 磁盘**）负责训练。
+- 训练/推理分离：本机（无 NPU/GPU）负责代码与契约，云端（1×Ascend 910B 64GB，CANN 8.3rc2 / torch 2.8.0 + torch_npu 2.8.0 / py3.11 / arm64，**30 GB 云盘（/data）**）负责训练。
 - 禁止 `pip install torch` 或变更镜像基础栈；额外轻量包须 `--no-cache-dir` 并清缓存。
 - 一切阈值/权重/早停只在 **inner-OOF** 上选；outer 折只推理一次。
 - 训练脚本必须支持 `--resume`、`--time-budget-h`、每 epoch checkpoint 与 `assert_disk_headroom(8.0)`。

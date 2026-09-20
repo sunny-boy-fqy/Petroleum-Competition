@@ -25,7 +25,7 @@
 | 代码来源 | **Git 仓库** |
 | 仓库地址 | `https://github.com/sunny-boy-fqy/Petroleum-Competition.git`（**HTTPS**，不是 `git@…`） |
 | 分支 | **`main`**（平台默认；remote 上 `main` 与 `master` 同指一个 commit，填哪个都能拉到） |
-| 资源配置 | **Ascend 910B × 1**（64 GB HBM / 4000m vCPU / 16 GiB 内存 / 64 GiB 磁盘） |
+| 资源配置 | **Ascend 910B × 1**（64 GB HBM / 4000m vCPU / 16 GiB 内存 / 30 GB 云盘） |
 | 镜像 | 【我的镜像】→ `v4-train-py311-torch280-npu280-cann83rc2`（场景 = **训练任务**）<br>未构建前先用官方 PyTorch 2.8.0 + torch_npu 2.8.0 / CANN 8.3rc2 / Python 3.11 / arm64 镜像 |
 | 训练/验证数据集 | 不挂载（数据走云盘 `/data`） |
 | 超参数 | 不填（全部通过 `run_train.sh` 参数传递） |

@@ -146,15 +146,20 @@ class RowScaler:
 
     变换顺序固定为：`x ← (x − mean) / std`，其中缺失值先被 `median` 填补。
     对"缺失指示位"这类恒为 0/1 的列同样适用（其 std 通常 > 0）。
+
+    `names` 记录列语义（F1 32 列 / F2 368 列 / 消融子集都可能），
+    这样 scaler JSON 与 checkpoint manifest 能自解释，而不是靠"宽度猜特征版本"。
     """
     median: "np.ndarray"
     mean: "np.ndarray"
     std: "np.ndarray"
     n_fit_rows: int = 0
     fit_wells: tuple[str, ...] = ()
+    names: tuple[str, ...] = ()
 
     @staticmethod
-    def fit(X: "np.ndarray", wells: Sequence[str] = ()) -> "RowScaler":
+    def fit(X: "np.ndarray", wells: Sequence[str] = (),
+            names: Sequence[str] | None = None) -> "RowScaler":
         X = np.asarray(X, dtype="float64")
         if X.ndim != 2:
             raise ValueError(f"RowScaler.fit expects 2-D, got {X.shape}")
@@ -170,8 +175,14 @@ class RowScaler:
         mean = filled.mean(axis=0)
         std = filled.std(axis=0)
         std = np.where(std > 1e-12, std, 1.0)
+        if names is None:
+            names = tuple(F.FEATURE_NAMES) if X.shape[1] == F.N_FEATURES else \
+                tuple(f"f{j}" for j in range(X.shape[1]))
+        if len(names) != X.shape[1]:
+            raise ValueError(f"RowScaler.fit: names {len(names)} != 列数 {X.shape[1]}")
         return RowScaler(median=med, mean=mean, std=std,
-                         n_fit_rows=int(X.shape[0]), fit_wells=tuple(wells))
+                         n_fit_rows=int(X.shape[0]), fit_wells=tuple(wells),
+                         names=tuple(names))
 
     def transform(self, X: "np.ndarray") -> "np.ndarray":
         X = np.asarray(X, dtype="float64")
@@ -188,7 +199,8 @@ class RowScaler:
             "mean": [float(v) for v in self.mean],
             "std": [float(v) for v in self.std],
             "n_features": int(self.median.shape[0]),
-            "feature_names": list(F.FEATURE_NAMES),
+            "feature_names": list(self.names) if self.names
+            else list(F.FEATURE_NAMES),
             "n_fit_rows": int(self.n_fit_rows),
             "fit_wells": list(self.fit_wells),
         }
@@ -199,7 +211,8 @@ class RowScaler:
                          mean=np.asarray(d["mean"], dtype="float64"),
                          std=np.asarray(d["std"], dtype="float64"),
                          n_fit_rows=int(d.get("n_fit_rows", 0)),
-                         fit_wells=tuple(d.get("fit_wells", ())))
+                         fit_wells=tuple(d.get("fit_wells", ())),
+                         names=tuple(d.get("feature_names", ())))
 
 
 # ---------------------------------------------------------------- 折装配
@@ -247,29 +260,62 @@ class FoldTensors:
         return {k: v for k, v in d.items() if v is not None}
 
 
+def _well_feature_matrix(cache_root: str | Path, well: str, split: str, spec,
+                         phys_params=None, allow_onfly: bool = True):
+    """取单井特征矩阵：F1 走分片缓存；其它 spec 走 `cache/feat/<key>/`（缺失时现场构造）。
+
+    现场构造是**兜底**（E2 缓存没建时会慢，但不会静默失败）；`allow_onfly=False`
+    时直接抛错，便于 Gate 强制"必须用冻结的缓存"。
+    """
+    from ..features import groups as GRP   # 延迟导入：避免 data<->features 循环
+    if spec is None or spec.is_f1_only:
+        return read_row_shard(cache_root, well, split)["X_raw"], list(F.FEATURE_NAMES)
+    try:
+        return GRP.read_feature_cache(cache_root, spec, well, split)
+    except FileNotFoundError:
+        if not allow_onfly:
+            raise
+        shard = D.read_well_shard(cache_root, well, split)
+        X, names = GRP.build_matrix(shard, spec, phys_params)
+        return X, names
+
+
 def assemble(wells: Sequence[str], cache_root: str | Path, scaler: RowScaler | None = None,
-             split: str = "train", with_targets: bool = True) -> FoldTensors:
+             split: str = "train", with_targets: bool = True, spec=None,
+             phys_params=None, allow_onfly: bool = True) -> FoldTensors:
     """按井装配整折张量（一次 `np.empty` 预分配 + 逐井写入，避免多次全量拷贝）。
 
-    `scaler is None` 时**不做标准化**（返回原始 F1），仅用于"先看数据"的诊断路径；
+    `spec` 为 `None` 或 F1 时行为与历史版本一致（32 列）；
+    给出 `FeatureSpec`（如 F2=368 列）时按 `cache/feat/<spec.key>/` 读取。
+
+    `scaler is None` 时**不做标准化**（返回原始特征），仅用于"先看数据"的诊断路径；
     训练路径必须显式传入**训练折 fit 出来**的 scaler。
     """
     if not HAS_NUMPY:
         raise RuntimeError("assemble requires numpy")
     wells = list(wells)
+    pairs = [_well_feature_matrix(cache_root, w, split, spec, phys_params, allow_onfly)
+             for w in wells]
+    mats = [p_[0] for p_ in pairs]
+    names = list(pairs[0][1]) if pairs else list(F.FEATURE_NAMES)
     recs = [read_row_shard(cache_root, w, split) for w in wells]
-    sizes = [int(r["X_raw"].shape[0]) for r in recs]
+    sizes = [int(m.shape[0]) for m in mats]
     n = int(sum(sizes))
-    n_feat = int(F.N_FEATURES)
+    n_feat = int(mats[0].shape[1]) if mats else int(F.N_FEATURES)
+    if len(names) != n_feat:
+        raise ValueError(f"特征列名 {len(names)} 与列数 {n_feat} 不一致（spec={spec}）")
     offsets = np.zeros(len(wells) + 1, dtype="int64")
     offsets[1:] = np.cumsum(sizes)
 
     X = np.empty((n, n_feat), dtype="float32")
     depth = np.empty(n, dtype="float32")
     well_index = np.empty(n, dtype="int32")
-    for i, r in enumerate(recs):
+    for i, (mat, r) in enumerate(zip(mats, recs)):
         a, b = int(offsets[i]), int(offsets[i + 1])
-        X[a:b] = scaler.transform(r["X_raw"]) if scaler is not None else r["X_raw"]
+        if mat.shape[1] != n_feat:
+            raise ValueError(f"well {wells[i]}: {mat.shape[1]} 列 != 首井的 {n_feat} 列"
+                             "（特征版本不一致？）")
+        X[a:b] = scaler.transform(mat) if scaler is not None else mat
         depth[a:b] = r["depth"]
         well_index[a:b] = i
 
@@ -296,32 +342,45 @@ def assemble(wells: Sequence[str], cache_root: str | Path, scaler: RowScaler | N
     return out
 
 
-def fit_scalers_from_wells(train_wells: Sequence[str], cache_root: str | Path) -> dict[str, Any]:
+def fit_scalers_from_wells(train_wells: Sequence[str], cache_root: str | Path,
+                           spec=None) -> dict[str, Any]:
     """由**显式给定的训练井**拟合标准化与目标尺度（折内 fit 的唯一入口）。
 
     `fit_fold` 是"按 outer 折号"的语法糖；本函数供两阶段协议里的
     "inner-train 井"与"全部 outer-train 井"分别调用，语义完全一致：
     **只喂训练井，验证井绝不参与任何参数估计**。
     """
+    from ..features import groups as GRP
     train_wells = list(train_wells)
-    tr = assemble(train_wells, cache_root, scaler=None, with_targets=True)
-    scaler = RowScaler.fit(tr.X, wells=train_wells)
+    phys = None
+    if spec is not None and "phys" in tuple(spec.groups):
+        # GRmin/GRmax/SPmin/SPmax 等分位数基线**只能**由训练井的曲线拟合（E2/P0 §6）
+        phys = GRP.fit_physics_params(D.read_well_shard(cache_root, w, "train")
+                                      for w in train_wells)
+    tr = assemble(train_wells, cache_root, scaler=None, with_targets=True, spec=spec,
+                  phys_params=phys)
+    names = tuple(GRP.FeatureSpec.from_dict(spec.as_dict()).names()) if spec is not None else None
+    scaler = RowScaler.fit(tr.X, wells=train_wells, names=names)
     target = F.fit_target_scalers(tr.y_por, tr.y_sw, tr.mask, z_perm=tr.y_perm_z, y_perm=None)
-    return {"scaler": scaler, "target": target, "n_train_rows": tr.n_rows,
-            "train_wells": train_wells}
+    out = {"scaler": scaler, "target": target, "n_train_rows": tr.n_rows,
+           "train_wells": train_wells}
+    if phys is not None:
+        out["phys_params"] = phys
+    return out
 
 
-def fit_fold(folds: dict[str, Any], k: int, cache_root: str | Path) -> dict[str, Any]:
-    """折 k 的**训练折** fit：标准化参数 + 目标尺度参数（全部只来自训练井）。"""
+def fit_fold(folds: dict[str, Any], k: int, cache_root: str | Path,
+             spec=None) -> dict[str, Any]:
+    """折 k 的**训练折** fit：标准化 + 目标尺度（+ F2 的物理分位数），全部只来自训练井。"""
     train_wells, val_wells = fold_wells(folds, k)
-    fit = fit_scalers_from_wells(train_wells, cache_root)
+    fit = fit_scalers_from_wells(train_wells, cache_root, spec=spec)
     fit.update({"fold": int(k), "val_wells": val_wells})
     return fit
 
 
 def scaler_payload(fold_fit: dict[str, Any]) -> dict[str, Any]:
     """落盘用的一份 JSON（标准化 + 目标尺度 + 折井清单）。"""
-    return {
+    out = {
         "fold": int(fold_fit["fold"]),
         "row_scaler": fold_fit["scaler"].to_dict(),
         "target_scalers": dict(fold_fit["target"]),
@@ -330,6 +389,9 @@ def scaler_payload(fold_fit: dict[str, Any]) -> dict[str, Any]:
         "n_train_rows": int(fold_fit["n_train_rows"]),
         "note": "所有尺度参数只由**训练折**有效标签/行拟合；推理期用同一份做反变换",
     }
+    if fold_fit.get("phys_params") is not None:
+        out["physics_params"] = fold_fit["phys_params"].as_dict()
+    return out
 
 
 def save_scaler_json(path: str | Path, payload: dict[str, Any]) -> Path:

@@ -24,7 +24,7 @@ E_STAGES = [
         why=[
             "评分口径与本地评分器实现若与官方有偏差，所有后续迭代都是在优化错误目标；v1 冻结的全常量基线 OOF = **70.4907** 是校验锚点。",
             "标签里 66.719% 是联合常量占位；**SW 是单一标签尺度（百分数，实测有效 8.305–99.9，`SW<1` 为 0 行）**——E0-R2 已证伪“99.9 与 [0,1] 双尺度”假设，`SW_SMALL_BRANCH` 作为遗留对照路径**永久关闭**；把 SW 误当小数尺度是最大的静默失分点，必须在写模型之前用单元测试锁死。",
-            "云端是预装镜像（CANN 8.3rc2 / torch 2.8.0 + torch_npu 2.8.0 / py3.11 / arm64，无 conda）+ 仅 64 GiB 磁盘；环境与磁盘必须在训练开始前实测确认。",
+            "云端是预装镜像（CANN 8.3rc2 / torch 2.8.0 + torch_npu 2.8.0 / py3.11 / arm64，无 conda）+ 云盘仅 30 GB（/data）；环境与磁盘必须在训练开始前实测确认。",
         ],
         inputs=["`../data/train`（80 井）、`../data/test`（10 井）", "`rules.md` §5–§8", "`../v1/src/well_folds.json`（按井 5 折）", "`资料库/12` §1–§5（口径与工程化落地）"],
         outputs=["`reports/E0_data_card.json`", "`reports/E0_env.json`、`reports/E0_disk_budget.json`", "`reports/E0_score_check.json`（常数基线 70.4907）", "`reports/E0_gate.json`、`reports/E0_gate_prereg.json`", "`artifacts/E0/folds.json`、`versions/folds_sha256.json`"],
@@ -56,7 +56,7 @@ E_STAGES = [
     dict(
         e="E2", name="特征工程与数据管线",
         nature="**特征与吞吐阶段。每组特征必须独立消融。**",
-        goal="建立 `F_phys`/`F_win`/`F_well` 三组特征、数据增强与按井分片缓存，并把 16 GiB 内存与 64 GiB 磁盘的工程约束固化为可复用的数据管线。",
+        goal="建立 `F_phys`/`F_win`/`F_well` 三组特征、数据增强与按井分片缓存，并把 16 GiB 内存与 30 GB 云盘的工程约束固化为可复用的数据管线。",
         why=[
             "序列主干需要稠密数值输入；物理交会特征（`资料库/01`/`02`）与窗口统计（`资料库/07` §6）在 v1 已被证明有效（C1→C1W +1.0562）。",
             "16 GiB 系统内存是真正的瓶颈：必须把\"按井分片 + 按需读取 + 即时增强\"写成管线，否则 E3 一开始就会 OOM。",
@@ -517,7 +517,7 @@ def render_e(st: dict) -> str:
         L.append(f"- {x}")
     L.append("")
     L.append("## 9. 通用约束（继承总计划）\n")
-    L.append("- 训练/推理分离：本机（无 NPU/GPU）负责代码与契约，云端（1×Ascend 910B 64GB，CANN 8.3rc2 / torch 2.8.0 + torch_npu 2.8.0 / py3.11 / arm64，**64 GiB 磁盘**）负责训练。")
+    L.append("- 训练/推理分离：本机（无 NPU/GPU）负责代码与契约，云端（1×Ascend 910B 64GB，CANN 8.3rc2 / torch 2.8.0 + torch_npu 2.8.0 / py3.11 / arm64，**30 GB 云盘（/data）**）负责训练。")
     L.append("- 禁止 `pip install torch` 或变更镜像基础栈；额外轻量包须 `--no-cache-dir` 并清缓存。")
     L.append("- 一切阈值/权重/早停只在 **inner-OOF** 上选；outer 折只推理一次。")
     L.append("- 训练脚本必须支持 `--resume`、`--time-budget-h`、每 epoch checkpoint 与 `assert_disk_headroom(8.0)`。")

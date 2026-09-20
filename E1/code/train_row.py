@@ -62,6 +62,8 @@ from src.validation import gates as G  # noqa: E402
 
 REQUIRED_CHECKS = ("contract_ok", "atomic_precision_reported", "disk_budget_ok",
                    "training_time_log_valid", "checkpoint_resumable", "no_label_leak")
+# 单折协议与标签/掩码取用统一走 fold_runner（E1/E2/E3 共用一份实现）
+from src.training.fold_runner import labels_of, mask_of, y_atom_of  # noqa: E402
 CONST_TILE = np.asarray([C.ATOM_VALUES[t] for t in C.TARGETS], dtype="float64")
 
 
@@ -99,31 +101,6 @@ def write_json(path: str | Path, payload) -> Path:
     return p
 
 
-def _col(obj, name: str, key: str):
-    """兼容取列：`FoldTensors`（`y_por/y_perm_z/y_sw/mask/y_atom`）与
-    `loop.TorchFold`（`.y[key]` 张量）。返回 numpy float32。"""
-    if hasattr(obj, "y"):
-        x = obj.y[key]
-        return x.float().cpu().numpy() if hasattr(x, "cpu") else np.asarray(x, dtype="float32")
-    v = getattr(obj, name)
-    if hasattr(v, "cpu"):
-        v = v.float().cpu().numpy()
-    return np.asarray(v, dtype="float32")
-
-
-def labels_of(va) -> "np.ndarray":
-    """→ (N,3) 标签尺度真值。"""
-    return M.label_scale_stack(_col(va, "y_por", "por"), _col(va, "y_perm_z", "perm_z"),
-                               _col(va, "y_sw", "sw"))
-
-
-def mask_of(va) -> "np.ndarray":
-    return _col(va, "mask", "mask")
-
-
-def y_atom_of(va) -> "np.ndarray":
-    return _col(va, "y_atom", "y_atom")
-
 
 # ---------------------------------------------------------------- cache
 def ensure_cache(args) -> dict:
@@ -148,166 +125,57 @@ def ensure_cache(args) -> dict:
 # ---------------------------------------------------------------- 单折
 def run_fold(fold: int, folds: dict, cache: Path, run_dir: Path, scalers_dir: Path,
              cfg: L.TrainConfig, args) -> dict:
-    import torch
-    from src.models.row_mlp import build_model
+    """单折 = `fold_runner.run_two_phase_fold` + E1 的曲线/日志接线。
 
-    t_fold = time.time()
-    L.set_seed(cfg.seed)
-    dev = L.resolve_device(cfg)
-
-    tr_wells, va_wells = RD.fold_wells(folds, fold)
-    if args.max_wells:
-        tr_wells = tr_wells[:args.max_wells]
-        va_wells = va_wells[:args.max_wells]
-    fit = RD.fit_scalers_from_wells(tr_wells, cache)
-    scaler, target = fit["scaler"], fit["target"]
-    RD.save_scaler_json(scalers_dir / f"E1_fold{fold}.json",
-                        {"fold": fold, "row_scaler": scaler.to_dict(),
-                         "target_scalers": dict(target), "train_wells": tr_wells,
-                         "val_wells": va_wells, "n_train_rows": fit["n_train_rows"],
-                         "note": "全部尺度参数只由训练折拟合（E1/P0 §5 步 4）"})
-    print(f"[E1] fold{fold}: train={len(tr_wells)} wells val={len(va_wells)} wells | "
-          f"por_max={target['por_max']:.3f} sw_mu={target['sw_mu']:.3f} "
-          f"sw_sigma={target['sw_sigma']:.3f} s_por={target['s_por']:.3f} "
-          f"s_sw={target['s_sw']:.3f}", flush=True)
-
-    tr_all = RD.assemble(tr_wells, cache, scaler=scaler, with_targets=True)
-    va = RD.assemble(va_wells, cache, scaler=scaler, with_targets=True)
-    RD.assert_alignment(tr_all)
-    RD.assert_alignment(va)
-
-    # ---- 阶段 1：inner 折上选 epoch 与 tau
-    inner = FOLDS.make_inner_folds(tr_wells, n_inner=C.N_INNER_FOLDS, seed=cfg.seed)
-    keys = sorted(inner)
-    tr_set = set(tr_wells)
-    inner_val_wells = [w for w in inner[keys[0]] if w in tr_set]
-    inner_tr_wells = [w for k in keys[1:] for w in inner[k] if w in tr_set]
-    if len(inner_val_wells) < 1 or len(inner_tr_wells) < 2:
-        # smoke/极小规模：井不够切 inner 折时，退化为"用 outer-val 当 inner-val"。
-        # 这**只在 --smoke 下允许**（不产出任何 Gate 数值）。
-        if not args.smoke:
-            raise SystemExit(f"[E1] fold{fold}: inner split too small "
-                             f"({len(inner_tr_wells)}/{len(inner_val_wells)})")
-        inner_tr_wells, inner_val_wells = tr_wells, va_wells
-    print(f"[E1] fold{fold}: inner-select train={len(inner_tr_wells)} "
-          f"val={len(inner_val_wells)} wells", flush=True)
-
-    tr_in_t = L.TorchFold(RD.subset(tr_all, inner_tr_wells), dev)
-    va_in = RD.assemble(inner_val_wells, cache, scaler=scaler, with_targets=True)
-    va_in_t = L.TorchFold(va_in, dev)
-    y_in, m_in, a_in = labels_of(va_in), mask_of(va_in), y_atom_of(va_in)
-
-    model = build_model(n_features=F.N_FEATURES, hidden=cfg.hidden, layers=cfg.layers,
-                        dropout=cfg.dropout, seed=cfg.seed, init_stats=target)
-
-    try:
-        from src.training.tb_logger import RunLogger
-        logger = RunLogger(f"E1_pd0_fold{fold}")
-    except Exception:
-        logger = None
+    协议实现只有一份（`src/training/fold_runner.py`），E1 只负责：
+      * 把每 epoch 的训练/验证指标写成 `E1_loss_curve.csv` 的行；
+      * 把 `FoldResult` 映射成 main() 汇总 OOF 所需的形状。
+    """
+    from src.training import fold_runner as FR
 
     curve: list[dict] = []
 
-    def _curve_row(phase: str, epoch: int, rec: dict, val: dict | None = None) -> dict:
-        row = {"fold": fold, "phase": phase, "epoch": epoch,
-               "seconds": rec.get("seconds"), "lr": rec.get("lr"), "lam1": rec.get("lam1"),
-               "loss_total": rec.get("total"), "loss_align": rec.get("align"),
-               "loss_aux": rec.get("aux"), "loss_joint": rec.get("joint"),
-               "loss_atom": rec.get("atom"), "disk_free_gb": rec.get("disk_free_gb")}
-        if val:
-            row.update({"val_total_cont": val.get("total"), "val_por": val.get("acc_por"),
-                        "val_perm": val.get("acc_perm"), "val_sw": val.get("acc_sw")})
-        return row
-
-    def inner_eval(m) -> dict:
-        pred = L.predict_torch(m, va_in_t, cfg)
-        res = M.evaluate_predictions(y_in, m_in, pred, y_atom=a_in, tau=None)
-        return res["cont"]
+    def _row(phase: str, epoch: int, rec: dict) -> dict:
+        val = rec.get("val") or {}
+        return {"fold": fold, "phase": phase, "epoch": epoch,
+                "seconds": rec.get("seconds"), "lr": rec.get("lr"),
+                "lam1": rec.get("lam1"), "loss_total": rec.get("total"),
+                "loss_align": rec.get("align"), "loss_aux": rec.get("aux"),
+                "loss_joint": rec.get("joint"), "loss_atom": rec.get("atom"),
+                "val_total_cont": val.get("total"), "val_por": val.get("acc_por"),
+                "val_perm": val.get("acc_perm"), "val_sw": val.get("acc_sw"),
+                "disk_free_gb": rec.get("disk_free_gb")}
 
     def on_select(epoch: int, rec: dict) -> None:
-        val = rec.get("val")
-        curve.append(_curve_row("select", epoch, rec, val))
-        if logger is not None:
-            vals = {"loss/total": rec.get("total", float("nan")), "lr": rec.get("lr", 0.0)}
-            for k in ("align", "aux", "joint", "atom"):
-                if rec.get(k) is not None:
-                    vals[f"loss/{k}"] = rec[k]
-            if val:
-                vals.update({"score/inner_oof_total": val.get("total", 0.0),
-                             "score/acc_por": val.get("acc_por", 0.0),
-                             "score/acc_perm": val.get("acc_perm", 0.0),
-                             "score/acc_sw": val.get("acc_sw", 0.0)})
-            logger.scalars(vals, step=epoch)
+        curve.append(_row("select", epoch, rec))
         if (epoch + 1) % max(cfg.log_every, 1) == 0 or epoch < 2:
-            t = (val or {}).get("total", float("nan"))
+            t = (rec.get("val") or {}).get("total", float("nan"))
             print(f"[E1] fold{fold} ep{epoch:3d} loss={rec.get('total', float('nan')):.4f} "
                   f"innerOOF={t:.4f}", flush=True)
 
-    hist1 = L.run_training(model, tr_in_t, cfg, eval_fn=inner_eval, on_epoch=on_select,
-                           scaler_params=target, keep_best=True)
-    best_epoch = hist1["best_epoch"] if hist1["best_epoch"] >= 0 else max(len(hist1["epochs"]) - 1, 0)
+    def on_final(epoch: int, rec: dict) -> None:
+        curve.append(_row("final", epoch, rec))
 
-    tau_info = {"tau": [0.5, 0.5, 0.5], "objective": None, "plateau": {}, "score_fn": "skipped(smoke)"}
-    pred_in = None
-    if not args.smoke:
-        pred_in = L.predict_torch(model, va_in_t, cfg)
-        sel = AG.select_tau_per_target(cont=M.decode_continuous(pred_in),
-                                       q_atom=pred_in["q_atom"], y=y_in, mask=m_in)
-        tau_info = {"tau": [float(v) for v in sel["tau"]], "objective": float(sel["objective"]),
-                    "plateau": {k: [float(x) for x in v] for k, v in sel["plateau"].items()},
-                    "score_fn": sel["score_fn"]}
-    print(f"[E1] fold{fold}: best_epoch={best_epoch} "
-          f"innerOOF={hist1['best_total']} best_restored={hist1['best_restored']} "
-          f"tau={['%.2f' % t for t in tau_info['tau']]}", flush=True)
-    del tr_in_t, va_in_t, va_in
-    if pred_in is not None:
-        del pred_in
-
-    # ---- 阶段 2：全部 outer-train 重训 best_epoch，outer-val 只推理一次
-    cfg2 = replace(cfg, epochs=max(best_epoch + 1, 1), patience=10 ** 9)
-    tr_t = L.TorchFold(tr_all, dev)
-    model2 = build_model(n_features=F.N_FEATURES, hidden=cfg.hidden, layers=cfg.layers,
-                         dropout=cfg.dropout, seed=cfg.seed, init_stats=target)
-    opt2 = torch.optim.AdamW(model2.parameters(), lr=float(cfg.lr),
-                             weight_decay=float(cfg.weight_decay))
-    fold_dir = run_dir / f"fold{fold}"
-    fold_dir.mkdir(parents=True, exist_ok=True)
-    resume_epoch = -1
-    if args.resume and (fold_dir / "last.pt").is_file():
-        rr = CK.load_for_resume(fold_dir / "last.pt", model2, optimizer=opt2)
-        resume_epoch = rr["epoch"]
-        print(f"[E1] fold{fold}: resumed at epoch {resume_epoch}", flush=True)
-    hist2 = L.run_training(model2, tr_t, cfg2, eval_fn=None, optimizer=opt2,
-                           resume_epoch=resume_epoch, scaler_params=target, keep_best=False,
-                           on_epoch=lambda e, r: curve.append(_curve_row("final", e, r)))
-    del tr_t, tr_all
-
-    meta = {"stage": "E1", "fold": fold, "phase": "final", "epoch": cfg2.epochs - 1,
-            "best_epoch_from_inner": int(best_epoch),
-            "inner_oof_total": hist1["best_total"],
-            "tau_atom": [float(t) for t in tau_info["tau"]],
-            "model": {"n_features": F.N_FEATURES, "hidden": cfg.hidden,
-                      "layers": cfg.layers, "dropout": cfg.dropout},
-            "target_scalers": dict(target), "config": cfg.as_dict(), "seed": cfg.seed,
-            "row_scaler": scaler.to_dict()}
-    CK.rotate(fold_dir)                       # 旧 last → last_prev，并清掉多余 *.pt
-    CK.save_checkpoint(fold_dir / "last.pt", model2, meta=meta, optimizer=opt2)
-    CK.save_checkpoint(fold_dir / "best.pt", model2, meta=meta)
-    CK.rotate(fold_dir)
-    resumable = CK.verify_resumable(
-        fold_dir / "best.pt",
-        lambda: build_model(n_features=F.N_FEATURES, hidden=cfg.hidden, layers=cfg.layers,
-                            dropout=cfg.dropout))
-
-    pred = L.predict_torch(model2, L.TorchFold(va, dev), cfg2)
-    if logger is not None:
-        logger.close()
-    return {"fold": fold, "tau": tau_info, "best_epoch": int(best_epoch),
-            "inner_oof_total": hist1["best_total"], "pred": pred, "va": va,
-            "scaler": scaler, "target": target, "seconds": time.time() - t_fold,
-            "hist1": hist1, "hist2": hist2, "curve": curve, "resumable": resumable,
-            "tr_wells": tr_wells, "va_wells": va_wells, "fit_wells": list(scaler.fit_wells),
-            "inner_tr_wells": inner_tr_wells, "inner_val_wells": inner_val_wells}
+    opt = FR.FoldOptions(spec=None, max_wells=args.max_wells, smoke=args.smoke,
+                         resume=args.resume, save_checkpoints=True, select_tau=True,
+                         scaler_prefix="E1", run_dir=run_dir, scalers_dir=scalers_dir,
+                         tb_run_name=f"E1_pd0_fold{fold}",
+                         on_select_epoch=on_select, on_final_epoch=on_final)
+    res = FR.run_two_phase_fold(fold, folds, cache, cfg, opt)
+    print(f"[E1] fold{fold}: train={len(res.tr_wells)} val={len(res.va_wells)} | "
+          f"por_max={res.target['por_max']:.3f} sw_mu={res.target['sw_mu']:.3f} "
+          f"sw_sigma={res.target['sw_sigma']:.3f} s_por={res.target['s_por']:.3f} "
+          f"s_sw={res.target['s_sw']:.3f}; innerOOF={res.inner_oof_total} "
+          f"best_epoch={res.best_epoch} tau={['%.2f' % t for t in res.tau['tau']]}",
+          flush=True)
+    return {"fold": res.fold, "tau": res.tau, "best_epoch": res.best_epoch,
+            "inner_oof_total": res.inner_oof_total, "pred": res.pred, "va": res.va,
+            "scaler": res.scaler, "target": res.target, "seconds": res.seconds,
+            "hist1": res.hist1, "hist2": res.hist2, "curve": curve,
+            "resumable": res.resumable, "tr_wells": res.tr_wells,
+            "va_wells": res.va_wells, "fit_wells": res.fit_wells,
+            "inner_tr_wells": res.inner_tr_wells,
+            "inner_val_wells": res.inner_val_wells}
 
 
 # ---------------------------------------------------------------- 契约

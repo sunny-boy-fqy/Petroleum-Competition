@@ -64,10 +64,10 @@ P["E0"] = [
         nature="契约前置：不产出模型，只产出**环境事实**",
         deps=["无（这是全项目第一步）"],
         goal="在云端实机确认 CANN 8.3rc2 / PyTorch 2.8.0 + torch_npu 2.8.0 / Python 3.11 / Ascend 910B(64G) / bf16 可用，"
-             "并实测 64 GiB 磁盘的可用余量与分布，产出可复算的 `E0_env.json` 与 `E0_disk_budget.json`。",
+             "并实测云盘（/data，30 GB 配额）的可用余量与分布，产出可复算的 `E0_env.json` 与 `E0_disk_budget.json`。",
         why=["未实测的环境假设会在 E3 训练数小时后才暴露（OOM / 版本不兼容 / 磁盘写满），"
              "返工成本是 Ascend 机时；",
-             "64 GiB 预算是本项目最硬的资源约束，而 `/code/workspace`（临时）与 `/data`（云盘）"
+             "30 GB 云盘配额是本项目最硬的资源约束，而 `/code/workspace`（临时）与 `/data`（云盘）"
              "是否同一文件系统必须实测，不能假设；",
              "镜像内 torch 小版本漂移（2.7 vs 2.8）、以及 **2.6 起 `torch.load(weights_only=True)` "
              "的默认值变更**，都会在训练数小时后才暴露成 AttributeError/反序列化错误，必须前置断言。"],
@@ -103,7 +103,7 @@ P["E0"] = [
         risk=[("镜像里不是 torch 2.8.0（或 torch_npu 与 torch 小版本不一致）", "`torch_version` hard failure", "按镜像实际版本同步改 `check_env.py::EXPECTED_TORCH`/`EXPECTED_TORCH_NPU`/`EXPECTED_CANN`、`versions/locks/cloud.txt` 与 docs；**不要**pip 降级 torch"),
               ("CUDA runtime 与声明值不一致（cu126 wheel）", "`cuda_runtime_declared` warn", "只记录事实；hard 底线是 runtime major==12，不因此阻断 Gate（R4-B1 教训）"),
               ("系统内存被镜像/其它进程占用", "`free -g` 显示可用 < 14 GiB", "把 `num_workers` 降到 2，并在 E2 关闭特征缓存"),
-              ("`/data` 与 `/code` 同盘且总容量仅 64 GiB", "`df` 显示同一 Filesystem", "按总计划 §3.4.1 安全规则收缩：特征缓存 ≤0.5 GB、集成成员 ≤2、模型宽度减半"),
+              ("`/data` 与 `/code` 同盘且总容量仅 30 GB", "`df` 显示同一 Filesystem", "按总计划 §3.4.1 安全规则收缩：特征缓存 ≤0.5 GB、集成成员 ≤2、模型宽度减半"),
               ("pip 计划替换 torch", "`setup_deps.sh` 预检命中", "脚本自动中止（exit 3）；改为只用镜像自带版本")],
         stop=["hard failure 未清零前，禁止进入 E0/P1 之后的任何阶段",
               "可用磁盘 < 8 GB 且无法清理时，暂停项目并先与 owner 确认配额"],
@@ -439,6 +439,7 @@ P["E1"] = [
 P["E2"] = [
     dict(
         pid="P0", title="物理与交会特征（F_phys）",
+        status="in_progress",
         nature="特征组候选：必须独立消融，未过则 NO-GO",
         deps=["E1/P1（行级基线与评分口径）"],
         goal="实现孔隙度类（Wyllie/密度/中子）、泥质类（GR/SP 指数）、流体类（RT/RXO、log10 RT）、"
@@ -480,6 +481,7 @@ P["E2"] = [
     ),
     dict(
         pid="P1", title="窗口与井级特征（F_win / F_well）+ 内存纪律",
+        status="in_progress",
         nature="特征组候选 + 数据管线扩容",
         deps=["E2/P0"],
         goal="实现居中多尺度窗口统计（窗长 11/51/201 点 ≈ 1.1/5.1/20.1 m）与井级聚合特征，"
@@ -488,7 +490,7 @@ P["E2"] = [
              "这是\"上下文有效\"的最强历史证据；",
              "工程曲线（CAL/DEVI/AZIM/BIT/CASE）在井内近常数（`资料库/08` §0.1-4），"
              "井级聚合是**唯一的井间信号通路**；",
-             "窗口特征也是最贵的一组，必须按需生成、按版本目录落盘，否则 64 GiB 磁盘与 16 GiB 内存都扛不住。"],
+             "窗口特征也是最贵的一组，必须按需生成、按版本目录落盘，否则 30 GB 云盘与 16 GiB 内存都扛不住。"],
         inputs=["E1/P0 分片", "`资料库/07` §6（窗口与中心窗口要求）、§10（增强）"],
         outputs=["`src/features/window.py`、`src/features/well.py`",
                  "`$V4_CACHE_ROOT/feat/F2_win/<well>.npz`",
@@ -524,6 +526,7 @@ P["E2"] = [
     ),
     dict(
         pid="P2", title="数据增强与吞吐标定",
+        status="in_progress",
         nature="正则化与预算标定：为 E3 的序列主干提供可行性依据",
         deps=["E2/P1"],
         goal="实现曲线随机掩码、深度抖动、段置换等增强；用单折小规模实验标定点/秒吞吐与 batch 上限，"

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""64 GiB 云端磁盘守卫（Ascend910B-1-64G 规格）。
+"""30 GB 云端磁盘守卫（云盘 `/data` 配额；**64 GiB 是显存，不是磁盘**）。
 
 用途
 ----
-云端机器只有 64 GiB 磁盘，而一次误装加速栈（torch/torch_npu 全家桶）就要吃掉数 GB。
+云盘 `/data` 只有 30 GB，而一次误装加速栈（torch/torch_npu 全家桶）就要吃掉数 GB。
 因此所有训练/推理脚本都必须在「启动时 / 每个 epoch 结束 / 每次落 checkpoint 前」
 调用本模块，按剩余空间执行分级动作。
 
@@ -324,7 +324,7 @@ def _main() -> int:
     import argparse
     import json
 
-    ap = argparse.ArgumentParser(description="v4 disk guard (64 GiB cloud budget)")
+    ap = argparse.ArgumentParser(description="v4 disk guard (30 GB cloud-disk budget)")
     ap.add_argument("--path", action="append", default=None, dest="paths",
                     help="要检查的挂载点；可多次传入（例如 --path /data --path /code/workspace）。"
                          "不传时默认只检查 /。")
