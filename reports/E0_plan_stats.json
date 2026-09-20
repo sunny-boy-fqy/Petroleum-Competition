@@ -1,6 +1,6 @@
 {
   "total_plan_files": 46,
-  "total_lines": 6869,
+  "total_lines": 6871,
   "e0_reports": {
     "files": 10,
     "names": [
@@ -18,8 +18,8 @@
   },
   "main": {
     "files": 1,
-    "lines": 886,
-    "avg": 886
+    "lines": 888,
+    "avg": 888
   },
   "stage": {
     "files": 12,
@@ -32,7 +32,7 @@
     "avg": 158
   },
   "per_file": {
-    "PLAN.md": 886,
+    "PLAN.md": 888,
     "E0/PLAN.md": 95,
     "E1/PLAN.md": 66,
     "E10/PLAN.md": 60,

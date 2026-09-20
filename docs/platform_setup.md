@@ -13,8 +13,8 @@
 
 | 平台约定 | 出处 | 对 v4 的影响 |
 |---|---|---|
-| 训练任务代码来源三选一：**Git 仓库 / 本地上传 / 我的云盘** | 训练任务文档 §选择代码来源 | v4 用 **Git 仓库**（本仓库） |
-| Git 仓库代码被复制到**临时**目录 `/code/workspace`，任务结束即丢 | 同上 | 启动命令**不得硬编码**克隆目录（用 `$(find /code/workspace -name run_train.sh | head -1)` 定位）；**代码里不得写入需要保留的东西** |
+| 训练任务代码来源三选一：**Git 仓库 / 本地上传 / 我的云盘** | 训练任务文档 §选择代码来源 | v4 用 **Git 仓库**（本仓库，**HTTPS** 地址） |
+| Git 仓库代码被复制到**临时**目录 `/code/workspace`，任务结束即丢；官方示例 `LlamaFactory/platform/run_train.sh` → `/code/workspace/LlamaFactory/platform/run_train.sh`，即**保留仓库目录名** | 训练任务文档 §Git 仓库 | 克隆目录名**仍不要硬编码**（用 `$(find /code/workspace -name run_train.sh | head -1)` 定位）；**代码里不得写入需要保留的东西** |
 | **云盘挂载在 `/data`**，任务结束/资源释放后仍保留 | 同上 + §云盘持久化 | 数据、缓存、checkpoint、日志、报告**全部写 `/data/v4/...`** |
 | 启动命令最长 **500 字符** | 训练任务文档 §填写启动命令 | 所有编排逻辑封装进 `run_train.sh`，启动命令只有一句 |
 | 单次任务运行时长最长 **7×24 h** | 训练任务文档 §设置运行时长 | 与 D1（用户放宽 100h）兼容；但仍要求 checkpoint 可续训 |
@@ -153,21 +153,28 @@ V4_DATA_ROOT=/data bash "$V4/tools/bootstrap_data.sh"
 
 | 项 | 值 |
 |---|---|
-| remote | `origin` = `git@github.com:sunny-boy-fqy/Petroleum-Competition.git` |
-| 认证 | SSH key（`~/.ssh/id_rsa`）；已验证 `ssh -T git@github.com` 返回 `Hi sunny-boy-fqy!` |
-| 分支 | **`master`**（平台任务的"分支"字段必须填 `master`，不是 `main`） |
+| remote（**仅本机 push 用**） | `origin` = `git@github.com:sunny-boy-fqy/Petroleum-Competition.git` |
+| 认证（**仅本机**） | SSH key（`~/.ssh/id_rsa`）；已验证 `ssh -T git@github.com` 返回 `Hi sunny-boy-fqy!` |
+| 分支 | 远端同时维护 **`main`** 与 **`master`**，两者指向**同一个 commit**（`main` 是平台「分支」字段的默认值，见 §四） |
 
 ```bash
 cd /home/fangqiyu/projects/Petroleum-Competition/v4
-git status --short          # 应为空（干净工作树）
-git push origin master      # 换机器/首次时用 git push -u origin master
-git log --oneline -1        # 记下这个 revision —— 平台任务跑的就是它
+git status --short                       # 应为空（干净工作树）
+git push origin HEAD:master HEAD:main    # 一次推送同时更新两个分支（防止 main 变旧）
+git log --oneline -1                     # 记下这个 revision —— 平台任务跑的就是它
 ```
 
+> **⚠️ 平台【仓库地址】≠ 本机 remote（最容易踩的坑）**
+> 平台的 Git 克隆发生在**平台侧**，那里**没有**你的 SSH 私钥。因此平台字段必须填
+> **HTTPS**：`https://github.com/sunny-boy-fqy/Petroleum-Competition.git`。
+> 填 `git@github.com:...`（SSH）会 `Permission denied (publickey)`，任务在**准备阶段**
+> 就失败：容器从未启动 → 卡片状态「错误」且**日志为空**。仓库是 public，HTTPS 匿名可拉。
+> 本机 push 继续用 SSH 地址（已配置），两者用途不同，不要混。
+
 > **协议（agent 必须遵守）**：每次让用户在平台上开跑训练/评测任务前，agent 给出的操作
-> 清单**必须包含**上面这条 `git push`，并写明待推送的 revision。平台只克隆**已 push** 的
-> 代码，漏掉这一步时任务会静默跑在旧代码上（日志里看不出来）—— 这是本流程最容易错、
-> 也最难察觉的一步。见 `PLAN.md` §3.1「代码同步协议」。
+> 清单**必须包含**上面这条 `git push`（**双分支**），并写明待推送的 revision。平台只克隆
+> **已 push** 的代码，漏掉这一步时任务会静默跑在旧代码上（日志里看不出来）—— 这是本流程
+> 最容易错、也最难察觉的一步。见 `PLAN.md` §3.1「代码同步协议」。
 
 ---
 
@@ -177,7 +184,8 @@ git log --oneline -1        # 记下这个 revision —— 平台任务跑的就
 |---|---|
 | 任务名称 | `v4-E0-env-check` / `v4-E1-row-baseline` / … |
 | 代码来源 | **Git 仓库** |
-| 仓库地址 / 分支 | `git@github.com:sunny-boy-fqy/Petroleum-Competition.git` / **`master`** |
+| 仓库地址 | **HTTPS**：`https://github.com/sunny-boy-fqy/Petroleum-Competition.git`（**不要用** `git@github.com:...`，平台没有你的 SSH key） |
+| 分支 | **`main`**（平台默认值）；远端 `main` 与 `master` 同指一个 commit，填 `master` 也能拉到 |
 | **启动命令**（≤500 字符） | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode all` |
 | 资源配置 | **Nvidia A100 \* 1**（80 GB 显存），4000m vCPU / 16 GiB 内存 |
 | 镜像 | 【我的镜像】→ `v4-train-py311-torch271-cu128`（步骤 1 构建）；未构建则先用官方 PyTorch 2.7.1 / CUDA 12.8 / Python 3.11 镜像 |
@@ -280,3 +288,24 @@ with RunLogger(f"E3_unet_fold{fold}") as log:
 5. **数据只需部署一次**：`/data` 持久；重复执行 `--mode data` 是幂等的（会覆盖同名文件并重新校验 sha256）。
 6. **回归保护**：解析器必须按**表头名**对齐（3 口井 schema 非规范），不得按列位置——详见 `E0/docs/data_card.md`。
 7. **评分口径**：一律 `missing_mode="drop"`（常数基线 70.490735 命中锚点），不得用全行分母口径出报告。
+8. **任务状态「错误」+ 日志为空 = 准备阶段失败**（2026-09-20 实测踩坑）。卡片的【日志】是
+   **容器内 stdout**，容器根本没起来时自然是空的。准备阶段只有三件事会失败：
+
+   | 准备阶段 | 典型原因 | 现象/确认方式 |
+   |---|---|---|
+   | 拉代码（`git clone`） | ① 仓库地址填了 **SSH** `git@github.com:...`（平台无 key，**最常见**）；② 分支名在远端不存在（平台**默认 `main`**，本仓库原本只有 `master`） | 固定表现为「错误」且**无日志**。现在 HTTPS + `main`/`master` 双分支已同时消除这两个原因 |
+   | 拉镜像 | 我的镜像被删/构建失效；镜像基础环境与所选资源不兼容（如 CPU/NPU 镜像选 A100） | 换**官方镜像** PyTorch 2.7.1 / CUDA 12.8 / py3.11 复跑同一条命令即可判定 |
+   | 调度 | 该规格暂时无资源 | 状态通常显示「排队」而非「错误」 |
+
+   **判定容器是否真的起来了（最可靠的一招）**：去【我的云盘】看 `/v4/logs/`。
+   `run_train.sh` 第 57 行就 `mkdir -p` 并 `tee` 到 `/data/v4/logs/train_<mode>_<时间>.log`，
+   所以**只要容器起来过，云盘里必有日志**（平台日志面板空也不影响）。云盘里没有 → 准备阶段失败，
+   与代码无关；云盘里有 → 直接读那份日志定位。
+
+   **零歧义探针**（不含任何 `$( )`、`|`、引号，排除命令解析因素；git 源 + 官方镜像）：
+
+   ```bash
+   pwd; ls -la; ls -la /code/workspace; find /code/workspace -maxdepth 3 -name run_train.sh; ls -la /data; ls -la /data/v4/logs 2>/dev/null; python -V
+   ```
+
+   有日志 → 平台能克隆、能起容器，问题在脚本参数或路径；无日志 → 拉代码/拉镜像环节。

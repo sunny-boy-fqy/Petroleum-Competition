@@ -1016,13 +1016,65 @@ class TestPushProtocolIsDocumented(unittest.TestCase):
     """
 
     REMOTE = "git@github.com:sunny-boy-fqy/Petroleum-Competition.git"
+    HTTPS = "https://github.com/sunny-boy-fqy/Petroleum-Competition.git"
 
     def test_every_entry_doc_carries_the_push_step(self):
         for rel in ("README.md", "docs/platform_setup.md", "docs/training_tasks.md", "PLAN.md"):
             src = _read(rel)
             self.assertIn("git push", src, f"{rel} 必须保留开跑前的 push 步骤")
             self.assertIn(self.REMOTE, src, f"{rel} 必须写明已配置的 remote")
-            self.assertIn("master", src, f"{rel} 必须写明分支是 master（平台任务要填它）")
+            self.assertIn("master", src, f"{rel} 必须写明远端有 master 分支")
+
+    def test_push_updates_both_branches(self):
+        """2026-09-20：远端同时维护 main 与 master（平台分支字段默认 main）。
+
+        漏推一个分支会让平台静默跑到旧代码上，所以 push 命令必须一次推两个 ref。
+        """
+        for rel in ("README.md", "docs/platform_setup.md", "docs/training_tasks.md", "PLAN.md"):
+            src = _read(rel)
+            self.assertIn("HEAD:master HEAD:main", src,
+                          f"{rel} 的 push 命令必须同时更新 master 与 main")
+
+    def test_platform_repo_field_is_https_never_ssh(self):
+        """平台【仓库地址】必须是 HTTPS：平台侧没有本机 SSH key。
+
+        起因（真实事故）：2026-09-20 首跑 `--mode all` 时，平台地址被填成本机 SSH remote
+        `git@github.com:...`，克隆在**准备阶段** Permission denied 失败，容器从未启动，
+        卡片显示「错误」且日志为空 —— 排查成本极高。这条回归禁止文档再把 SSH 地址
+        当作平台字段值。
+        """
+        for rel in ("README.md", "docs/platform_setup.md", "docs/training_tasks.md"):
+            src = _read(rel)
+            self.assertIn(self.HTTPS, src, f"{rel} 必须给出平台用的 HTTPS 仓库地址")
+        for rel in ("docs/platform_setup.md", "docs/training_tasks.md"):
+            # 只看"字段名恰好是 仓库地址"的表格行（故障排查表里的正文提到它不算字段）
+            rows = [ln for ln in _read(rel).splitlines()
+                    if re.match(r"^\|\s*仓库地址\s*\|", ln)]
+            self.assertTrue(rows, f"{rel} 必须保留平台「仓库地址」字段行")
+            for line in rows:
+                # 字段**值**（行内第一个 URL）必须是 HTTPS；行内其余位置允许出现
+                # SSH 地址作为"不要这样填"的反面警告。
+                first = re.search(r"(https?://\S+|git@\S+)", line)
+                self.assertIsNotNone(first, f"{rel} 的仓库地址行没有 URL：{line.strip()}")
+                self.assertTrue(first.group(1).startswith("https://"),
+                                f"{rel} 的平台仓库地址字段值必须是 HTTPS，实际是 {first.group(1)}")
+
+    def test_docs_explain_the_prep_stage_silent_failure(self):
+        """「错误 + 无日志」必须被文档解释，并给出云盘日志这条判定路径。"""
+        src = _read("docs/platform_setup.md")
+        self.assertIn("准备阶段", src)
+        self.assertIn("无日志", src)
+        self.assertIn("/data/v4/logs", src)
+        self.assertIn("Permission denied", src)
+        # 零歧义探针不能含命令替换（要能排除"平台不解析 $( )"这一因素）
+        probe = [ln for ln in src.splitlines() if "find /code/workspace -maxdepth 3" in ln]
+        self.assertTrue(probe, "docs/platform_setup.md 必须给出零歧义探针命令")
+        self.assertNotIn("$(", probe[0])
+
+    def test_launcher_header_warns_about_ssh_vs_https(self):
+        src = _read("run_train.sh")
+        self.assertIn(self.HTTPS, src)
+        self.assertIn("Permission denied", src)
 
     def test_plan_records_the_sync_protocol(self):
         src = _read("PLAN.md")

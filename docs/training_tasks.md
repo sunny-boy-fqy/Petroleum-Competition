@@ -6,19 +6,25 @@
 > **⚠️ 每次开跑前必须先 push**（协议见 `PLAN.md` §3.1 / `docs/platform_setup.md` 步骤 3）：
 > ```bash
 > cd /home/fangqiyu/projects/Petroleum-Competition/v4
-> git push origin master && git log --oneline -1
+> git push origin HEAD:master HEAD:main && git log --oneline -1
 > ```
-> 平台只克隆**已 push** 的代码。remote 与 SSH 认证已配置好（`origin` =
-> `git@github.com:sunny-boy-fqy/Petroleum-Competition.git`，分支 **`master`**），
+> 平台只克隆**已 push** 的代码。**本机**的 remote 与 SSH 认证已配置好
+> （`origin` = `git@github.com:sunny-boy-fqy/Petroleum-Competition.git`），
 > 不要再 `git init` / `git remote add`。
+
+> **⚠️ 平台【仓库地址】必须填 HTTPS，不能填上面那个 SSH 地址**：
+> `https://github.com/sunny-boy-fqy/Petroleum-Competition.git`
+> 平台侧**没有**你的 SSH 私钥，填 `git@github.com:...` 会 `Permission denied (publickey)`，
+> 任务在**准备阶段**（拉代码）就失败，容器从未启动 → 卡片显示「错误」且**没有任何日志**
+> （见 `docs/platform_setup.md` §六 故障排查）。仓库是 public，HTTPS 无需任何凭据。
 
 ## 通用字段（所有任务相同）
 
 | 字段 | 值 |
 |---|---|
 | 代码来源 | **Git 仓库** |
-| 仓库地址 | `git@github.com:sunny-boy-fqy/Petroleum-Competition.git`（已配置，直接用） |
-| 分支 | **`master`** |
+| 仓库地址 | `https://github.com/sunny-boy-fqy/Petroleum-Competition.git`（**HTTPS**，不是 `git@…`） |
+| 分支 | **`main`**（平台默认；remote 上 `main` 与 `master` 同指一个 commit，填哪个都能拉到） |
 | 资源配置 | **Nvidia A100 × 1**（80 GB 显存 / 4000m vCPU / 16 GiB 内存） |
 | 镜像 | 【我的镜像】→ `v4-train-py311-torch271-cu128`（场景 = **训练任务**）<br>未构建前先用官方 PyTorch 2.7.1 / CUDA 12.8 / Python 3.11 镜像 |
 | 训练/验证数据集 | 不挂载（数据走云盘 `/data`） |

@@ -51,10 +51,10 @@
 
 | 层级 | 数量 | 篇幅 | 状态 |
 |---|---:|---:|---|
-| 总计划 `PLAN.md` | 1 | **886 行** | ✅ 完成 |
+| 总计划 `PLAN.md` | 1 | **888 行** | ✅ 完成 |
 | 阶段计划 `E*/PLAN.md` | 12 | 平均 63 行（合计 759） | ✅ 完成 |
 | P 级子计划 `E*/P*/PLAN.md` | 33 | **平均 158 行**（合计 5,224） | ✅ 完成（V2 深度：输入/输出契约、执行步骤、参数表、完成判据、禁止事项、风险对策、停止规则、inner-OOF 选择协议、复算命令、Gate 预注册 JSON） |
-| 计划文件合计 | 46 | **6,869 行** | ✅ |
+| 计划文件合计 | 46 | **6,871 行** | ✅ |
 
 > **行数由 `tools/plan_stats.py` 实测、`tools/sync_plan_stats.py` 同步、`plan_stats.py --check` 校验**
 > （审查 R2-H6/R3-C2：此前手写数字两次过期，且旧校验只查总量、漏检阶段/P 分项）。
@@ -178,14 +178,16 @@ E1–E11 全部处于 `pending`，按 §七 的顺序执行；每个 Gate 的阈
 
 | 项 | 值 |
 |---|---|
-| remote | `origin` = `git@github.com:sunny-boy-fqy/Petroleum-Competition.git`（**已配置**） |
-| 认证 | SSH key（`~/.ssh/id_rsa`，`ssh -T git@github.com` 已验证通过） |
-| 分支 | **`master`**（`v4/` 是独立 git 仓库的根；平台任务的"分支"字段必须填 `master`） |
+| remote（**仅本机 push**） | `origin` = `git@github.com:sunny-boy-fqy/Petroleum-Competition.git`（**已配置**） |
+| 认证（**仅本机**） | SSH key（`~/.ssh/id_rsa`，`ssh -T git@github.com` 已验证通过） |
+| 分支 | 远端 **`main`** 与 **`master`** 同指一个 commit：平台「分支」字段默认 `main`（官方文档 §Git 仓库），本仓库历史上叫 `master`，**两个都保留**以免克隆失败 |
+| 平台【仓库地址】 | 必须是 **HTTPS** `https://github.com/sunny-boy-fqy/Petroleum-Competition.git`——平台侧没有 SSH key，填 `git@…` 会在准备阶段 `Permission denied (publickey)`，表现为「错误 + 无日志」 |
 
 - **每次让用户在平台上开跑训练/评测任务前，agent 给出的操作清单必须包含 `git push`**
   （并给出待推送的 revision）—— 平台只会克隆**已 push** 的代码，漏掉这一步会让任务跑到
   旧代码上，且日志里看不出来。这是本协议存在的唯一原因。
-- 推送命令固定在 `v4/` 目录执行：`git push origin master`（首次或换机器时 `-u`）。
+- 推送命令固定在 `v4/` 目录执行：`git push origin HEAD:master HEAD:main`
+  （一次更新两个分支；首次或换机器时用 `git push -u origin master`）。
 - 本机开发机与云端**只通过 git 同步代码**，数据/缓存/报告走云盘 `/data`（§3.1）；**不得**
   用平台临时目录 `/code/workspace` 保存任何需要留存的东西。
 

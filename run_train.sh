@@ -3,9 +3,15 @@
 # v4 平台训练任务统一入口（Git 仓库代码来源）
 # =============================================================================
 # 平台约定（见 docs/platform_setup.md）：
-#   - Git 仓库代码被克隆到**临时**目录 /code/workspace（任务结束即丢）
+#   - Git 仓库代码被克隆到**临时**目录 /code/workspace/<仓库名>（任务结束即丢）
 #   - 云盘挂载在**持久**目录 /data（只有这里的内容会保留）
 #   - 启动命令最长 500 字符，因此本脚本承担全部编排逻辑
+#
+# 平台【代码来源 Git 仓库】两件事必须与"本机 git remote"区分开（2026-09-20 实测踩坑）：
+#   1) 仓库地址填 **HTTPS**：https://github.com/sunny-boy-fqy/Petroleum-Competition.git
+#      平台侧没有本机 SSH key，填 git@github.com:... 会 Permission denied (publickey)，
+#      任务在**准备阶段**就失败 -> 容器没起来 -> 卡片「错误」且**日志为空**。
+#   2) 分支填 main（平台默认）或 master 均可：远端两个分支同指一个 commit。
 #
 # 平台【启动命令】填：
 #     bash "$(find /code/workspace -name run_train.sh | head -1)" --mode all
