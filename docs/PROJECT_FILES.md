@@ -96,8 +96,9 @@ v4/
 │   │                            compare_row_vs_seq.py（同折同头受控对照 + 配对 CI）
 │   ├── E4/code/                 train_patchtf.py（PatchTF 5 折 OOF + 网格搜索/CI·位置·容量消融、
 │   │                            还原与拼缝体检、vs E3 paired CI Gate；无基线不伪造 delta）
-│   └── E5/code/                 head_por.py（冻结骨干 + POR 头两阶段训练、连续切片/占位行分项、
-│                                参数化消融含 0.1 下界反例、vs 骨干自身 POR 的配对 CI Gate）
+│   └── E5/code/                 e5_common.py（冻结骨干/隐状态/两阶段单头训练/配对 CI/Gate 公共件）、
+│                                head_por.py（POR 头 + 连续切片·占位行分项 + 0.1 下界反例消融）、
+│                                head_perm.py（PERM 三档 z 输出 + 桶头对照 + 尾部单调性报告）
 │
 ├── versions/                 事实源
 │   ├── registry.json            可运行版本注册表
@@ -143,13 +144,14 @@ v4/
 │   ├── test_frozen_e5.py         冻结读回等价 / 分块隐状态 / 钩子兜底 / 内存收据
 │   ├── test_metrics_auc.py       平均秩 AUC / AP / 单类标签返 None / 逐目标+联合上报
 │   ├── test_registry_writes.py   候选状态机：非法状态拒绝、submitted 不可覆盖、原子写
-│   ├── test_e5_pipeline.py       E5 端到端（随机骨干预检：报告/分项/消融/不判 PASS）+ run_train.sh 接线
+│   ├── test_e5_pipeline.py       E5/P0 端到端（随机骨干预检：报告/分项/消融/不判 PASS）+ 接线
+│   ├── test_e5_perm_pipeline.py  E5/P1 端到端（PERM 契约有限且 >0、尾部报告、桶头/linear 臂、路由）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
 │   ├── test_e1_pipeline.py       E1 端到端（合成井 → Gate/prereg/候选，需 torch）
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**513 项**；本地无 torch 解释器 150 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**519 项**；本地无 torch 解释器 154 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包

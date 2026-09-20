@@ -223,9 +223,32 @@ run_stage() {
     E4) python3 "$HERE/E4/code/train_patchtf.py" \
           --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
           --run-root "$RUN_ROOT" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1 | tee -a "$LOG" ;;
-    E5) python3 "$HERE/E5/code/head_por.py" \
+    E5)
+        # 目标路由：`--target por|perm|sw` 决定跑哪个逐目标头（其余参数原样透传）
+        e5_script="$HERE/E5/code/head_por.py"
+        e5_args=()
+        e5_expect=""
+        for a in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
+          if [[ "$e5_expect" == "target" ]]; then
+            case "${a,,}" in
+              por)  e5_script="$HERE/E5/code/head_por.py" ;;
+              perm) e5_script="$HERE/E5/code/head_perm.py" ;;
+              sw)   e5_script="$HERE/E5/code/head_sw.py" ;;
+              *) log "!! E5 --target 只支持 por/perm/sw，got $a"; return 1 ;;
+            esac
+            e5_expect=""
+            continue
+          fi
+          if [[ "$a" == "--target" ]]; then e5_expect="target"; continue; fi
+          e5_args+=("$a")
+        done
+        if [[ "$e5_expect" == "target" ]]; then log "!! --target 缺少取值"; return 1; fi
+        if [[ ! -f "$e5_script" ]]; then
+          log "!! $e5_script 尚未实现（见 E5/*/PLAN.md）"; return 1
+        fi
+        python3 "$e5_script" \
           --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
-          --run-root "$RUN_ROOT" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1 | tee -a "$LOG" ;;
+          --run-root "$RUN_ROOT" "${e5_args[@]+"${e5_args[@]}"}" 2>&1 | tee -a "$LOG" ;;
     *)  log "!! 阶段 $STAGE 尚未实现（见 v4/PLAN.md §七 与各 E*/PLAN.md）"; return 1 ;;
   esac
 }

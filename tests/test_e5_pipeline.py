@@ -142,7 +142,7 @@ class TestE5PorPipeline(unittest.TestCase):
 class TestE5ScriptContract(unittest.TestCase):
     def test_run_train_dispatches_e5(self):
         src = (V4 / "run_train.sh").read_text(encoding="utf-8")
-        self.assertIn("E5) python3", src)
+        self.assertIn("E5)", src)
         self.assertIn("E5/code/head_por.py", src)
 
     def test_help_lists_e5_knobs(self):
