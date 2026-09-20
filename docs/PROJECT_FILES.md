@@ -58,8 +58,10 @@ v4/
 │   │   │                         瓶颈窄化保证参数量对等 + 门控熵/负载均衡 + 任务梯度余弦）
 │   │   ├── well_head.py          E8/P1 井级 attention-pool → 逐目标井级偏置 Δ（容量 ≤ 主干 1/8、
 │   │   │                         λ=0 精确恒等、无井身份键审计）
-│   │   └── patchtf.py            E4/P0 Patch Transformer（深度维 patch + 归一化 overlap-add；
-│   │                             channel-independent / 相对位置开关；SDPA；states 逐行隐状态）
+│   │   ├── patchtf.py            E4/P0 Patch Transformer（深度维 patch + 归一化 overlap-add；
+│   │   │                         channel-independent / 相对位置开关；SDPA；states 逐行隐状态）
+│   │   └── target_heads.py       E5 逐目标头（PorHead 四种参数化+表示能力收据、PermHead
+│   │                             截断/桶头/分位、SwHead 单尺度 0–100 + 精确认原子）
 │   ├── losses/score_aligned.py   三段式对齐损失（Charbonnier + softplus + 尺度归一化 L_aux + 逐目标原子 BCE + 边界聚焦）
 │   ├── inference/
 │   │   ├── contract.py           提交契约校验（10 井/95,948 行/字段/有限性/SW 尺度守卫）
@@ -75,6 +77,7 @@ v4/
 │   │   ├── fold_runner.py        **两阶段单折协议**（E1/E2/E3 共用：inner-OOF 选 epoch/τ）
 │   │   ├── seq_loop.py           E3 序列训练循环（chunk 批 + **分块重叠推理+加权拼接**）
 │   │   ├── ema.py                E8/P2 EMA 影子（decay∈{0.99,0.999,0.9995}，逐 step；context_ema 精确还原）
+│   │   ├── frozen.py             E5 冻结骨干取逐行隐状态（原生 forward_states / 前向钩子兜底 + 内存收据）
 │   │   ├── checkpoint.py         bf16 state_dict + manifest（含连续头标尺与 L_aux 尺度）+ 滚动淘汰 + resume 校验
 │   │   └── tb_logger.py          TensorBoard + JSONL 日志（平台迭代曲线；无 tensorboard 时降级）
 │   ├── versioning/registry.py    版本注册表读写（predict.py 的版本来源）
@@ -132,12 +135,14 @@ v4/
 │   ├── test_models_e8.py         MMoE 同键+参数量对等+门控熵 / 井级分支容量与 λ=0 恒等 / EMA 影子
 │   ├── test_patchtf_e4.py        patch 几何覆盖 / 三种权重精确还原 / 奇数长度同长输出 / CI·位置消融
 │   ├── test_e4_pipeline.py       E4 端到端（合成井 → 报告/体检/Gate）+ 入口与 run_train.sh 接线
+│   ├── test_target_heads_e5.py   POR 表示能力（0.1 下界禁用臂）/ PERM 截断与桶头 / SW 单尺度与精确原子
+│   ├── test_frozen_e5.py         冻结读回等价 / 分块隐状态 / 钩子兜底 / 内存收据
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
 │   ├── test_e1_pipeline.py       E1 端到端（合成井 → Gate/prereg/候选，需 torch）
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**448 项**；本地无 torch 解释器 123 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**484 项**；本地无 torch 解释器 146 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
