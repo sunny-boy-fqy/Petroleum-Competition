@@ -288,8 +288,8 @@
     }
   },
   "test_suite": {
-    "n_test_files": 54,
-    "n_test_methods": 730
+    "n_test_files": 55,
+    "n_test_methods": 733
   },
   "cloud_pending": [
     "E1 5 折 OOF ≥ 78.0（正式 Gate，需云端跑 80 井）",

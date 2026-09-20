@@ -236,6 +236,7 @@ v4/
 │   ├── test_chain_e2e.py         全链路串联（E1→E6→E9 aggregate→E9 choose→E10 dry-run，同一合成缓存，
 │   │                             断言各阶段产物按契约落地且不污染仓库事实源）
 │   ├── test_goal_audit.py        达成度审计（真仓库本地完整、云端待办覆盖 E1–E10、空仓库判 GAP）
+│   ├── test_final_acceptance.py  验收批（--quick 通过、总结行解析正确、解释器可发现）
 │   ├── test_loss_ablation_lib.py E7/P0 库层（λ1 三条退火曲线、L_aux 绝对 vs 归一化尺度不变、
 │   │                             PERM 截断开关、边界聚焦、total_loss 透传）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
@@ -243,7 +244,7 @@ v4/
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**730 项**；本地无 torch 解释器 202 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**733 项**；本地无 torch 解释器 202 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
@@ -253,6 +254,8 @@ v4/
 │   ├── check_pipeline.py         流水线完整性（E1–E10 脚本/接线/入口/报告命名，缺失即失败）
 │   ├── audit_goal.py             目标达成度审计（逐阶段 代码/单测/报告名/接线/文档 +
 │   │                             横向模块 + 云端待办显式列出 → reports/E0_goal_audit.json）
+│   ├── final_acceptance.py       最终验收批（两套解释器全量测试 + 四个 checker + 契约 Gate 复算 +
+│   │                             参考数据校验 + 计划统计 → reports/E0_final_acceptance.json）
 │   ├── check_status.py           状态台账与实物一致性校验
 │   ├── check_data_leak.py        全量 90 井输入-标签泄漏回归
 │   ├── plan_stats.py             计划行数统计（唯一事实源；`--check` 逐条断言阶段/P/平均/总量）
@@ -305,7 +308,7 @@ v4/
 |---|---|---|
 | `src/` | constants, portability, score, data/{parse,labels,dataset,disk_guard,row_dataset,seq_dataset,augment}, features/{basic,physics,window,well,groups}, losses/score_aligned, models/{row_mlp,unet1d,tcn,patchtf,heads,mmoe,well_head,target_heads}, training/{loop,metrics,fold_runner,seq_loop,checkpoint,tb_logger,state_train,frozen,ema}, inference/{contract,atomic_gate,predictor,decode}, ensemble/blend, validation/{folds,gates}, versioning/registry | 唯一未实现：**`L_phys` 物理一致性项**（E7/P0 的 exp7，已在 `E7_loss_ablation.json::not_implemented` 与报告中显式标注） |
 | 根目录 | predict.py（含 PD1 折集成）、train.py（阶段转发/配置默认值）、run_train.sh（E0–E10 全部阶段）、requirements.txt、configs/v4.yaml、configs/paths.yaml | — |
-| 产物 | reports/E0_*.json（12 份）——其中 E0_goal_audit.json / E0_pipeline_check.json 是新增的自检证据；另有 `versions/{registry,candidates,status,folds_sha256}.json`、`versions/prereg_templates/`（33 份） | 各阶段 Gate/报告在**云端**产出（`$V4_REPORTS_DIR`），本仓库只保留 E0 口径证据快照 |
+| 产物 | reports/E0_*.json（13 份）——其中 E0_goal_audit.json / E0_pipeline_check.json / E0_final_acceptance.json 是自检证据；另有 `versions/{registry,candidates,status,folds_sha256}.json`、`versions/prereg_templates/`（33 份） | 各阶段 Gate/报告在**云端**产出（`$V4_REPORTS_DIR`），本仓库只保留 E0 口径证据快照 |
 | `run_train.sh` | `env` / `data` / `e0` / `smoke` / `data-health`；`--stage E1..E10`（E2/E5/E6/E7/E8/E9/E10 带 `--phase`/`--target` 子路由） | `--mode all` 会自动续跑 `--stage`（默认 E1） |
 
 ### 三之三、本地与云端的边界（避免把"契约层通过"当成"成绩已拿到"）
