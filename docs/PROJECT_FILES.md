@@ -49,7 +49,11 @@ v4/
 │   │   ├── window.py             F_win（居中窗 {11,51,201} × 6 统计 = 234 列）
 │   │   ├── well.py               F_well（井级 13×5 统计 + 5 标量 = 70 列，逐行广播）
 │   │   └── groups.py             **特征组注册表**（FeatureSpec/缓存/溯源/审计）
-│   ├── models/                   row_mlp（q_joint + q_por/q_perm/q_sw）/ unet1d / tcn / patchtf / heads / mmoe
+│   ├── models/
+│   │   ├── row_mlp.py            E1 行级 MLP（q_joint + 逐目标原子头 + 连续头）
+│   │   ├── heads.py              **序列头**（与 RowMLP 同键，E3 复用同一套损失/解码/τ）
+│   │   ├── unet1d.py             E3 1D U-Net（depthwise-separable + 空洞 + 跳连，全段 seq2seq）
+│   │   └── tcn.py                E3 **非因果** TCN（居中 pad、dilation→512、weight norm）
 │   ├── losses/score_aligned.py   三段式对齐损失（Charbonnier + softplus + 尺度归一化 L_aux + 逐目标原子 BCE + 边界聚焦）
 │   ├── inference/
 │   │   ├── contract.py           提交契约校验（10 井/95,948 行/字段/有限性/SW 尺度守卫）

@@ -160,15 +160,15 @@
     {
       "stage": "E3",
       "title": "深度序列主干",
-      "status": "pending",
+      "status": "in_progress",
       "p": [
         {
           "id": "P0",
-          "status": "pending"
+          "status": "in_progress"
         },
         {
           "id": "P1",
-          "status": "pending"
+          "status": "in_progress"
         },
         {
           "id": "P2",
@@ -180,7 +180,8 @@
         "threshold": {
           "oof_total_min": 81.0
         }
-      }
+      },
+      "note": "E3/P1 主干已实现并单测：src/models/{heads,unet1d,tcn}.py —— 全段 seq2seq （长度 64/257/1024 严格保长）、TCN 非因果（未来与过去均影响输出，已用感受野内扰动证明）、与 RowMLP 同键（total_loss/解码/τ 可原样复用）；顺带修复损失层对序列掩码 (B,L,3) 的兼容（`mask[..., t]`）。E3/P0 序列数据集与 chunk 拼接、E3/P2 消融与 Gate 待下一轮。"
     },
     {
       "stage": "E4",

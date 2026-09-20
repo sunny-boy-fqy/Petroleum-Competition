@@ -144,9 +144,10 @@ def aligned_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,
     缺测行始终由 `mask` 排除。
     """
     require("torch")
-    m_por = None if mask is None else mask[:, 0]
-    m_perm = None if mask is None else mask[:, 1]
-    m_sw = None if mask is None else mask[:, 2]
+    # E3 泛化：行模式 mask 是 (B,3)、序列模式是 (B,L,3)；`[..., t]` 同时兼容两者
+    m_por = None if mask is None else mask[..., 0]
+    m_perm = None if mask is None else mask[..., 1]
+    m_sw = None if mask is None else mask[..., 2]
 
     s_por = align_score_relative(y_por, p_por, 0.08, eps, alpha, beta)
     s_perm = align_score_log(z_perm, zhat_perm, alpha, beta)
@@ -211,9 +212,9 @@ def aux_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,
             l = l * W[:, sw_col]
         return masked_mean(l, m)
 
-    m_por = None if mask is None else mask[:, 0]
-    m_perm = None if mask is None else mask[:, 1]
-    m_sw = None if mask is None else mask[:, 2]
+    m_por = None if mask is None else mask[..., 0]
+    m_perm = None if mask is None else mask[..., 1]
+    m_sw = None if mask is None else mask[..., 2]
     return (
         0.30 * sl1(p_por, y_por, m_por, 0, s_por)
         + 0.35 * sl1(zhat_perm, z_perm, m_perm, 1, 1.0)
@@ -253,8 +254,8 @@ def atom_bce(q_atom_logit, y_atom, mask, pos_weight=None, alpha_nonjoint: float 
     require("torch")
     q = torch.as_tensor(q_atom_logit)
     y = torch.as_tensor(y_atom, dtype=q.dtype, device=q.device)
-    if y.dim() != 2 or y.shape[1] != 3:
-        raise ValueError(f"y_atom must be (B,3), got {tuple(y.shape)}")
+    if y.shape[-1] != 3:
+        raise ValueError(f"y_atom must be (...,3)，got {tuple(y.shape)}")
     pw = None
     if pos_weight is not None:
         pw = torch.as_tensor(pos_weight, dtype=q.dtype, device=q.device).reshape(-1)
@@ -265,15 +266,15 @@ def atom_bce(q_atom_logit, y_atom, mask, pos_weight=None, alpha_nonjoint: float 
     if y_joint is None:
         nonjoint = torch.ones_like(y)
     else:
-        yj = torch.as_tensor(y_joint, dtype=q.dtype, device=q.device).reshape(-1, 1)
+        yj = torch.as_tensor(y_joint, dtype=q.dtype, device=q.device).unsqueeze(-1)
         nonjoint = (1.0 - yj).expand_as(y)
     w = 1.0 + float(alpha_nonjoint) * y * nonjoint
 
     m = None if mask is None else torch.as_tensor(mask, dtype=q.dtype, device=q.device)
     parts = {}
     for t, name in enumerate(C.TARGETS):
-        wt = w[:, t] if m is None else w[:, t] * m[:, t]
-        bce_t = torch.nan_to_num(bce[:, t], nan=0.0, posinf=0.0, neginf=0.0)
+        wt = w[..., t] if m is None else w[..., t] * m[..., t]
+        bce_t = torch.nan_to_num(bce[..., t], nan=0.0, posinf=0.0, neginf=0.0)
         parts[name] = (bce_t * wt).sum() / wt.sum().clamp_min(1.0)
     mean = (parts["POR"] + parts["PERM"] + parts["SW"]) / 3.0
     if return_parts:
@@ -371,7 +372,8 @@ def total_loss(out: dict, batch: dict, lam1: float = 1.0, lam2: float | None = N
             y_joint = batch.get("y_ph")
         if y_joint is None:
             raise ValueError("total_loss: joint term enabled but batch has neither 'y_joint' nor 'y_ph'")
-        joint_mask = (mask.sum(dim=1) > 0).to(mask.dtype)
+        # 行模式 (B,3) 与序列模式 (B,L,3) 都按**最后一维**判"该点是否有任一目标被观测"
+        joint_mask = (mask.sum(dim=-1) > 0).to(mask.dtype)
         jl = joint_bce(_require_logit(out, "q_joint_logit", "q_joint"), y_joint, joint_mask)
         _add("joint", jl, w_joint)
         parts["ph"] = jl            # 旧键别名（日志兼容）
