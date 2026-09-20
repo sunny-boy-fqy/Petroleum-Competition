@@ -49,6 +49,7 @@ class TrainConfig:
     patience: int = 5
     seed: int = 42
     lam1_start: float = 1.0
+    lam1_schedule: str = "linear_to_0.1"   # constant / linear_to_0.1 / cosine
     lam1_end: float = 0.1
     lam1_frac: float = 0.6
     lam_atom: float = 0.5
@@ -135,13 +136,35 @@ class TorchFold:
         return {k: v[idx] for k, v in self.y.items()}
 
 
-def lam1_at(epoch: int, epochs: int, cfg: TrainConfig) -> float:
-    """λ1 线性退火：前 `lam1_frac` 比例 epoch 内从 `lam1_start` 降到 `lam1_end`。"""
-    span = max(int(round(epochs * float(cfg.lam1_frac))), 1)
+def lam1_schedule(kind: str, epoch: int, epochs: int, cfg: TrainConfig) -> float:
+    """λ1 退火曲线（E7/P0 消融臂）：`constant` / `linear_to_0.1` / `cosine`。
+
+    * `constant`      : 全程 `lam1_start`（**不退化**，作为"退火到底有没有用"的对照）；
+    * `linear_to_0.1` : 前 `lam1_frac` 比例 epoch 内从 `lam1_start` 线性降到 `lam1_end`；
+    * `cosine`        : 同一区间内余弦退火（两端导数为 0，中段更快）。
+
+    三者都保证 `epoch >= span` 后恒为 `lam1_end`（可复算的终值）。
+    """
+    k = str(kind or "linear_to_0.1").lower()
+    span = max(int(round(int(epochs) * float(cfg.lam1_frac))), 1)
+    if k in ("constant", "const", "off"):
+        return float(cfg.lam1_start)
     if epoch >= span:
         return float(cfg.lam1_end)
     r = float(epoch) / float(span)
-    return float(cfg.lam1_start + (cfg.lam1_end - cfg.lam1_start) * r)
+    if k in ("cosine", "cos"):
+        import math as _m
+        frac = 0.5 * (1.0 - _m.cos(_m.pi * r))
+    elif k in ("linear", "linear_to_0.1", "linear_to_end"):
+        frac = r
+    else:
+        raise ValueError(f"未知 λ1 退火曲线：{kind!r}（constant/linear_to_0.1/cosine）")
+    return float(cfg.lam1_start + (cfg.lam1_end - cfg.lam1_start) * frac)
+
+
+def lam1_at(epoch: int, epochs: int, cfg: TrainConfig) -> float:
+    """兼容旧调用点：按 `cfg.lam1_schedule` 取曲线（默认线性到 `lam1_end`）。"""
+    return lam1_schedule(getattr(cfg, "lam1_schedule", "linear_to_0.1"), epoch, epochs, cfg)
 
 
 def train_epoch(model, opt, data: TorchFold, cfg: TrainConfig, epoch: int,

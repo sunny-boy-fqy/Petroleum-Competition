@@ -62,7 +62,9 @@ v4/
 │   │   │                         channel-independent / 相对位置开关；SDPA；states 逐行隐状态）
 │   │   └── target_heads.py       E5 逐目标头（PorHead 四种参数化+表示能力收据、PermHead
 │   │                             截断/桶头/分位、SwHead 单尺度 0–100 + 精确认原子）
-│   ├── losses/score_aligned.py   三段式对齐损失（Charbonnier + softplus + 尺度归一化 L_aux + 逐目标原子 BCE + 边界聚焦）
+│   ├── losses/score_aligned.py   三段式对齐损失（Charbonnier + softplus + 尺度归一化 L_aux
+│   │                             （可切绝对 Smooth L1）+ 逐目标原子 BCE + 边界聚焦
+│   │                             （κ/σ 可调）+ PERM 官方截断开关 `perm_clamp`）
 │   ├── inference/（`predict.py` 已接线 PD1：manifest→权重→逐井解码→契约校验）
 │   │   ├── contract.py           提交契约校验（10 井/95,948 行/字段/有限性/SW 尺度守卫）
 │   │   ├── atomic_gate.py        **逐目标硬切换 τ_t** + joint_guard + 平台区中点选择 + 误判代价（numpy，无 torch）
@@ -73,7 +75,8 @@ v4/
 │   │   ├── folds.py              按井折读取 + inner 折 + 加权 cluster bootstrap
 │   │   └── gates.py              Gate 预注册校验与聚合判定（已实现）
 │   ├── training/
-│   │   ├── loop.py               训练循环：bf16 autocast（npu/cuda/cpu）、λ1 退火、梯度裁剪、
+│   │   ├── loop.py               训练循环：bf16 autocast（npu/cuda/cpu）、λ1 退火
+│   │   │                         （constant / linear_to_0.1 / cosine，`lam1_schedule`）、梯度裁剪、
 │   │   │                         best-epoch 权重写回、时间预算、每 epoch 磁盘守卫、时间日志
 │   │   ├── metrics.py            预测→官方分数口径（连续/原子门/占位行命中率/原子头 P·R·F1）
 │   │                         + AUC/AP（平均秩实现，E6 逐目标上报；单类标签返回 None）
@@ -176,12 +179,14 @@ v4/
 │   ├── test_e6_gate.py           E6/P2 Gate（证据齐全才过、缺证据/缺 OOF 一律不判过、绝对门槛）
 │   ├── test_e6_p2.py             E6/P2 端到端（P0→P1→build_pd1→真实 CPU 推理→注册→Gate）
 │   ├── test_e7_decode.py         E7/P1 解码（算子单调性/尺度收据/期望值动作表/平坦区/搜索端到端）
+│   ├── test_loss_ablation_lib.py E7/P0 库层（λ1 三条退火曲线、L_aux 绝对 vs 归一化尺度不变、
+│   │                             PERM 截断开关、边界聚焦、total_loss 透传）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
 │   ├── test_e1_pipeline.py       E1 端到端（合成井 → Gate/prereg/候选，需 torch）
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**600 项**；本地无 torch 解释器 175 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**611 项**；本地无 torch 解释器 181 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包

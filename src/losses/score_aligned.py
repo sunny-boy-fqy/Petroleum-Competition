@@ -56,7 +56,7 @@ def align_score_relative(y, yhat, delta: float, eps: float = 1e-3,
 
 
 def align_score_log(z, zhat, alpha: float = 1e-3, beta: float = 20.0,
-                    eps: float = 1e-3):
+                    eps: float = 1e-3, clamp: bool = True):
     """PERM 的对齐**得分**（log10 空间，与官方严格同构）。
 
     官方：`s = max(0, 1 − |log10(max(ŷ/y, ε))|)`
@@ -70,7 +70,8 @@ def align_score_log(z, zhat, alpha: float = 1e-3, beta: float = 20.0,
     require("torch")
     import math as _math
     d = zhat - z
-    d = torch.maximum(d, torch.full_like(d, _math.log10(eps)))
+    if clamp:                       # 官方截断；`clamp=False` 是 E7/P0 的对照臂
+        d = torch.maximum(d, torch.full_like(d, _math.log10(eps)))
     ell = smooth_abs(d, alpha)
     return 1.0 - ell + F.softplus(ell - 1.0, beta=beta)
 
@@ -131,7 +132,8 @@ def aligned_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,
                  w_por: float = 0.30, w_perm: float = 0.35, w_sw: float = 0.35,
                  eps: float = 1e-3, alpha: float = 1e-3, beta: float = 20.0,
                  boundary_kappa: float = 0.0, boundary_sigma: float = 0.25,
-                 y_atom=None, include_atom_mask: bool = True):
+                 y_atom=None, include_atom_mask: bool = True,
+                 perm_clamp: bool = True):
     """三目标加权对齐损失（返回标量，越小越好）。
 
     mask : (B, 3) float，1=该目标参与监督（缺测为 0）
@@ -150,7 +152,7 @@ def aligned_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,
     m_sw = None if mask is None else mask[..., 2]
 
     s_por = align_score_relative(y_por, p_por, 0.08, eps, alpha, beta)
-    s_perm = align_score_log(z_perm, zhat_perm, alpha, beta)
+    s_perm = align_score_log(z_perm, zhat_perm, alpha, beta, clamp=perm_clamp)
     s_sw = align_score_relative(y_sw, p_sw, 0.05, eps, alpha, beta)
 
     atom = None
@@ -182,7 +184,7 @@ def aligned_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,
 
 def aux_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,
              s_por: float = 11.34, s_sw: float = 20.0, huber_beta: float = 1.0,
-             slice_weight=None):
+             slice_weight=None, normalize: bool = True):
     """变换空间稠密损失（早期梯度来源）——**逐目标尺度归一化**（R3）。
 
         aux_por  = smooth_l1((p_por − y_por) / s_por)
@@ -199,6 +201,9 @@ def aux_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,
       - 联合占位行在连续头损失上取 0.1–0.3 权重（硬切换后连续头不再服务于它们）；
       - 非联合的原子行保留中等权重（原子头误判时连续头是 fallback）。
     **权重永远不得为 0**（统一夹到 `min_weight=1e-3`，见 `_as_slice_weight`）。
+
+    `normalize=False`（E7/P0 消融臂）：用**绝对** Smooth L1（不除 `s_por`/`s_sw`），
+    用于验证"尺度归一化是否真的必要"——预期 SW（量级 ~99.9）会支配梯度。
     """
     require("torch")
 
@@ -215,10 +220,12 @@ def aux_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,
     m_por = None if mask is None else mask[..., 0]
     m_perm = None if mask is None else mask[..., 1]
     m_sw = None if mask is None else mask[..., 2]
+    scale_por = s_por if normalize else 1.0
+    scale_sw = s_sw if normalize else 1.0
     return (
-        0.30 * sl1(p_por, y_por, m_por, 0, s_por)
-        + 0.35 * sl1(zhat_perm, z_perm, m_perm, 1, 1.0)
-        + 0.35 * sl1(p_sw, y_sw, m_sw, 2, s_sw)
+        0.30 * sl1(p_por, y_por, m_por, 0, scale_por)
+        + 0.35 * sl1(zhat_perm, z_perm, m_perm, 1, 1.0)   # log10 空间本身已同量级
+        + 0.35 * sl1(p_sw, y_sw, m_sw, 2, scale_sw)
     )
 
 
@@ -345,6 +352,7 @@ def total_loss(out: dict, batch: dict, lam1: float = 1.0, lam2: float | None = N
     s_por = kw.pop("s_por", 11.34)
     s_sw = kw.pop("s_sw", 20.0)
     huber_beta = kw.pop("huber_beta", 1.0)
+    aux_normalize = kw.pop("aux_normalize", True)
 
     if mask is None:
         mask = torch.ones_like(torch.as_tensor(out["por"]))[:, None].expand(-1, 3)
@@ -365,7 +373,8 @@ def total_loss(out: dict, batch: dict, lam1: float = 1.0, lam2: float | None = N
         _add("aux", aux_loss(
             batch["por"], out["por"], batch["perm_z"], out["perm_z"],
             batch["sw"], out["sw"], mask, s_por=s_por, s_sw=s_sw,
-            huber_beta=huber_beta, slice_weight=slice_weight), lam1)
+            huber_beta=huber_beta, slice_weight=slice_weight,
+            normalize=aux_normalize), lam1)
     if joint_on:
         y_joint = batch.get("y_joint")
         if y_joint is None:
