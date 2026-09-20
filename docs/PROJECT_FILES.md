@@ -113,7 +113,10 @@ v4/
 │   │                            swing 检查 → E5_per_target.json + E5_gate.json，纯 numpy）
 │   ├── E7/code/                 decode_search.py（纯 numpy：内折 OOF 上搜 bias/收缩/期望值解码 +
 │   │                            敏感性热图 → E7_decode_search.json + versions/configs/decode_v1.json +
-│   │                            E7_P1_gate.json）、ablate_loss.py（7 组损失消融，下一轮）
+│   │                            E7_P1_gate.json）、
+│   │                            ablate_loss.py（七组损失消融臂：exp1 三项/exp2 λ₁×退火/exp3 λ₂/
+│   │                            exp4 归一化/exp5 边界聚焦（默认关）/exp6 PERM 截断；exp7 L_phys
+│   │                            显式记为 not_implemented → 内折选择 → loss_v1.json + Gate）
 │   └── E6/code/                 train_state.py（原子状态头两阶段：阶段 1 原子+联合头、阶段 2 冻结
 │   │                            原子头训连续头 + 切片权重；τ 内折选；逐目标 AUC/Acc/P·R·F1；
 │   │                            无插值检查；标签打乱负对照；E6_atomic_report.json + Gate；
@@ -179,6 +182,7 @@ v4/
 │   ├── test_e6_gate.py           E6/P2 Gate（证据齐全才过、缺证据/缺 OOF 一律不判过、绝对门槛）
 │   ├── test_e6_p2.py             E6/P2 端到端（P0→P1→build_pd1→真实 CPU 推理→注册→Gate）
 │   ├── test_e7_decode.py         E7/P1 解码（算子单调性/尺度收据/期望值动作表/平坦区/搜索端到端）
+│   ├── test_e7_ablate_loss.py    E7/P0 端到端（臂集合数量对齐 §5、exp1/exp6 子集、smoke 不写仓库配置）
 │   ├── test_loss_ablation_lib.py E7/P0 库层（λ1 三条退火曲线、L_aux 绝对 vs 归一化尺度不变、
 │   │                             PERM 截断开关、边界聚焦、total_loss 透传）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
@@ -186,7 +190,7 @@ v4/
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**611 项**；本地无 torch 解释器 181 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**619 项**；本地无 torch 解释器 184 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
