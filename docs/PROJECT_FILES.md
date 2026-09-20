@@ -126,7 +126,9 @@ v4/
 │   │                            verify_inference.py（干净目录只放代码包+data 复现：两次 sha256 一致、
 │   │                            逐点差 ≤1e-6、<30min/<8GiB → E10_reproduce_report.json）、
 │   │                            submit.py（追加式提交日志 + 配额 + 指纹 + --freeze 冻结候选 +
-│   │                            b0_fallback 分支如实记录 → E10_submission_log.json）
+│   │                            b0_fallback 分支如实记录 → E10_submission_log.json）、
+│   │                            build_b0_fallback.py（从 v1 冻结包原样构建**自包含**兜底包，
+│   │                            干净目录复现且逐点 ≤1e-9；缺 v1 产物显式 missing_v1_sources）
 │   ├── E9/code/                 aggregate_oof.py（纯 numpy：候选 OOF 可复算 + 护栏下限
 │   │                            max(75, B0_local−1, B0_aboard−0.5)=81.7757 + 排名/短名单 →
 │   │                            E9_validation_report.json + E9_P0_gate.json）、
@@ -227,6 +229,8 @@ v4/
 │   ├── test_e10_package.py       E10 导出与打包（fp32+npz+确定性、ONNX 降级、包内容/体积/无泄漏、
 │   │                             requirements 禁 torch 声明、manifest sha256 一致）
 │   ├── test_e10_submit.py        E10 复现与提交（干净目录复现/参考不一致判失败/日志追加/配额/冻结）
+│   ├── test_e10_b0.py            E10 B0 兜底包（自包含、干净目录复现 ≤1e-9、缺产物显式失败）+
+│   │                             run_train.sh 的 E7–E10 接线与 `bash -n`
 │   ├── test_loss_ablation_lib.py E7/P0 库层（λ1 三条退火曲线、L_aux 绝对 vs 归一化尺度不变、
 │   │                             PERM 截断开关、边界聚焦、total_loss 透传）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
@@ -234,7 +238,7 @@ v4/
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**711 项**；本地无 torch 解释器 200 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**717 项**；本地无 torch 解释器 200 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包

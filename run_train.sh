@@ -297,6 +297,123 @@ run_stage() {
           python3 "$HERE/E6/code/search_tau.py" \
             --run-root "$RUN_ROOT" --reports-dir "$REPORTS_DIR" 2>&1 | tee -a "$LOG"
         fi ;;
+    E7)
+        # `--phase loss|decode|all`（loss=七组损失消融；decode=解码搜索）
+        e7_phase="all"; e7_args=(); e7_expect=""
+        for a in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
+          if [[ "$e7_expect" == "phase" ]]; then
+            case "${a,,}" in
+              loss|decode|all) e7_phase="${a,,}" ;;
+              *) log "!! E7 --phase 只支持 loss/decode/all，got $a"; return 1 ;;
+            esac
+            e7_expect=""; continue
+          fi
+          if [[ "$a" == "--phase" ]]; then e7_expect="phase"; continue; fi
+          e7_args+=("$a")
+        done
+        if [[ "$e7_expect" == "phase" ]]; then log "!! --phase 缺少取值"; return 1; fi
+        if [[ "$e7_phase" == "loss" || "$e7_phase" == "all" ]]; then
+          log "--- [E7] P0 损失消融"
+          python3 "$HERE/E7/code/ablate_loss.py" --reports-dir "$REPORTS_DIR" \
+            --cache-root "$CACHE_ROOT" "${e7_args[@]+"${e7_args[@]}"}" 2>&1 | tee -a "$LOG"
+        fi
+        if [[ "$e7_phase" == "decode" || "$e7_phase" == "all" ]]; then
+          log "--- [E7] P1 解码搜索"
+          python3 "$HERE/E7/code/decode_search.py" --reports-dir "$REPORTS_DIR" \
+            --run-root "$RUN_ROOT" "${e7_args[@]+"${e7_args[@]}"}" 2>&1 | tee -a "$LOG"
+        fi ;;
+    E8)
+        # `--target mmoe|well|transductive|ensemble|all`
+        e8_target="mmoe"; e8_args=(); e8_expect=""
+        for a in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
+          if [[ "$e8_expect" == "target" ]]; then
+            case "${a,,}" in
+              mmoe|well|transductive|ensemble|all) e8_target="${a,,}" ;;
+              *) log "!! E8 --target 只支持 mmoe/well/transductive/ensemble/all，got $a"; return 1 ;;
+            esac
+            e8_expect=""; continue
+          fi
+          if [[ "$a" == "--target" ]]; then e8_expect="target"; continue; fi
+          e8_args+=("$a")
+        done
+        if [[ "$e8_expect" == "target" ]]; then log "!! --target 缺少取值"; return 1; fi
+        run_e8_one() {
+          local name="$1"; shift
+          log "--- [E8] $name"
+          python3 "$HERE/E8/code/$name.py" --reports-dir "$REPORTS_DIR" \
+            --run-root "$RUN_ROOT" --cache-root "$CACHE_ROOT" \
+            "${e8_args[@]+"${e8_args[@]}"}" 2>&1 | tee -a "$LOG"
+        }
+        if [[ "$e8_target" == "all" ]]; then
+          for s in train_mmoe well_branch pseudo_label ensemble; do run_e8_one "$s" || return 1; done
+        elif [[ "$e8_target" == "mmoe" ]]; then run_e8_one train_mmoe
+        elif [[ "$e8_target" == "well" ]]; then run_e8_one well_branch
+        elif [[ "$e8_target" == "transductive" ]]; then run_e8_one pseudo_label
+        else run_e8_one ensemble; fi ;;
+    E9)
+        # `--phase aggregate|choose|leakage|confirm|submit|all`
+        e9_phase="all"
+        for a in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
+          case "${a,,}" in
+            aggregate|choose|leakage|confirm|submit|all) e9_phase="${a,,}" ;;
+          esac
+        done
+        run_e9() {
+          local stage="$1"; shift
+          log "--- [E9] $stage"
+          python3 "$HERE/E9/code/$stage.py" --reports-dir "$REPORTS_DIR" \
+            --run-root "$RUN_ROOT" 2>&1 | tee -a "$LOG"
+        }
+        if [[ "$e9_phase" == "all" || "$e9_phase" == "aggregate" ]]; then run_e9 aggregate_oof || return 1; fi
+        if [[ "$e9_phase" == "all" || "$e9_phase" == "choose" ]]; then run_e9 choose_submission || return 1; fi
+        if [[ "$e9_phase" == "all" || "$e9_phase" == "leakage" ]]; then run_e9 leakage_audit || return 1; fi
+        if [[ "$e9_phase" == "all" || "$e9_phase" == "confirm" ]]; then run_e9 confirm_check || return 1; fi
+        if [[ "$e9_phase" == "all" || "$e9_phase" == "submit" ]]; then run_e9 submit_batch || return 1; fi ;;
+    E10)
+        # `--phase final|export|verify|build|b0|submit|all`
+        e10_phase="all"; e10_args=(); e10_expect=""
+        for a in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
+          if [[ "$e10_expect" == "phase" ]]; then
+            case "${a,,}" in
+              final|export|verify|build|b0|submit|all) e10_phase="${a,,}" ;;
+              *) log "!! E10 --phase 只支持 final/export/verify/build/b0/submit/all，got $a"; return 1 ;;
+            esac
+            e10_expect=""; continue
+          fi
+          if [[ "$a" == "--phase" ]]; then e10_expect="phase"; continue; fi
+          e10_args+=("$a")
+        done
+        if [[ "$e10_expect" == "phase" ]]; then log "!! --phase 缺少取值"; return 1; fi
+        e10_run() {
+          local stage="$1"; shift
+          log "--- [E10] $stage"
+          python3 "$HERE/E10/code/$stage.py" --reports-dir "$REPORTS_DIR" \
+            "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG"
+        }
+        if [[ "$e10_phase" == "all" || "$e10_phase" == "final" ]]; then e10_run final_train --out-dir "$RUN_ROOT/v4/final" || return 1; fi
+        if [[ "$e10_phase" == "all" || "$e10_phase" == "export" ]]; then
+          e10_ckpt="$(ls -1 "$RUN_ROOT/v4/final"/*.fp32.pt 2>/dev/null | head -1)"
+          if [[ -z "$e10_ckpt" ]]; then e10_ckpt="$(ls -1 "$RUN_ROOT/v4/final"/*.pt 2>/dev/null | head -1)"; fi
+          if [[ -z "$e10_ckpt" ]]; then log "!! [E10] 找不到可用权重（先跑 --phase final）"; return 1; fi
+          python3 "$HERE/E10/code/export_cpu.py" --ckpt "$e10_ckpt" \
+            --out "$RUN_ROOT/v4/final" --reports-dir "$REPORTS_DIR" "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG"
+        fi
+        if [[ "$e10_phase" == "all" || "$e10_phase" == "build" ]]; then
+          python3 "$HERE/E10/code/build_submission.py" --weights "$RUN_ROOT/v4/final" \
+            --reports-dir "$REPORTS_DIR" "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG"
+        fi
+        if [[ "$e10_phase" == "all" || "$e10_phase" == "b0" ]]; then
+          python3 "$HERE/E10/code/build_b0_fallback.py" --reports-dir "$REPORTS_DIR" \
+            "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG"
+        fi
+        if [[ "$e10_phase" == "all" || "$e10_phase" == "verify" ]]; then
+          python3 "$HERE/E10/code/verify_inference.py" --reports-dir "$REPORTS_DIR" \
+            --data-dir "$DATA_ROOT/v4/data" "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG"
+        fi
+        if [[ "$e10_phase" == "all" || "$e10_phase" == "submit" ]]; then
+          python3 "$HERE/E10/code/submit.py" --reports-dir "$REPORTS_DIR" \
+            "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG"
+        fi ;;
     *)  log "!! 阶段 $STAGE 尚未实现（见 v4/PLAN.md §七 与各 E*/PLAN.md）"; return 1 ;;
   esac
 }
