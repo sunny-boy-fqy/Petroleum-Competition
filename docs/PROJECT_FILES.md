@@ -125,7 +125,9 @@ v4/
 │   │                            leakage_audit.py（四类审计：折维度/输入列/标尺拟合/伪标签来源；
 │   │                            缺证据走 residual_risk，硬泄漏 → rc 3 → E9_leakage_audit.json）、
 │   │                            submit_batch.py（纯 numpy：多样性选批 + 每日配额 + A 榜记录与
-│   │                            degradation≤0.1 判据 + 绝不据反馈调参 → E9_a_board_log.json）
+│   │                            degradation≤0.1 判据 + 绝不据反馈调参 → E9_a_board_log.json）、
+│   │                            confirm_check.py（16 井确认折**不重训**复验 + breakdown 判据 1.5 +
+│   │                            标签打乱负对照 + v1_exposed/非独立确认标注 → E9_confirm.json）
 │   ├── E8/code/                 train_mmoe.py（硬共享 vs MMoE(4 专家) vs 完全独立三模型：
 │   │                            参数量自动对齐 + 逐目标表 + 门控熵 + 任务梯度余弦 → E8_mmoe.json + Gate）、
 │   │                            well_branch.py（井级 attention-pool 分支开/关强制消融 + λ 内折搜索 +
@@ -208,6 +210,7 @@ v4/
 │   ├── test_e9_choose.py         E9/P0 决策（dry-run 不写、shortlisted/rejected、submitted 不可改、兜底）
 │   ├── test_e9_leakage.py        E9/P1 泄漏审计（缺证据=residual_risk、标尺重叠/目标列/测试标签→硬泄漏）
 │   ├── test_e9_submit.py         E9/P2 提交批次（多样性、配额拒绝、A 榜判据、报错不改状态、dry-run）
+│   ├── test_e9_confirm.py        E9/P1 确认复验（不重训、breakdown 阈值、负对照、缺折显式失败）
 │   ├── test_loss_ablation_lib.py E7/P0 库层（λ1 三条退火曲线、L_aux 绝对 vs 归一化尺度不变、
 │   │                             PERM 截断开关、边界聚焦、total_loss 透传）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
@@ -215,7 +218,7 @@ v4/
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**679 项**；本地无 torch 解释器 192 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**684 项**；本地无 torch 解释器 196 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
