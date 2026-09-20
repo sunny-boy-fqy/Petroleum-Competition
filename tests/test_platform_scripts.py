@@ -1036,12 +1036,12 @@ class TestPushProtocolIsDocumented(unittest.TestCase):
                           f"{rel} 的 push 命令必须同时更新 master 与 main")
 
     def test_platform_repo_field_is_https_never_ssh(self):
-        """平台【仓库地址】必须是 HTTPS：平台侧没有本机 SSH key。
+        """平台【仓库地址】字段值必须是 HTTPS（平台侧没有本机 SSH key）。
 
-        起因（真实事故）：2026-09-20 首跑 `--mode all` 时，平台地址被填成本机 SSH remote
-        `git@github.com:...`，克隆在**准备阶段** Permission denied 失败，容器从未启动，
-        卡片显示「错误」且日志为空 —— 排查成本极高。这条回归禁止文档再把 SSH 地址
-        当作平台字段值。
+        注意（2026-09-20 教训）：这条**不是**"任务已创建但失败"的解释——平台表单正则
+        `/^(https?:\\/\\/|git@)[\\w\\-.~/]+(\\.git)?$/i` 会直接拒绝 scp 形式
+        `git@github.com:owner/repo.git`（`:` 不匹配），所以那种填法根本提交不了。
+        文档里不得再把它写成失败根因。
         """
         for rel in ("README.md", "docs/platform_setup.md", "docs/training_tasks.md"):
             src = _read(rel)
@@ -1059,13 +1059,33 @@ class TestPushProtocolIsDocumented(unittest.TestCase):
                 self.assertTrue(first.group(1).startswith("https://"),
                                 f"{rel} 的平台仓库地址字段值必须是 HTTPS，实际是 {first.group(1)}")
 
-    def test_docs_explain_the_prep_stage_silent_failure(self):
-        """「错误 + 无日志」必须被文档解释，并给出云盘日志这条判定路径。"""
+    def test_no_doc_claims_ssh_url_was_the_failure_cause(self):
+        """反面纪律：文档不得再把"填了 SSH 地址"写成那次失败的（已证伪的）根因。"""
+        for rel in ("README.md", "docs/platform_setup.md", "docs/training_tasks.md", "PLAN.md"):
+            src = _read(rel)
+            self.assertNotIn("表现为「错误 + 无日志」", src, f"{rel} 仍把 SSH 地址写成失败根因")
+            for line in src.splitlines():
+                if "Permission denied" in line:
+                    self.assertIn("不", line,
+                                  f"{rel} 提到 Permission denied 时必须同时说明该填法提交不了：{line.strip()}")
+
+    def test_docs_record_platform_frontend_facts(self):
+        """把从前端 bundle 读到的硬事实固化：状态枚举没有「错误」、Git 源工作目录、URL 正则。"""
         src = _read("docs/platform_setup.md")
-        self.assertIn("准备阶段", src)
+        for needle in ("排队中", "运行中", "失败", "暂无日志",
+                       "/code/workspace", r"git@)[\w\-.~/]+", "日志连接失败"):
+            self.assertIn(needle, src, f"docs/platform_setup.md 必须记录平台事实：{needle}")
+        self.assertIn("没有「错误」这个状态", src)
+        # 必须给出 2x2 判定法与"根因未定"的纪律
+        self.assertIn("2×2", src)
+        self.assertIn("根因未定", src)
+
+    def test_docs_explain_the_prep_stage_silent_failure(self):
+        """「失败 + 无日志」必须被文档解释，并给出云盘日志这条判定路径。"""
+        src = _read("docs/platform_setup.md")
+        self.assertIn("容器从未启动", src)
         self.assertIn("无日志", src)
         self.assertIn("/data/v4/logs", src)
-        self.assertIn("Permission denied", src)
         # 零歧义探针不能含命令替换（要能排除"平台不解析 $( )"这一因素）
         probe = [ln for ln in src.splitlines() if "find /code/workspace -maxdepth 3" in ln]
         self.assertTrue(probe, "docs/platform_setup.md 必须给出零歧义探针命令")
@@ -1074,7 +1094,9 @@ class TestPushProtocolIsDocumented(unittest.TestCase):
     def test_launcher_header_warns_about_ssh_vs_https(self):
         src = _read("run_train.sh")
         self.assertIn(self.HTTPS, src)
-        self.assertIn("Permission denied", src)
+        # 说明为什么 scp 形式不可用（表单正则），而不是断言一个未经验证的失败故事
+        self.assertIn(r"git@)[\w\-.~/]+", src)
+        self.assertIn("不要预设原因", src)
 
     def test_plan_records_the_sync_protocol(self):
         src = _read("PLAN.md")

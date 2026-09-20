@@ -55,9 +55,9 @@ bash "$(find /code/workspace -name run_train.sh | head -1)" --mode all
 > 远端 `main` 与 `master` **同指一个 commit**（平台「分支」字段默认 `main`），所以一次推两个：
 > `git push origin HEAD:master HEAD:main`。
 >
-> **平台【仓库地址】必须填 HTTPS**：`https://github.com/sunny-boy-fqy/Petroleum-Competition.git`
-> —— 平台侧没有你的 SSH key，填 `git@…` 会在**准备阶段**失败（卡片「错误」且**无日志**）。
-> 详见 `docs/platform_setup.md` §六-8。
+> **平台【仓库地址】要填 HTTPS**：`https://github.com/sunny-boy-fqy/Petroleum-Competition.git`
+> —— 平台侧没有你的 SSH key（scp 形式 `git@…` 会被平台表单正则直接拒绝）。
+> 任务"失败但无日志"的排查见 `docs/platform_setup.md` §六-8。
 
 ```bash
 # 【本机】① 生成数据分发包（~30 MB，不进 git，上传到平台云盘）

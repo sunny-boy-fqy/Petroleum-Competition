@@ -12,11 +12,11 @@
 > （`origin` = `git@github.com:sunny-boy-fqy/Petroleum-Competition.git`），
 > 不要再 `git init` / `git remote add`。
 
-> **⚠️ 平台【仓库地址】必须填 HTTPS，不能填上面那个 SSH 地址**：
+> **⚠️ 平台【仓库地址】要填 HTTPS，不要填上面那个 SSH 地址**：
 > `https://github.com/sunny-boy-fqy/Petroleum-Competition.git`
-> 平台侧**没有**你的 SSH 私钥，填 `git@github.com:...` 会 `Permission denied (publickey)`，
-> 任务在**准备阶段**（拉代码）就失败，容器从未启动 → 卡片显示「错误」且**没有任何日志**
-> （见 `docs/platform_setup.md` §六 故障排查）。仓库是 public，HTTPS 无需任何凭据。
+> 平台侧**没有**你的 SSH 私钥；而且平台表单正则会**直接拒绝** scp 形式的
+> `git@github.com:...`（根本提交不了）。仓库是 public，HTTPS 无需任何凭据。
+> 任务失败且无日志的排查见 `docs/platform_setup.md` §六-8。
 
 ## 通用字段（所有任务相同）
 
@@ -39,6 +39,33 @@ bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env
 
 `run_train.sh` 内部用 `$HERE` 自定位，`--mode env` 的日志第一行会打印真实的
 `repo(HERE) = ...`，需要时可据此改用具体路径。
+
+---
+
+## 备用代码来源（Git 拉不到时用；也是 §六-8 的 2×2 实验材料）
+
+`docs/platform_setup.md` §六-8 的判定实验需要「不依赖 Git」的代码来源。两种做法都用同一个
+包：`dist/v4_code_src.zip`（`git archive` 产物，**仅 tracked 文件**，约 0.6 MB，**不含** 31 MB
+数据 tarball，也未含任何权重）。
+
+| 方式 | 上传物 / 填法 | 启动命令 |
+|---|---|---|
+| **本地上传** | 上传 `dist/v4_code_src.zip`；代码源选「本地上传」 | 见下方代码块 A |
+| **我的云盘** | 把同一个 zip 上传到云盘根 `/`；代码源选「我的云盘」、云盘路径填 `/`。平台会**自动解压到同级目录** `/v4_code_src/` | 见下方代码块 B |
+
+```bash
+# A：本地上传（解压位置由平台决定，仍用 find 自定位）
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env
+# B：我的云盘（路径由"压缩包同级目录 + 包名"决定）
+bash /data/v4_code_src/run_train.sh --mode env
+```
+
+本机重新生成该包（在仓库根执行；`dist/*.zip` 已被 `.gitignore` 忽略，不会进仓库）：
+
+```bash
+cd /home/fangqiyu/projects/Petroleum-Competition/v4
+git archive --format=zip --prefix='' -o dist/v4_code_src.zip HEAD
+```
 
 ---
 

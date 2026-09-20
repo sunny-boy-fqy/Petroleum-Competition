@@ -181,7 +181,7 @@ E1–E11 全部处于 `pending`，按 §七 的顺序执行；每个 Gate 的阈
 | remote（**仅本机 push**） | `origin` = `git@github.com:sunny-boy-fqy/Petroleum-Competition.git`（**已配置**） |
 | 认证（**仅本机**） | SSH key（`~/.ssh/id_rsa`，`ssh -T git@github.com` 已验证通过） |
 | 分支 | 远端 **`main`** 与 **`master`** 同指一个 commit：平台「分支」字段默认 `main`（官方文档 §Git 仓库），本仓库历史上叫 `master`，**两个都保留**以免克隆失败 |
-| 平台【仓库地址】 | 必须是 **HTTPS** `https://github.com/sunny-boy-fqy/Petroleum-Competition.git`——平台侧没有 SSH key，填 `git@…` 会在准备阶段 `Permission denied (publickey)`，表现为「错误 + 无日志」 |
+| 平台【仓库地址】 | 必须是 **HTTPS** `https://github.com/sunny-boy-fqy/Petroleum-Competition.git`——平台侧没有 SSH key，且平台表单正则 `/^(https?:\/\/\|git@)[\w\-.~/]+(\.git)?$/i` 会**直接拒绝** scp 形式 `git@github.com:...`（2026-09-20 读前端 bundle 实测，故该条**不可能**是"任务已创建但失败"的原因） |
 
 - **每次让用户在平台上开跑训练/评测任务前，agent 给出的操作清单必须包含 `git push`**
   （并给出待推送的 revision）—— 平台只会克隆**已 push** 的代码，漏掉这一步会让任务跑到
