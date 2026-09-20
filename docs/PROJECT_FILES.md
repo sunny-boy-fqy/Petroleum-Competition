@@ -118,7 +118,9 @@ v4/
 │   │                            exp4 归一化/exp5 边界聚焦（默认关）/exp6 PERM 截断；exp7 L_phys
 │   │                            显式记为 not_implemented → 内折选择 → loss_v1.json + Gate）
 │   ├── E8/code/                 train_mmoe.py（硬共享 vs MMoE(4 专家) vs 完全独立三模型：
-│   │                            参数量自动对齐 + 逐目标表 + 门控熵 + 任务梯度余弦 → E8_mmoe.json + Gate）
+│   │                            参数量自动对齐 + 逐目标表 + 门控熵 + 任务梯度余弦 → E8_mmoe.json + Gate）、
+│   │                            well_branch.py（井级 attention-pool 分支开/关强制消融 + λ 内折搜索 +
+│   │                            逐井非退化比例 + 容量 ≤ 主干/8 + 无井身份审计 → E8_well_branch.json + Gate）
 │   └── E6/code/                 train_state.py（原子状态头两阶段：阶段 1 原子+联合头、阶段 2 冻结
 │   │                            原子头训连续头 + 切片权重；τ 内折选；逐目标 AUC/Acc/P·R·F1；
 │   │                            无插值检查；标签打乱负对照；E6_atomic_report.json + Gate；
@@ -186,6 +188,7 @@ v4/
 │   ├── test_e7_decode.py         E7/P1 解码（算子单调性/尺度收据/期望值动作表/平坦区/搜索端到端）
 │   ├── test_e7_ablate_loss.py    E7/P0 端到端（臂集合数量对齐 §5、exp1/exp6 子集、smoke 不写仓库配置）
 │   ├── test_e8_mmoe.py           E8/P0 结构对照（三臂参数量可比、逐目标表、门控熵/梯度冲突收据）
+│   ├── test_e8_well_branch.py    E8/P1 井级分支（λ=0 与纯主干逐分相同、容量/身份收据、开/关消融）
 │   ├── test_loss_ablation_lib.py E7/P0 库层（λ1 三条退火曲线、L_aux 绝对 vs 归一化尺度不变、
 │   │                             PERM 截断开关、边界聚焦、total_loss 透传）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
@@ -193,7 +196,7 @@ v4/
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**625 项**；本地无 torch 解释器 188 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**630 项**；本地无 torch 解释器 192 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
