@@ -117,6 +117,8 @@ v4/
 │   │                            ablate_loss.py（七组损失消融臂：exp1 三项/exp2 λ₁×退火/exp3 λ₂/
 │   │                            exp4 归一化/exp5 边界聚焦（默认关）/exp6 PERM 截断；exp7 L_phys
 │   │                            显式记为 not_implemented → 内折选择 → loss_v1.json + Gate）
+│   ├── E10/code/                final_train.py（折集成（不重训，导出 fp32 副本）/ 全量重训
+│   │                            （固定 epoch、不早停、每 epoch 磁盘守卫、可 resume）→ models/v4/final）
 │   ├── E9/code/                 aggregate_oof.py（纯 numpy：候选 OOF 可复算 + 护栏下限
 │   │                            max(75, B0_local−1, B0_aboard−0.5)=81.7757 + 排名/短名单 →
 │   │                            E9_validation_report.json + E9_P0_gate.json）、
@@ -144,6 +146,7 @@ v4/
 │                                P·R·F1/Acc、误判代价分解、joint_guard 决策 → E6_tau_search.json
 │                                + E6_P1_gate.json + candidates.json::PD1.atomic）
 │
+├── train.py                 统一训练入口（--stage 转发到各阶段脚本 + configs/v4.yaml 默认值）
 ├── configs/v4.yaml           v4 管线声明式配置（特征/模型/训练/原子/解码/提交）
 ├── versions/                 事实源
 │   ├── registry.json            可运行版本注册表
@@ -211,6 +214,8 @@ v4/
 │   ├── test_e9_leakage.py        E9/P1 泄漏审计（缺证据=residual_risk、标尺重叠/目标列/测试标签→硬泄漏）
 │   ├── test_e9_submit.py         E9/P2 提交批次（多样性、配额拒绝、A 榜判据、报错不改状态、dry-run）
 │   ├── test_e9_confirm.py        E9/P1 确认复验（不重训、breakdown 阈值、负对照、缺折显式失败）
+│   ├── test_e10_final_train.py   E10/P0 最终模型（折集成 fp32 导出/不一致拒做/全量重训预检标记）+
+│   │                             train.py 阶段转发与配置→CLI 映射
 │   ├── test_loss_ablation_lib.py E7/P0 库层（λ1 三条退火曲线、L_aux 绝对 vs 归一化尺度不变、
 │   │                             PERM 截断开关、边界聚焦、total_loss 透传）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
@@ -218,7 +223,7 @@ v4/
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**684 项**；本地无 torch 解释器 196 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**693 项**；本地无 torch 解释器 197 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
