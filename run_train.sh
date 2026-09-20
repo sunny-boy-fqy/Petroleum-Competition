@@ -223,6 +223,9 @@ run_stage() {
     E4) python3 "$HERE/E4/code/train_patchtf.py" \
           --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
           --run-root "$RUN_ROOT" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1 | tee -a "$LOG" ;;
+    E5) python3 "$HERE/E5/code/head_por.py" \
+          --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
+          --run-root "$RUN_ROOT" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1 | tee -a "$LOG" ;;
     *)  log "!! 阶段 $STAGE 尚未实现（见 v4/PLAN.md §七 与各 E*/PLAN.md）"; return 1 ;;
   esac
 }
