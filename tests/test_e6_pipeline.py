@@ -131,8 +131,9 @@ class TestE6Pipeline(unittest.TestCase):
 class TestE6ScriptContract(unittest.TestCase):
     def test_run_train_dispatches_e6(self):
         src = (V4 / "run_train.sh").read_text(encoding="utf-8")
-        self.assertIn("E6) python3", src)
+        self.assertIn("E6)", src)
         self.assertIn("E6/code/train_state.py", src)
+        self.assertIn("E6/code/search_tau.py", src)
 
     def test_help_lists_e6_knobs(self):
         import subprocess

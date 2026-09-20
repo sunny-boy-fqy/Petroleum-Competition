@@ -268,9 +268,35 @@ run_stage() {
             --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
             --run-root "$RUN_ROOT" "${e5_args[@]+"${e5_args[@]}"}" 2>&1 | tee -a "$LOG"
         fi ;;
-    E6) python3 "$HERE/E6/code/train_state.py" \
-          --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
-          --run-root "$RUN_ROOT" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1 | tee -a "$LOG" ;;
+    E6)
+        # 子阶段路由：`--phase p0|p1|all`（p0=原子两阶段训练；p1=τ 搜索；all=两者依次）
+        e6_phase="p0"
+        e6_args=()
+        e6_expect=""
+        for a in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
+          if [[ "$e6_expect" == "phase" ]]; then
+            case "${a,,}" in
+              p0|p1|all) e6_phase="${a,,}" ;;
+              *) log "!! E6 --phase 只支持 p0/p1/all，got $a"; return 1 ;;
+            esac
+            e6_expect=""
+            continue
+          fi
+          if [[ "$a" == "--phase" ]]; then e6_expect="phase"; continue; fi
+          e6_args+=("$a")
+        done
+        if [[ "$e6_expect" == "phase" ]]; then log "!! --phase 缺少取值"; return 1; fi
+        if [[ "$e6_phase" == "p0" || "$e6_phase" == "all" ]]; then
+          log "--- [E6] P0 原子状态头两阶段训练"
+          python3 "$HERE/E6/code/train_state.py" \
+            --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
+            --run-root "$RUN_ROOT" "${e6_args[@]+"${e6_args[@]}"}" 2>&1 | tee -a "$LOG"
+        fi
+        if [[ "$e6_phase" == "p1" || "$e6_phase" == "all" ]]; then
+          log "--- [E6] P1 τ 搜索（内折 OOF）"
+          python3 "$HERE/E6/code/search_tau.py" \
+            --run-root "$RUN_ROOT" --reports-dir "$REPORTS_DIR" 2>&1 | tee -a "$LOG"
+        fi ;;
     *)  log "!! 阶段 $STAGE 尚未实现（见 v4/PLAN.md §七 与各 E*/PLAN.md）"; return 1 ;;
   esac
 }

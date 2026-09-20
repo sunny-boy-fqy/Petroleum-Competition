@@ -312,6 +312,10 @@ def run(args) -> int:
     t0 = time.time()
 
     fold_records, ckpts = [], []
+    # E6/P1（search_tau.py）需要**内折 OOF**：τ 只能在内折上选，因此这里把它落盘
+    oof = {"cont": [], "q_atom": [], "q_joint": [], "y_true": [], "mask": [],
+           "fold_of_row": [], "well_index": [], "tau_row": []}
+    oof_wells: list[str] = []
     for k in fold_list:
         tk = time.time()
         tr_wells, va_wells = RD.fold_wells(folds, k)
@@ -329,8 +333,9 @@ def run(args) -> int:
         inner_tr, inner_val = FR.inner_split(list(tr_wells), args.seed)
         if len(inner_val) < 1 or len(inner_tr) < 2:
             inner_tr, inner_val = list(tr_wells), list(va_wells)
-        f_in_tr = to_fold(assemble(cache, inner_tr, spec, scaler, phys), dev)
-        f_in_va = to_fold(assemble(cache, inner_val, spec, scaler, phys), dev)
+        t_in_tr = assemble(cache, inner_tr, spec, scaler, phys)
+        t_in_va = assemble(cache, inner_val, spec, scaler, phys)
+        f_in_tr, f_in_va = to_fold(t_in_tr, dev), to_fold(t_in_va, dev)
         f_tr = to_fold(assemble(cache, tr_wells, spec, scaler, phys), dev)
         f_va = to_fold(assemble(cache, va_wells, spec, scaler, phys), dev)
 
@@ -386,6 +391,16 @@ def run(args) -> int:
                                       q_atom=pred_in["q_atom"], y=lin["y"],
                                       mask=lin["mask"])
         tau = np.asarray(sel["tau"], dtype="float64")
+        oof["cont"].append(M.decode_continuous(pred_in))
+        oof["q_atom"].append(np.asarray(pred_in["q_atom"], dtype="float64"))
+        oof["q_joint"].append(np.asarray(pred_in["q_joint"], dtype="float64").reshape(-1))
+        oof["y_true"].append(np.asarray(lin["y"], dtype="float64"))
+        oof["mask"].append(np.asarray(lin["mask"], dtype="float64"))
+        oof["fold_of_row"].append(np.full(int(np.asarray(lin["y"]).shape[0]), k))
+        oof["tau_row"].append(np.tile(tau[None, :], (int(np.asarray(lin["y"]).shape[0]), 1)))
+        oof["well_index"].append(np.asarray(t_in_va.well_index, dtype="int64")
+                                 + len(oof_wells))
+        oof_wells += [str(w) for w in t_in_va.well_ids]
         pred = predict_fold(model, f_va)
         lva = labels_from(f_va)
         cont = M.decode_continuous(pred)
@@ -445,6 +460,13 @@ def run(args) -> int:
               f"tau={[round(float(v), 3) for v in tau]} frozen_ok={q_frozen_ok} "
               f"{rec['seconds']:.1f}s", flush=True)
 
+    if oof["cont"]:
+        oof_path = run_dir / f"inner_oof{('_' + args.tag) if args.tag else ''}.npz"
+        np.savez_compressed(
+            oof_path,
+            **{k: np.concatenate([v for v in vs if v is not None])
+               for k, vs in oof.items()},
+            well_ids=np.asarray(oof_wells, dtype=object))
     tracker.write(reports / "training_time_log.json", config=cfg.as_dict())
 
     # ---------------- 负对照（可选）：标签打乱后 AUC 应回落
@@ -508,7 +530,7 @@ def run(args) -> int:
         "tau_per_fold": [r["tau"] for r in fold_records],
         "no_interpolation": all(r["no_interpolation"]["ok"] for r in fold_records),
         "input_no_label_leak_full": audit,
-        "checkpoints": ckpts,
+        "checkpoints": ckpts, "inner_oof_path": str(oof_path),
         "folds_detail": fold_records,
         "label_shuffle_control": shuffle,
         "contract": {"perm_positive": True, "finite": True, "no_le": True},
