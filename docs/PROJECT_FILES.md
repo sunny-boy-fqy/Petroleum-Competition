@@ -71,7 +71,9 @@ v4/
 │   │   ├── checkpoint.py         bf16 state_dict + manifest（含连续头标尺与 L_aux 尺度）+ 滚动淘汰 + resume 校验
 │   │   └── tb_logger.py          TensorBoard + JSONL 日志（平台迭代曲线；无 tensorboard 时降级）
 │   ├── versioning/registry.py    版本注册表读写（predict.py 的版本来源）
-│   └── ensemble/blend.py         集成融合（E8）
+│   └── ensemble/blend.py         E8 集成融合（纯 numpy）：inner-OOF 单纯形权重、同源性报告、
+│                                 井级配对 cluster bootstrap 显著性、EMA/SWA（融合连续头，
+│                                 原子硬切换必须在融合之后）
 │
 ├── E0/ … E11/                12 个阶段，每层含 PLAN.md + P*/{PLAN.md,code/,docs/}
 │   ├── E1/code/                 train_row.py（5 折 OOF + 两阶段 inner-OOF 选择 + Gate）
@@ -103,16 +105,27 @@ v4/
 │   > `run_train.sh --mode e0` 会把 `$REPORTS_DIR/E0_*.json` **全部**回拷到此处（R3-H5）
 │
 ├── tests/                    口径层测试（**不需要 torch**；torch 相关用例会自动 skip）
-│   ├── run_all.py                一键运行（unittest discover）
-│   ├── test_parse.py             列布局/泄漏回归/畸形井/哨兵/特征/标签（11 项）
-│   ├── test_score.py             官方公式边界/两种口径/总分恒等式/锚点（11 项）
-│   ├── test_contract.py          井数/每井行数/深度对齐/SW 尺度守卫（14 项）
+│   ├── run_all.py                一键运行（unittest discover）；缺 numpy 时退出码 2（环境问题≠失败）
+│   ├── _synth_cache.py           合成井缓存工厂（E1/E3 端到端用例共用）
+│   ├── test_parse.py             列布局/泄漏回归/畸形井/哨兵/特征/标签
+│   ├── test_score.py             官方公式边界/两种口径/总分恒等式/锚点
+│   ├── test_contract.py          井数/每井行数/深度对齐/SW 尺度守卫
 │   ├── test_gates.py             Gate 类型/min_*·max_* 方向/指标字段映射/模板校验
 │   ├── test_plan_stats.py        行数**分项**一致性 + 漂移必被检出（R3-C2 回归）
 │   ├── test_platform_scripts.py  run_env 顺序 / --data-root / E0 回拷 / 折文件名 / 可选依赖降级
 │   ├── test_atomic_gate.py       逐目标硬切换 / joint_guard / τ 平台区 / 误判代价（numpy）
+│   ├── test_disk_guard.py        30 GB 云盘守卫（cleanup/save_and_exit/abort）
+│   ├── test_hardware.py          平台硬件单一事实源 + 显存/内存/云盘**防混淆**回归
+│   ├── test_row_dataset.py       E1/P0 行级装配与**折内**标尺（无泄漏）
+│   ├── test_training_core.py     损失/指标/两阶段折协议/checkpoint 契约
+│   ├── test_features_e2.py       F2 特征组注册表/缓存键/溯源 368 行/无目标派生审计
+│   ├── test_models_seq.py        序列头键一致性 / U-Net 跳连 / TCN 非因果探针
+│   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
+│   ├── test_e1_pipeline.py       E1 端到端（合成井 → Gate/prereg/候选，需 torch）
+│   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
+│   > 当前：**404 项**；本地无 torch 解释器 81 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
