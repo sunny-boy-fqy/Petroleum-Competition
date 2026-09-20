@@ -298,12 +298,22 @@ v4/
 
 ## 三之二、已实现 vs 计划中（避免"幽灵文件"）
 
-| 类别 | 已实现 | 计划中（未实现，不在仓库） |
+（E1–E10 的代码已全部落地，本表按**实际仓库**维护；`tools/check_pipeline.py` 与
+`tools/audit_goal.py` 会持续核验，缺失即失败。）
+
+| 类别 | 已实现 | 说明 |
 |---|---|---|
-| `src/` | constants, portability, score, data/{parse,labels,dataset,disk_guard}, features/basic, losses/score_aligned, models/row_mlp（含 E6 的 `q_joint + q_por/q_perm/q_sw` 五个头）, inference/{contract,atomic_gate}, validation/{folds,gates}, versioning/registry | features/{physics,window,well}, models/{unet1d,tcn,patchtf,heads,mmoe}, inference/{predictor,decode}, ensemble/blend, losses 的物理项 |
-| 根目录 | predict.py, run_train.sh, requirements.txt | train.py, configs/v4.yaml（当前为 `configs/paths.yaml`） |
-| 产物 | reports/E0_*.json（10 份）、versions/registry.json、versions/candidates.json、versions/status.json、versions/folds_sha256.json、versions/prereg_templates/（33 份） | 各阶段的 E*.json |
-| `run_train.sh` | `env` / `data` / `e0` / `smoke` / `stage E1` 均可用 | `--mode all` 会自动续跑 E1（代码已就绪） |
+| `src/` | constants, portability, score, data/{parse,labels,dataset,disk_guard,row_dataset,seq_dataset,augment}, features/{basic,physics,window,well,groups}, losses/score_aligned, models/{row_mlp,unet1d,tcn,patchtf,heads,mmoe,well_head,target_heads}, training/{loop,metrics,fold_runner,seq_loop,checkpoint,tb_logger,state_train,frozen,ema}, inference/{contract,atomic_gate,predictor,decode}, ensemble/blend, validation/{folds,gates}, versioning/registry | 唯一未实现：**`L_phys` 物理一致性项**（E7/P0 的 exp7，已在 `E7_loss_ablation.json::not_implemented` 与报告中显式标注） |
+| 根目录 | predict.py（含 PD1 折集成）、train.py（阶段转发/配置默认值）、run_train.sh（E0–E10 全部阶段）、requirements.txt、configs/v4.yaml、configs/paths.yaml | — |
+| 产物 | reports/E0_*.json（12 份）——其中 E0_goal_audit.json / E0_pipeline_check.json 是新增的自检证据；另有 `versions/{registry,candidates,status,folds_sha256}.json`、`versions/prereg_templates/`（33 份） | 各阶段 Gate/报告在**云端**产出（`$V4_REPORTS_DIR`），本仓库只保留 E0 口径证据快照 |
+| `run_train.sh` | `env` / `data` / `e0` / `smoke` / `data-health`；`--stage E1..E10`（E2/E5/E6/E7/E8/E9/E10 带 `--phase`/`--target` 子路由） | `--mode all` 会自动续跑 `--stage`（默认 E1） |
+
+### 三之三、本地与云端的边界（避免把"契约层通过"当成"成绩已拿到"）
+
+* **本地可完成**：口径层单测（`tests/`，numpy/CPU）、静态检查（`check_consistency` /
+  `check_pipeline` / `audit_goal`）、合成数据链路（`tests/test_chain_e2e.py`）；
+* **必须云端**：正式 Gate 数值（80 井 5 折）、A 榜成绩、B0 兜底复核、官方 10 井/95,948 行
+  的干净目录复现——完整清单见 `reports/E0_goal_audit.json::cloud_pending`。
 
 ## 四、文件数量核对（截至 E0 完成时）
 
