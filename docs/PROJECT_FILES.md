@@ -86,9 +86,11 @@ v4/
 │   ├── E1/code/                 train_row.py（5 折 OOF + 两阶段 inner-OOF 选择 + Gate）
 │   ├── E2/code/                 build_features.py（F2 缓存/溯源/内存画像）、
 │   │                            ablate_groups.py（单组消融 + 增强消融 + 吞吐 + Gate）
-│   └── E3/code/                 train_seq.py（5 折序列 OOF + 边界体检 + Gate）、
-│                                rf_ablation.py（depth×dilation_max 感受野消融）、
-│                                compare_row_vs_seq.py（同折同头受控对照 + 配对 CI）
+│   ├── E3/code/                 train_seq.py（5 折序列 OOF + 边界体检 + Gate）、
+│   │                            rf_ablation.py（depth×dilation_max 感受野消融）、
+│   │                            compare_row_vs_seq.py（同折同头受控对照 + 配对 CI）
+│   └── E4/code/                 train_patchtf.py（PatchTF 5 折 OOF + 网格搜索/CI·位置·容量消融、
+│                                还原与拼缝体检、vs E3 paired CI Gate；无基线不伪造 delta）
 │
 ├── versions/                 事实源
 │   ├── registry.json            可运行版本注册表
@@ -129,12 +131,13 @@ v4/
 │   ├── test_models_seq.py        序列头键一致性 / U-Net 跳连 / TCN 非因果探针
 │   ├── test_models_e8.py         MMoE 同键+参数量对等+门控熵 / 井级分支容量与 λ=0 恒等 / EMA 影子
 │   ├── test_patchtf_e4.py        patch 几何覆盖 / 三种权重精确还原 / 奇数长度同长输出 / CI·位置消融
+│   ├── test_e4_pipeline.py       E4 端到端（合成井 → 报告/体检/Gate）+ 入口与 run_train.sh 接线
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
 │   ├── test_e1_pipeline.py       E1 端到端（合成井 → Gate/prereg/候选，需 torch）
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**443 项**；本地无 torch 解释器 120 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**448 项**；本地无 torch 解释器 123 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包

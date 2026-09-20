@@ -88,6 +88,9 @@ def build_seq_model(arch: str, n_features: int, init_stats: dict | None = None, 
     if arch == "tcn":
         from ..models.tcn import build_tcn
         return build_tcn(n_features, init_stats=init_stats, **kw)
+    if arch == "patchtf":
+        from ..models.patchtf import build_patchtf
+        return build_patchtf(n_features, init_stats=init_stats, **kw)
     raise ValueError(f"unknown seq arch: {arch!r}")
 
 
