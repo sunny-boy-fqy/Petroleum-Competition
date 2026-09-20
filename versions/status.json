@@ -172,7 +172,7 @@
         },
         {
           "id": "P2",
-          "status": "pending"
+          "status": "in_progress"
         }
       ],
       "gate": {
@@ -181,7 +181,7 @@
           "oof_total_min": 81.0
         }
       },
-      "note": "E3/P0+P1 已实现并单测：src/data/seq_dataset.py（chunk 规划覆盖完整、overlap-add 加权拼接、按需读分片、worker 增量内存自检）、src/training/seq_loop.py（chunk 批训练 + 分块重叠推理 + 两阶段协议，复用 fold_runner 的 inner 选择与 τ）、src/models/{heads,unet1d,tcn}.py。E3/P2（感受野消融 + 行级受控对照 + 硬 Gate ≥81.0）与 E3/code 脚本待下一轮。"
+      "note": "E3 代码全部落地：主干（heads/unet1d/tcn）、序列数据集与拼接（seq_dataset）、序列训练/推理循环（seq_loop）、三个入口脚本（train_seq / rf_ablation / compare_row_vs_seq）。本机 6 井 2 epoch exploratory 全链路跑通：6 项 mandatory checks 全绿、TCN 977k 参数、OOF 72.11、RSS 增长 0、边界差 0.28 已照实上报；**受控对照显示序列 −3.16（CI 全负）→ 未达显著，决策串拒绝宣称增益**（小样本不作结论）。正式 5 折与硬 Gate ≥81.0 待云端。"
     },
     {
       "stage": "E4",

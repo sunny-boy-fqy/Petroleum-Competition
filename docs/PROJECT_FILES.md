@@ -75,8 +75,11 @@ v4/
 │
 ├── E0/ … E11/                12 个阶段，每层含 PLAN.md + P*/{PLAN.md,code/,docs/}
 │   ├── E1/code/                 train_row.py（5 折 OOF + 两阶段 inner-OOF 选择 + Gate）
-│   └── E2/code/                 build_features.py（F2 缓存/溯源/内存画像）、
-│                                ablate_groups.py（单组消融 + 增强消融 + 吞吐 + Gate）
+│   ├── E2/code/                 build_features.py（F2 缓存/溯源/内存画像）、
+│   │                            ablate_groups.py（单组消融 + 增强消融 + 吞吐 + Gate）
+│   └── E3/code/                 train_seq.py（5 折序列 OOF + 边界体检 + Gate）、
+│                                rf_ablation.py（depth×dilation_max 感受野消融）、
+│                                compare_row_vs_seq.py（同折同头受控对照 + 配对 CI）
 │
 ├── versions/                 事实源
 │   ├── registry.json            可运行版本注册表

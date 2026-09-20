@@ -397,3 +397,130 @@ def _train_epoch_with_opt(model, optimizer, ds, cfg: L.TrainConfig, epoch: int,
             agg[k] = agg.get(k, 0.0) + float(v)
         nb += 1
     return {k: v / max(nb, 1) for k, v in agg.items()} if nb else {"total": float("nan")}
+
+
+def assemble_oof_seq(results: Sequence["SeqFoldResult"], cache) -> dict[str, Any]:
+    """逐折序列结果 → 整表 OOF（well_index 全局偏移；逐行不改动、不重采样）。"""
+    from ..data import dataset as D
+    from ..features import basic as F
+    keys = ("y_true", "y_pred", "cont", "q_atom", "q_joint", "mask", "y_atom",
+            "depth", "fold_of_row", "tau_per_row", "well_index")
+    acc: dict[str, list] = {k: [] for k in keys}
+    well_ids: list[str] = []
+    offset = 0
+    for r in results:
+        yt, yp, mask, ya, dep = [], [], [], [], []
+        for w in r.va_wells:
+            sh = D.read_well_shard(cache, w, "train")
+            lab = F.build_labels(sh["targets"], sh["target_missing"], sh["placeholder"])
+            p = r.pred[w]
+            cont = M.decode_continuous(p)
+            tau = np.asarray(p.get("tau", r.tau["tau"]), dtype="float64")
+            gated = M.atom_gate(cont, p["q_atom"], tau)
+            yt.append(M.label_scale_stack(lab["por"], lab["perm_z"], lab["sw"]))
+            yp.append(gated)
+            mask.append(np.asarray(lab["mask"], dtype="float32"))
+            ya.append(np.asarray(lab["y_atom"], dtype="float32"))
+            dep.append(np.asarray(sh["depth"], dtype="float64"))
+            acc["cont"].append(cont)
+            acc["q_atom"].append(np.asarray(p["q_atom"]))
+            acc["q_joint"].append(np.asarray(p["q_joint"]))
+            acc["tau_per_row"].append(np.tile(tau[None, :], (len(lab["por"]), 1)))
+        n = sum(len(x) for x in yt)
+        well_ids += list(r.va_wells)
+        acc["y_true"].append(np.concatenate(yt))
+        acc["y_pred"].append(np.concatenate(yp))
+        acc["mask"].append(np.concatenate(mask))
+        acc["y_atom"].append(np.concatenate(ya))
+        acc["depth"].append(np.concatenate(dep))
+        acc["fold_of_row"].append(np.full(n, r.fold, dtype="int32"))
+        wlens = [len(x) for x in yt]
+        idx = np.concatenate([np.full(L, i, dtype="int64") for i, L in enumerate(wlens)])
+        acc["well_index"].append(idx + offset)
+        offset += len(r.va_wells)
+    out = {k: np.concatenate(v) for k, v in acc.items()}
+    out["well_ids"] = np.array(well_ids, dtype=object)
+    out["n_wells"] = len(well_ids)
+    out["spec_key"] = results[0].spec_dict.get("key", "F1") if results else "F1"
+    return out
+
+
+def boundary_report(preds_by_well: dict, cache, edge_m: float = 10.0,
+                    step_m: float = 0.1) -> dict[str, Any]:
+    """边界体检（E3/P2 §5 步 5）：井首/井尾 `edge_m` 与井中段的逐目标 Acc 差。
+
+    `edge_m` 按**实际深度**切（不是行数），因此井采样间隔不同也公平。
+    """
+    from ..data import dataset as D
+    from ..features import basic as F
+    from ..score import score_arrays
+
+    rows = {"head": [], "tail": [], "middle": []}
+    per_well: dict[str, Any] = {}
+    for w, p in preds_by_well.items():
+        sh = D.read_well_shard(cache, w, "train")
+        lab = F.build_labels(sh["targets"], sh["target_missing"], sh["placeholder"])
+        yt = M.label_scale_stack(lab["por"], lab["perm_z"], lab["sw"])
+        cont = M.decode_continuous(p)
+        tau = np.asarray(p.get("tau", [0.5, 0.5, 0.5]), dtype="float64")
+        yp = M.atom_gate(cont, p["q_atom"], tau)
+        m = np.asarray(lab["mask"], dtype=bool)
+        d = np.asarray(sh["depth"], dtype="float64")
+        if d.size == 0:
+            continue
+        lo = d.min() + float(edge_m)
+        hi = d.max() - float(edge_m)
+        sel = {"head": d <= lo, "tail": d >= hi, "middle": (d > lo) & (d < hi)}
+        entry: dict[str, Any] = {"n_rows": int(d.size), "edge_m": float(edge_m)}
+        for name, s in sel.items():
+            if int(s.sum()) == 0:
+                entry[name] = None
+                continue
+            sc = score_arrays(yt[s], yp[s], missing=~m[s],
+                              missing_mode=C.SCORE_MISSING_MODE)
+            rows[name].append((int(s.sum()), sc))
+            entry[name] = {k: float(v) for k, v in sc.items() if k != "missing_mode"}
+        per_well[w] = entry
+
+    def _agg(name: str) -> dict[str, Any] | None:
+        if not rows[name]:
+            return None
+        tot = sum(n for n, _ in rows[name])
+        out: dict[str, Any] = {"n_rows": int(tot)}
+        for key in ("total", "acc_por", "acc_perm", "acc_sw"):
+            out[key] = float(sum(n * sc[key] for n, sc in rows[name]) / max(tot, 1))
+        return out
+
+    agg = {k: _agg(k) for k in ("head", "tail", "middle")}
+    worst = 0.0
+    if agg["middle"] and agg["head"] and agg["tail"]:
+        for key in ("acc_por", "acc_perm", "acc_sw"):
+            worst = max(worst, abs(agg["middle"][key] - agg["head"][key]),
+                        abs(agg["middle"][key] - agg["tail"][key]))
+    return {"edge_m": float(edge_m), "aggregate": agg, "per_well": per_well,
+            "max_edge_gap": float(worst), "threshold": 0.02,
+            "within_threshold": bool(worst < 0.02),
+            "note": "井首/尾 10 m 与中段的逐目标 Acc 差；≥0.02 必须给出修正计划（E3/P2 §6）"}
+
+
+def fold_metrics_seq(res: "SeqFoldResult", cache, opt: SeqOptions) -> dict[str, Any]:
+    """单折指标（序列版）：与行级 `fold_runner.fold_metrics` 同字段，便于并列比较。"""
+    sc = score_wells(res.pred, res.va_wells, cache, opt)
+    const = {w: {"por": np.full_like(np.asarray(res.pred[w]["por"], dtype="float64"),
+                                     C.ATOM_VALUES["POR"]),
+                 "perm_z": np.zeros_like(np.asarray(res.pred[w]["por"], dtype="float64")),
+                 "sw": np.full_like(np.asarray(res.pred[w]["por"], dtype="float64"),
+                                    C.ATOM_VALUES["SW"]),
+                 "q_atom": np.zeros((np.asarray(res.pred[w]["por"]).size, 3)),
+                 "q_joint": np.zeros(np.asarray(res.pred[w]["por"]).size),
+                 "tau": np.asarray([2.0, 2.0, 2.0])}      # τ>1 -> 不切换，保持常数
+             for w in res.va_wells}
+    sconst = score_wells(const, res.va_wells, cache, opt)
+    return {"fold": res.fold, "n_rows": int(sc["n_rows"]), "total": float(sc["total"]),
+            "por": float(sc["acc_por"]), "perm": float(sc["acc_perm"]),
+            "sw": float(sc["acc_sw"]), "const_total": float(sconst["total"]),
+            "delta_vs_const": float(sc["total"] - sconst["total"]),
+            "tau": [float(x) for x in res.tau["tau"]], "best_epoch": int(res.best_epoch),
+            "inner_oof_total": res.inner_oof_total, "seconds": round(float(res.seconds), 2),
+            "n_features": int(res.scaler.median.shape[0]), "arch": res.model_summary.get("arch"),
+            "n_params": res.model_summary.get("n_params")}
