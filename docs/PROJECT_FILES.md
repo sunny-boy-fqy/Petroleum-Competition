@@ -118,7 +118,11 @@ v4/
 │   │                            exp4 归一化/exp5 边界聚焦（默认关）/exp6 PERM 截断；exp7 L_phys
 │   │                            显式记为 not_implemented → 内折选择 → loss_v1.json + Gate）
 │   ├── E10/code/                final_train.py（折集成（不重训，导出 fp32 副本）/ 全量重训
-│   │                            （固定 epoch、不早停、每 epoch 磁盘守卫、可 resume）→ models/v4/final）
+│   │                            （固定 epoch、不早停、每 epoch 磁盘守卫、可 resume）→ models/v4/final）、
+│   │                            export_cpu.py（fp32 重存 + .npz 权重要点清单（逐键 sha256）+
+│   │                            两次前向逐字节一致的确定性冒烟；ONNX 缺依赖显式降级）、
+│   │                            build_submission.py（纯标准库打包：入口+配置+src+权重，
+│   │                            体积上限、禁数据/日志/__pycache__、requirements 不得钉 torch）
 │   ├── E9/code/                 aggregate_oof.py（纯 numpy：候选 OOF 可复算 + 护栏下限
 │   │                            max(75, B0_local−1, B0_aboard−0.5)=81.7757 + 排名/短名单 →
 │   │                            E9_validation_report.json + E9_P0_gate.json）、
@@ -216,6 +220,8 @@ v4/
 │   ├── test_e9_confirm.py        E9/P1 确认复验（不重训、breakdown 阈值、负对照、缺折显式失败）
 │   ├── test_e10_final_train.py   E10/P0 最终模型（折集成 fp32 导出/不一致拒做/全量重训预检标记）+
 │   │                             train.py 阶段转发与配置→CLI 映射
+│   ├── test_e10_package.py       E10 导出与打包（fp32+npz+确定性、ONNX 降级、包内容/体积/无泄漏、
+│   │                             requirements 禁 torch 声明、manifest sha256 一致）
 │   ├── test_loss_ablation_lib.py E7/P0 库层（λ1 三条退火曲线、L_aux 绝对 vs 归一化尺度不变、
 │   │                             PERM 截断开关、边界聚焦、total_loss 透传）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
@@ -223,7 +229,7 @@ v4/
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**693 项**；本地无 torch 解释器 197 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**702 项**；本地无 torch 解释器 200 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
