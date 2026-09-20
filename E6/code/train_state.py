@@ -423,6 +423,12 @@ def run(args) -> int:
         CK.save_checkpoint(ckpt, model, meta={
             "stage": "E6/P0", "fold": k, "spec": spec.as_dict() if spec else None,
             "feature_names": list(FB.FEATURE_NAMES), "n_features": n_features,
+            # `row_scaler` 是推理端反变换的**唯一来源**（缺了它 predict.py 直接 KeyError）
+            "row_scaler": scaler.to_dict(),
+            # `model` 是 `predictor.Manifest.model_kwargs` 的**唯一来源**：
+            # 缺了它 → 推理会按默认 hidden=256 建模型 → 权重 size mismatch
+            "model": {"arch": "RowMLP", "n_features": n_features, "hidden": args.hidden,
+                      "layers": args.layers, "dropout": args.dropout},
             "target_scalers": dict(target), "scalers_fitted_on": "train_fold_only",
             "tau_atom": [float(v) for v in tau], "tau_source": "inner_oof_only",
             "stage1": {"epochs": args.epochs, "best_epoch": best_epoch,

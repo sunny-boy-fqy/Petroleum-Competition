@@ -114,6 +114,7 @@ v4/
 │                                P·R·F1/Acc、误判代价分解、joint_guard 决策 → E6_tau_search.json
 │                                + E6_P1_gate.json + candidates.json::PD1.atomic）
 │
+├── configs/v4.yaml           v4 管线声明式配置（特征/模型/训练/原子/解码/提交）
 ├── versions/                 事实源
 │   ├── registry.json            可运行版本注册表
 │   ├── prereg_templates/        33 份 Gate 预注册模板（**由 tools/sync_prereg_templates.py 从 P 级计划生成**，通过 gates.py 校验）
@@ -168,12 +169,13 @@ v4/
 │   ├── test_predict_pd1.py       版本表写回纪律 + `predict.py --use-version PD1` 端到端（提交契约、
 │   │                             确定性、SW 尺度、缺权重/未接线版本明确报错）
 │   ├── test_e6_gate.py           E6/P2 Gate（证据齐全才过、缺证据/缺 OOF 一律不判过、绝对门槛）
+│   ├── test_e6_p2.py             E6/P2 端到端（P0→P1→build_pd1→真实 CPU 推理→注册→Gate）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
 │   ├── test_e1_pipeline.py       E1 端到端（合成井 → Gate/prereg/候选，需 torch）
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**582 项**；本地无 torch 解释器 172 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**587 项**；本地无 torch 解释器 175 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包
