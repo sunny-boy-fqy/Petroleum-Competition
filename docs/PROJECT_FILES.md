@@ -98,12 +98,15 @@ v4/
 │   │                            compare_row_vs_seq.py（同折同头受控对照 + 配对 CI）
 │   ├── E4/code/                 train_patchtf.py（PatchTF 5 折 OOF + 网格搜索/CI·位置·容量消融、
 │   │                            还原与拼缝体检、vs E3 paired CI Gate；无基线不伪造 delta）
-│   └── E5/code/                 e5_common.py（冻结骨干/隐状态/两阶段单头训练/配对 CI/Gate 公共件）、
+│   ├── E5/code/                 e5_common.py（冻结骨干/隐状态/两阶段单头训练/配对 CI/Gate 公共件）、
 │                                head_por.py（POR 头 + 连续切片·占位行分项 + 0.1 下界反例消融）、
 │                                head_perm.py（PERM 三档 z 输出 + 桶头对照 + 尾部单调性报告）、
 │                                head_sw.py（SW 单尺度 0–100 契约 + 有效/占位分项 + 禁止尺度反例）、
-│                                evaluate_targets.py（三目标 OOF 汇总：可复算/井序对齐/联合判据/
-│                                swing 检查 → E5_per_target.json + E5_gate.json，纯 numpy）
+│   │                            evaluate_targets.py（三目标 OOF 汇总：可复算/井序对齐/联合判据/
+│   │                            swing 检查 → E5_per_target.json + E5_gate.json，纯 numpy）
+│   └── E6/code/                 train_state.py（原子状态头两阶段：阶段 1 原子+联合头、阶段 2 冻结
+│                                原子头训连续头 + 切片权重；τ 内折选；逐目标 AUC/Acc/P·R·F1；
+│                                无插值检查；标签打乱负对照；E6_atomic_report.json + Gate）
 │
 ├── versions/                 事实源
 │   ├── registry.json            可运行版本注册表
@@ -154,12 +157,13 @@ v4/
 │   ├── test_e5_sw_pipeline.py    E5/P2 端到端（单尺度契约、有效/占位分项、禁止尺度臂暴露代价）
 │   ├── test_e5_aggregate.py      E5 汇总（可复算/井序对齐/联合判据/swing 可加性/缺件显式降级）
 │   ├── test_state_train_e6.py    E6 两阶段件（切片权重/冻结原子头真的不被更新/负对照/泄漏审计）
+│   ├── test_e6_pipeline.py       E6/P0 端到端（逐目标指标齐全、τ 内折、无插值、负对照、可 resume）
 │   ├── test_seq_pipeline.py      chunk 划分/拼接/权重/stitcher + E3 端到端（OOF + 边界体检，需 torch）
 │   ├── test_e1_pipeline.py       E1 端到端（合成井 → Gate/prereg/候选，需 torch）
 │   ├── test_ensemble_blend.py    E8 融合纪律：权重只在 inner-OOF / 同源不计增益 / CI 判据 / EMA·SWA
 │   ├── test_losses.py            masked_mean NaN / PERM 截断 / L_aux 尺度不变 / 边界聚焦（需 torch）
 │   └── test_heads.py             RowMLP 形状 / init_from_stats / POR 可到 0 / SW 标签尺度（需 torch）
-│   > 当前：**549 项**；本地无 torch 解释器 163 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
+│   > 当前：**555 项**；本地无 torch 解释器 167 项 skip、`./.venv-torch` 0 项 skip，两者全绿。
 │
 ├── tools/
 │   ├── pack_dataset.py           生成 ~30 MB 自包含数据包

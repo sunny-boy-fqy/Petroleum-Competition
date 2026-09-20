@@ -268,6 +268,9 @@ run_stage() {
             --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
             --run-root "$RUN_ROOT" "${e5_args[@]+"${e5_args[@]}"}" 2>&1 | tee -a "$LOG"
         fi ;;
+    E6) python3 "$HERE/E6/code/train_state.py" \
+          --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
+          --run-root "$RUN_ROOT" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1 | tee -a "$LOG" ;;
     *)  log "!! 阶段 $STAGE 尚未实现（见 v4/PLAN.md §七 与各 E*/PLAN.md）"; return 1 ;;
   esac
 }
