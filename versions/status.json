@@ -181,7 +181,7 @@
           "oof_total_min": 81.0
         }
       },
-      "note": "E3/P1 主干已实现并单测：src/models/{heads,unet1d,tcn}.py —— 全段 seq2seq （长度 64/257/1024 严格保长）、TCN 非因果（未来与过去均影响输出，已用感受野内扰动证明）、与 RowMLP 同键（total_loss/解码/τ 可原样复用）；顺带修复损失层对序列掩码 (B,L,3) 的兼容（`mask[..., t]`）。E3/P0 序列数据集与 chunk 拼接、E3/P2 消融与 Gate 待下一轮。"
+      "note": "E3/P0+P1 已实现并单测：src/data/seq_dataset.py（chunk 规划覆盖完整、overlap-add 加权拼接、按需读分片、worker 增量内存自检）、src/training/seq_loop.py（chunk 批训练 + 分块重叠推理 + 两阶段协议，复用 fold_runner 的 inner 选择与 τ）、src/models/{heads,unet1d,tcn}.py。E3/P2（感受野消融 + 行级受控对照 + 硬 Gate ≥81.0）与 E3/code 脚本待下一轮。"
     },
     {
       "stage": "E4",

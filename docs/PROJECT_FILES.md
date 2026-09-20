@@ -67,6 +67,7 @@ v4/
 │   │   │                         best-epoch 权重写回、时间预算、每 epoch 磁盘守卫、时间日志
 │   │   ├── metrics.py            预测→官方分数口径（连续/原子门/占位行命中率/原子头 P·R·F1）
 │   │   ├── fold_runner.py        **两阶段单折协议**（E1/E2/E3 共用：inner-OOF 选 epoch/τ）
+│   │   ├── seq_loop.py           E3 序列训练循环（chunk 批 + **分块重叠推理+加权拼接**）
 │   │   ├── checkpoint.py         bf16 state_dict + manifest（含连续头标尺与 L_aux 尺度）+ 滚动淘汰 + resume 校验
 │   │   └── tb_logger.py          TensorBoard + JSONL 日志（平台迭代曲线；无 tensorboard 时降级）
 │   ├── versioning/registry.py    版本注册表读写（predict.py 的版本来源）
