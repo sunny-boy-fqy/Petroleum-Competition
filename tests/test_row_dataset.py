@@ -25,6 +25,7 @@ import numpy as np  # noqa: E402
 
 import _synth_cache as SC  # noqa: E402
 from src import constants as C  # noqa: E402
+from src.data import dataset as D  # noqa: E402
 from src.data import row_dataset as RD  # noqa: E402
 from src.features import basic as F  # noqa: E402
 
@@ -165,6 +166,21 @@ class TestRowPipeline(unittest.TestCase):
             F.apply_sw_scaler(np.array([50.0]), {"sw_mu": 50.0, "sw_sigma": 0.0})
 
     # ------------------------------------------------------------ 缓存与报告
+    def test_build_cache_skips_existing_well_shards(self):
+        before = {p.name: p.stat().st_mtime_ns
+                  for p in sorted((self.cache / "raw" / "train").glob("*.npz"))}
+        self.assertEqual(len(before), len(WELLS))
+        before_man = json.loads((self.cache / "manifest.json").read_text(encoding="utf-8"))
+        man = D.build_cache(self.tr_dir, self.te_dir, self.cache, verbose=False)
+        after = {p.name: p.stat().st_mtime_ns
+                 for p in sorted((self.cache / "raw" / "train").glob("*.npz"))}
+        self.assertEqual(before, after, "已存在且合法的井分片不得被重写")
+        self.assertEqual(man["counts"], before_man["counts"])
+        self.assertEqual(int(man["counts"]["train_wells"]), len(WELLS))
+        self.assertEqual(int(man["counts"]["train_rows"]),
+                         sum(int(np.load(p, allow_pickle=True)["n_rows"])
+                             for p in sorted((self.cache / "raw" / "train").glob("*.npz"))))
+
     def test_row_cache_is_idempotent(self):
         info = RD.build_row_cache(self.cache, WELLS, "train", verbose=False)
         self.assertEqual(info["built"], 0, "第二次构建不应重写任何井")

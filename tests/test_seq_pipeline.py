@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import unittest
@@ -169,6 +170,14 @@ class TestChunkDataset(unittest.TestCase):
         self.assertEqual(a.order_digest(), b.order_digest(), "同 seed/epoch 必须可复现")
         self.assertNotEqual(a.order_digest(), c.order_digest(), "不同 epoch 应重新洗牌")
 
+    def test_set_epoch_rebuilds_order(self):
+        ds = SD.SeqChunkDataset(self.cache, self.wells, chunk=64, overlap=16, seed=7, epoch=0)
+        d0 = ds.order_digest()
+        ds.set_epoch(1)
+        self.assertNotEqual(ds.order_digest(), d0)
+        ds.set_epoch(0)
+        self.assertEqual(ds.order_digest(), d0, "回到同 epoch 必须与初始 order 一致")
+
     def test_scaler_is_applied_inside_dataset(self):
         from src.data import row_dataset as RD
         ds_plain = SD.SeqChunkDataset(self.cache, self.wells, chunk=64, overlap=16, seed=0)
@@ -202,11 +211,11 @@ class TestSeqFoldSmoke(unittest.TestCase):
     def tearDownClass(cls):
         cls._td.cleanup()
 
-    def _run(self, arch, tag):
-        cfg = L.TrainConfig(epochs=2, patience=9, seed=0, dropout=0.0, amp_dtype="fp32",
+    def _run(self, arch, tag, epochs=2, resume=False):
+        cfg = L.TrainConfig(epochs=epochs, patience=9, seed=0, dropout=0.0, amp_dtype="fp32",
                             device="cpu", min_free_gb=0.0, batch_size=128)
         opt = SL.SeqOptions(chunk=64, overlap=16, batch_chunks=2, smoke=True, arch=arch,
-                            save_checkpoints=True, select_tau=False,
+                            save_checkpoints=True, select_tau=False, resume=resume,
                             run_dir=Path(self._td.name) / tag,
                             scalers_dir=Path(self._td.name) / tag / "scalers")
         kw = ({"base_ch": 8, "depth": 2} if arch == "unet"
@@ -221,6 +230,9 @@ class TestSeqFoldSmoke(unittest.TestCase):
             self.assertEqual(r.pred[w]["q_atom"].shape, (200, 3))
         self.assertTrue(np.isfinite(r.pred[r.va_wells[0]]["por"]).all())
         self.assertTrue(r.resumable["ok"], "checkpoint 必须可读回")
+        select = Path(self._td.name) / "unet" / "fold0" / "select"
+        self.assertTrue((select / "last.pt").is_file(), "阶段 1 必须每 epoch 落 last.pt")
+        self.assertTrue((select / "best.pt").is_file(), "阶段 1 必须落 best.pt")
         self.assertGreater(r.coverage["n_chunks"], 0)
 
     def test_tcn_fold_produces_full_length_output(self):
@@ -228,6 +240,27 @@ class TestSeqFoldSmoke(unittest.TestCase):
         for w in r.va_wells:
             self.assertEqual(int(r.pred[w]["por"].shape[0]), 200)
         self.assertTrue(np.isfinite(r.pred[r.va_wells[0]]["sw"]).all())
+
+    def test_pause_flag_stops_before_outer_outputs(self):
+        flag = Path(self._td.name) / "pause.flag"
+        flag.write_text("1", encoding="utf-8")
+        old = os.environ.get("V4_PAUSE_FLAG")
+        os.environ["V4_PAUSE_FLAG"] = str(flag)
+        try:
+            with self.assertRaises(L.TrainingPaused):
+                self._run("unet", "paused")
+        finally:
+            if old is None:
+                os.environ.pop("V4_PAUSE_FLAG", None)
+            else:
+                os.environ["V4_PAUSE_FLAG"] = old
+
+    def test_stage1_resume_skips_completed_epochs(self):
+        r1 = self._run("unet", "resume", epochs=2, resume=False)
+        self.assertGreaterEqual(r1.hist1["n_epochs_run"], 1)
+        r2 = self._run("unet", "resume", epochs=3, resume=True)
+        self.assertEqual(r2.hist1["n_epochs_run"], 1,
+                         "阶段 1 resume 后只应跑尚未完成的 epoch 2")
 
     def test_no_label_leak_in_seq_fold(self):
         r = self._run("tcn", "leak")

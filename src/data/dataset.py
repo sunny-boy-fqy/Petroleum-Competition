@@ -131,14 +131,43 @@ def build_cache(train_dir: str | Path, test_dir: str | Path, cache_root: str | P
         if limit:
             files = files[:limit]
         for f in files:
-            rec = P.parse_well(f, with_targets=with_t)
-            infos.append(write_well_shard(rec, cache_root, split))
+            # 井粒度断点续建：分片（train 还要 labels）已存在则跳过解析+写盘。
+            sp = shard_paths(cache_root, f.stem, split)
+            lp = labels_path(cache_root, f.stem) if with_t else None
+            reusable = sp.is_file() and (not with_t or (lp is not None and lp.is_file()))
+            if reusable:
+                try:
+                    with np.load(sp, allow_pickle=True) as z:
+                        n_rows = int(z["n_rows"])
+                        n_cols = int(np.asarray(z["inputs"]).shape[1])
+                    info = ShardInfo(well_id=f.stem, split=split, n_rows=n_rows,
+                                     n_cols_in=n_cols, with_targets=with_t)
+                    if with_t and lp is not None:
+                        with np.load(lp, allow_pickle=True) as z:
+                            tm = np.asarray(z["target_missing"]).astype(bool)
+                            ph = np.asarray(z["placeholder"]).astype(bool)
+                        n_missing = int(tm.all(axis=1).sum() if tm.ndim == 2 else tm.sum())
+                        n_ph = int(ph.all(axis=1).sum() if ph.ndim == 2 else ph.sum())
+                        n_valid = int(n_rows - n_missing - n_ph)
+                    else:
+                        n_missing = n_ph = 0
+                        n_valid = int(n_rows)
+                except Exception:
+                    reusable = False
+            if not reusable:
+                rec = P.parse_well(f, with_targets=with_t)
+                info = write_well_shard(rec, cache_root, split)
+                n_rows = int(rec.n_rows)
+                n_missing = int(rec.n_missing_rows)
+                n_ph = int(rec.n_placeholder_rows)
+                n_valid = int(rec.n_valid_rows)
+            infos.append(info)
             counts[f"{split}_wells"] += 1
-            counts[f"{split}_rows"] += rec.n_rows
+            counts[f"{split}_rows"] += int(n_rows)
             if with_t:
-                counts["placeholder_rows"] += rec.n_placeholder_rows
-                counts["missing_rows"] += rec.n_missing_rows
-                counts["valid_rows"] += rec.n_valid_rows
+                counts["placeholder_rows"] += int(n_ph)
+                counts["missing_rows"] += int(n_missing)
+                counts["valid_rows"] += int(n_valid)
             if verbose and counts[f"{split}_wells"] % 20 == 0:
                 print(f"  [{split}] {counts[f'{split}_wells']} wells, "
                       f"{counts[f'{split}_rows']} rows", flush=True)
@@ -151,8 +180,9 @@ def build_cache(train_dir: str | Path, test_dir: str | Path, cache_root: str | P
         "shards": [i.__dict__ for i in infos],
     }
     cache_root.mkdir(parents=True, exist_ok=True)
-    (cache_root / "manifest.json").write_text(
-        json.dumps(man, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_man = cache_root / "manifest.json.tmp"
+    tmp_man.write_text(json.dumps(man, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_man.replace(cache_root / "manifest.json")
     return man
 
 

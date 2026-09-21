@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import types
@@ -121,6 +122,26 @@ class TestRunTraining(unittest.TestCase):
         for rec in hist["epochs"]:
             self.assertTrue(np.isfinite(rec["total"]))
             self.assertGreaterEqual(rec["disk_free_gb"], 0.0)
+
+    def test_pause_flag_stops_before_next_epoch(self):
+        """V4_PAUSE_FLAG 存在时，run_training 必须在 epoch 边界返回 paused。"""
+        t, data = self._data(n_rows=256, n_wells=2)
+        cfg = L.TrainConfig(epochs=5, batch_size=64, patience=99, seed=0, hidden=16,
+                            device="cpu", min_free_gb=0.0)
+        with tempfile.TemporaryDirectory() as td:
+            flag = Path(td) / "pause.flag"
+            flag.write_text("1", encoding="utf-8")
+            old = os.environ.get("V4_PAUSE_FLAG")
+            os.environ["V4_PAUSE_FLAG"] = str(flag)
+            try:
+                hist = L.run_training(build_model(F.N_FEATURES, hidden=16), data, cfg)
+            finally:
+                if old is None:
+                    os.environ.pop("V4_PAUSE_FLAG", None)
+                else:
+                    os.environ["V4_PAUSE_FLAG"] = old
+        self.assertEqual(hist["stopped_reason"], "paused")
+        self.assertEqual(hist["n_epochs_run"], 0)
 
     def test_time_budget_stops_gracefully(self):
         t, data = self._data(n_rows=256)

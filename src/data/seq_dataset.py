@@ -225,6 +225,12 @@ if HAS_TORCH:
             rng = np.random.default_rng((self.seed, self.epoch))
             self.order = rng.permutation(len(self.index)).tolist()
 
+        def set_epoch(self, epoch: int) -> None:
+            """每个 epoch 开始时重算采样顺序；`--resume` 后可复现同一 epoch 的 order。"""
+            self.epoch = int(epoch)
+            rng = np.random.default_rng((self.seed, self.epoch))
+            self.order = rng.permutation(len(self.index)).tolist()
+
         def __len__(self) -> int:
             return len(self.index)
 

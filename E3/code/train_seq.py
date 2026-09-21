@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pickle
 import sys
 import time
 from pathlib import Path
@@ -161,12 +162,29 @@ def run_arch(args) -> int:
     t0 = time.time()
     tracker = L.TimeTracker("E3", args.time_budget_h)
     results = []
+    fold_cache = run_dir / args.arch / "fold_results"
+    fold_cache.mkdir(parents=True, exist_ok=True)
     # worker 内存预算（E3/P0 §7）的**正确语义**：300 MB 是"每个 worker 的增量"预算，
     # 而训练进程本身要装 torch/模型/优化器/缓存分配器（实测 Python+torch 首次前向后
     # RSS 会涨 ~400 MB）。因此基线取**首个折跑完后的稳态 RSS**，检查的是
     # "后续折是否持续增长" —— 这才等价于"没有把分片/井矩阵攒在内存里"。
     base_rss = None
     for k in fold_list:
+        cache_file = fold_cache / f"fold{k}.pkl"
+        if args.resume and cache_file.is_file():
+            try:
+                r = pickle.loads(cache_file.read_bytes())
+                results.append(r)
+                tracker.add_fold(k, r.seconds,
+                                 r.hist1["n_epochs_run"] + r.hist2["n_epochs_run"],
+                                 extra={"best_epoch": r.best_epoch, "tau": r.tau["tau"],
+                                        "inner_oof_total": r.inner_oof_total,
+                                        "arch": args.arch, "resumed_fold": True})
+                print(f"[E3/{args.arch}] fold{k} 从 {cache_file.name} 恢复，跳过训练", flush=True)
+                continue
+            except Exception as exc:                     # 缓存损坏/版本不匹配 -> 重跑该折
+                print(f"[E3/{args.arch}] fold{k} 缓存不可用（{exc}），重跑", file=sys.stderr,
+                      flush=True)
         opt = SL.SeqOptions(spec=spec, chunk=args.chunk, overlap=args.overlap,
                             batch_chunks=args.batch_chunks, weight_kind=args.weight_kind,
                             max_wells=args.max_wells, smoke=args.smoke, resume=args.resume,
@@ -175,6 +193,10 @@ def run_arch(args) -> int:
                             run_dir=run_dir / args.arch, scalers_dir=scalers,
                             tb_run_name=f"E3_{args.arch}_fold{k}")
         r = SL.run_two_phase_seq_fold(k, folds, cache, cfg, opt, arch_kwargs=kwargs)
+        # 折完成即原子落盘，平台任务中断也能 fold 级 resume。
+        tmp = cache_file.with_suffix(".pkl.tmp")
+        tmp.write_bytes(pickle.dumps(r, protocol=pickle.HIGHEST_PROTOCOL))
+        tmp.replace(cache_file)
         tracker.add_fold(k, r.seconds, r.hist1["n_epochs_run"] + r.hist2["n_epochs_run"],
                          extra={"best_epoch": r.best_epoch, "tau": r.tau["tau"],
                                 "inner_oof_total": r.inner_oof_total, "arch": args.arch})

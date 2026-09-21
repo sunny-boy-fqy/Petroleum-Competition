@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import signal
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -33,6 +35,41 @@ if HAS_TORCH:
     import torch
 
 from . import metrics as M
+
+
+class TrainingPaused(RuntimeError):
+    """训练被 pause.flag / SIGTERM / time_budget 正常暂停；调用方不得再写最终 OOF。"""
+
+
+_PAUSE_SIGNAL = False
+
+
+def _pause_signal_handler(signum, frame) -> None:  # noqa: ARG001 - signal API
+    """SIGTERM/SIGINT 只置位，不在信号上下文里做 I/O；epoch 边界统一收尾。"""
+    global _PAUSE_SIGNAL
+    _PAUSE_SIGNAL = True
+    flag = os.environ.get("V4_PAUSE_FLAG")
+    if flag:
+        try:
+            Path(flag).write_text(f"signal={signum}\n", encoding="utf-8")
+        except Exception:
+            pass
+
+
+def install_pause_handlers() -> None:
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, _pause_signal_handler)
+        except Exception:
+            pass
+
+
+def pause_requested() -> bool:
+    """pause.flag 存在，或本进程收到 SIGTERM/SIGINT 后为 True。"""
+    if _PAUSE_SIGNAL:
+        return True
+    flag = os.environ.get("V4_PAUSE_FLAG")
+    return bool(flag) and Path(flag).exists()
 
 
 @dataclass
@@ -259,6 +296,7 @@ def run_training(model, data: TorchFold, cfg: TrainConfig,
     返回 history：`epochs` 列表、`best_epoch`、`best_total`、`stopped_reason`、`seconds`。
     """
     require("torch")
+    install_pause_handlers()
     device = data.device
     sp = dict(scaler_params or {})
 
@@ -281,6 +319,9 @@ def run_training(model, data: TorchFold, cfg: TrainConfig,
     stopped = "completed"
     n_bad = 0
     for epoch in range(int(resume_epoch) + 1, int(cfg.epochs)):
+        if pause_requested():
+            stopped = "paused"
+            break
         if cfg.time_budget_h is not None and (time.time() - t0) > float(cfg.time_budget_h) * 3600:
             stopped = "time_budget"
             break

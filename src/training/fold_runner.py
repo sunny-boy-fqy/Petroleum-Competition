@@ -197,6 +197,10 @@ def run_two_phase_fold(fold: int, folds: dict, cache: str | Path, cfg: L.TrainCo
 
     model = build_model(n_features=n_features, hidden=cfg.hidden, layers=cfg.layers,
                         dropout=cfg.dropout, seed=cfg.seed, init_stats=target)
+    fold_dir = Path(opt.run_dir) / f"fold{fold}" if opt.run_dir is not None else None
+    select_dir = fold_dir / "select" if fold_dir is not None else None
+    if select_dir is not None:
+        select_dir.mkdir(parents=True, exist_ok=True)
 
     logger = None
     try:
@@ -225,10 +229,82 @@ def run_two_phase_fold(fold: int, folds: dict, cache: str | Path, cfg: L.TrainCo
         if opt.on_select_epoch is not None:
             opt.on_select_epoch(epoch, rec)
 
+    # ---- 阶段 1 checkpoint：select/last.pt 每 epoch；select/best.pt 仅 inner-OOF 提升时。
+    opt1 = torch.optim.AdamW(model.parameters(), lr=float(cfg.lr),
+                             weight_decay=float(cfg.weight_decay))
+    resume1_epoch, resume1_sched = -1, None
+    prev_best_manifest: dict[str, Any] | None = None
+    model_meta = {"n_features": int(n_features), "hidden": int(cfg.hidden),
+                  "layers": int(cfg.layers), "dropout": float(cfg.dropout)}
+
+    def _compatible(man: dict[str, Any]) -> bool:
+        return man.get("model") == model_meta
+
+    if select_dir is not None and opt.resume and (select_dir / "last.pt").is_file():
+        try:
+            last_man = CK.read_manifest(select_dir / "last.pt")
+        except Exception:
+            last_man = None
+        if last_man is not None and _compatible(last_man):
+            rr1 = CK.load_for_resume(select_dir / "last.pt", model, optimizer=opt1)
+            resume1_epoch = int(rr1["epoch"])
+            resume1_sched = rr1.get("scheduler_state")
+    if select_dir is not None and (select_dir / "best.pt").is_file():
+        try:
+            man = CK.read_manifest(select_dir / "best.pt")
+            prev_best_manifest = man if _compatible(man) else None
+        except Exception:
+            prev_best_manifest = None
+    select_state: dict[str, Any] = {"best_total": float("-inf"), "best_epoch": -1}
+    if prev_best_manifest is not None and prev_best_manifest.get("best_total") is not None:
+        select_state["best_total"] = float(prev_best_manifest["best_total"])
+        select_state["best_epoch"] = int(prev_best_manifest.get("best_epoch", -1))
+
+    save_select = None
+    if select_dir is not None and opt.save_checkpoints:
+        def _select_meta(epoch: int, total: float | None) -> dict[str, Any]:
+            return {"stage": opt.scaler_prefix, "fold": fold, "phase": "select",
+                    "epoch": int(epoch), "inner_oof_total": (
+                        None if total is None else float(total)),
+                    "best_epoch": int(select_state["best_epoch"]),
+                    "best_total": (None if select_state["best_total"] == float("-inf")
+                                   else float(select_state["best_total"])),
+                    "target_scalers": dict(target), "config": cfg.as_dict(),
+                    "row_scaler": scaler.to_dict(), "model": dict(model_meta),
+                    "feature_spec": spec.as_dict() if spec is not None else None}
+
+        def save_select(epoch: int, rec: dict, model_, opt_, sched_) -> None:
+            total = rec.get("val_total")
+            if (select_dir / "last.pt").is_file():
+                CK.rotate(select_dir)
+            CK.save_checkpoint(select_dir / "last.pt", model_,
+                               meta=_select_meta(epoch, total), optimizer=opt_, scheduler=sched_)
+            if total is not None and float(total) > float(select_state["best_total"]):
+                select_state["best_total"] = float(total)
+                select_state["best_epoch"] = int(epoch)
+                CK.save_checkpoint(select_dir / "best.pt", model_,
+                                   meta=_select_meta(epoch, total), optimizer=opt_,
+                                   scheduler=sched_)
+
     hist1 = L.run_training(model, tr_in_t, cfg, eval_fn=inner_eval, on_epoch=on_select,
-                           scaler_params=target, keep_best=True)
+                           scaler_params=target, keep_best=True,
+                           optimizer=opt1, resume_epoch=resume1_epoch,
+                           resume_scheduler_state=resume1_sched,
+                           save_hook=save_select)
+    if prev_best_manifest is not None:
+        prev_total = prev_best_manifest.get("best_total")
+        if (prev_total is not None
+                and (hist1["best_total"] is None or float(prev_total) > float(hist1["best_total"]))):
+            CK.load_checkpoint(select_dir / "best.pt", model=model)
+            hist1["best_epoch"] = int(prev_best_manifest.get("best_epoch", hist1["best_epoch"]))
+            hist1["best_total"] = float(prev_total)
+            hist1["best_restored"] = True
     best_epoch = hist1["best_epoch"] if hist1["best_epoch"] >= 0 \
         else max(len(hist1["epochs"]) - 1, 0)
+    if hist1.get("stopped_reason") in ("time_budget", "paused"):
+        raise L.TrainingPaused(
+            f"[fold{fold}] stage1 stopped: {hist1.get('stopped_reason')}; "
+            f"checkpoint={select_dir if select_dir is not None else 'disabled'}")
 
     tau_info: dict[str, Any] = {"tau": [0.5, 0.5, 0.5], "objective": None, "plateau": {},
                                 "score_fn": "skipped"}
@@ -254,13 +330,18 @@ def run_two_phase_fold(fold: int, folds: dict, cache: str | Path, cfg: L.TrainCo
         register_cleanup_paths([fold_dir / "last_prev.pt"])
         register_cache_dirs([Path(cache) / "tmp"])
         if opt.resume and (fold_dir / "last.pt").is_file():
-            rr = CK.load_for_resume(fold_dir / "last.pt", model2, optimizer=opt2)
-            resume_epoch = int(rr["epoch"])
-            resume_sched = rr.get("scheduler_state")
+            try:
+                last_man = CK.read_manifest(fold_dir / "last.pt")
+            except Exception:
+                last_man = None
+            if last_man is not None and last_man.get("model") == model_meta:
+                rr = CK.load_for_resume(fold_dir / "last.pt", model2, optimizer=opt2)
+                resume_epoch = int(rr["epoch"])
+                resume_sched = rr.get("scheduler_state")
     save_last_hook = None
     capacity_hook = None
+    state = {"epoch": int(resume_epoch), "sched": None}
     if fold_dir is not None and opt.save_checkpoints:
-        state = {"epoch": int(resume_epoch)}
 
         def _meta(ep: int) -> dict[str, Any]:
             return {"stage": opt.scaler_prefix, "fold": fold, "phase": "final",
@@ -277,6 +358,7 @@ def run_two_phase_fold(fold: int, folds: dict, cache: str | Path, cfg: L.TrainCo
 
         def save_last(epoch: int, rec: dict, model, opt_, sched_) -> None:
             state["epoch"] = int(epoch)
+            state["sched"] = sched_
             if (fold_dir / "last.pt").is_file():
                 CK.rotate(fold_dir)                # 先把上一版 last.pt 轮成 last_prev.pt
             CK.save_checkpoint(fold_dir / "last.pt", model, meta=_meta(epoch),
@@ -286,7 +368,8 @@ def run_two_phase_fold(fold: int, folds: dict, cache: str | Path, cfg: L.TrainCo
             ep = int(state["epoch"])
             if (fold_dir / "last.pt").is_file():
                 CK.rotate(fold_dir)
-            CK.save_checkpoint(fold_dir / "last.pt", model2, meta=_meta(ep), optimizer=opt2)
+            CK.save_checkpoint(fold_dir / "last.pt", model2, meta=_meta(ep),
+                               optimizer=opt2, scheduler=state.get("sched"))
 
         save_last_hook = save_last
         capacity_hook = save_on_disk_pressure
@@ -298,6 +381,17 @@ def run_two_phase_fold(fold: int, folds: dict, cache: str | Path, cfg: L.TrainCo
                            on_epoch=opt.on_final_epoch,
                            save_hook=save_last_hook, capacity_hook=capacity_hook)
     del tr_t, tr_all
+
+    if hist2.get("stopped_reason") in ("time_budget", "paused"):
+        # 阶段 2 到点/暂停：last.pt 已由 save_hook 落盘，但不得写 best.pt / outer OOF。
+        if fold_dir is not None and opt.save_checkpoints:
+            ep = (int(hist2["epochs"][-1]["epoch"]) if hist2["epochs"]
+                  else int(state.get("epoch", resume_epoch)))
+            CK.save_checkpoint(fold_dir / "last.pt", model2, meta=_meta(ep),
+                               optimizer=opt2, scheduler=state.get("sched"))
+        raise L.TrainingPaused(
+            f"[fold{fold}] stage2 stopped: {hist2.get('stopped_reason')}; "
+            f"checkpoint={fold_dir if fold_dir is not None else 'disabled'}")
 
     resumable = {"ok": False, "skipped": True}
     if fold_dir is not None and opt.save_checkpoints:

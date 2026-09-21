@@ -116,6 +116,8 @@ export V4_REPO_ROOT="$HERE"
 export V4_STATE_DIR="$STATE_DIR"
 export V4_CANDIDATES="$CANDIDATES"
 export V4_REGISTRY="$REGISTRY"
+# 优雅暂停：touch "$V4_PAUSE_FLAG" 后，训练循环在下一个 epoch 边界保存 last.pt 并退出。
+export V4_PAUSE_FLAG="${V4_PAUSE_FLAG:-$STATE_DIR/pause.flag}"
 ALL_PROGRESS="$STATE_DIR/all_pipeline_progress.json"
 NET_PROGRESS="$NETWORK_ROOT/v4/state/all_pipeline_progress.json"
 # 让 bootstrap_data.sh 也能看到 tarball 位置（同一份事实，不重复解析参数）
@@ -770,7 +772,7 @@ case "$MODE" in
     fi
     if [[ "$ALL_FRESH" == "1" ]]; then
       ALL_RESUME_FLAG=()
-      rm -f "$ALL_PROGRESS" "$ALL_PROGRESS.tmp" "$NET_PROGRESS"
+      rm -f "$ALL_PROGRESS" "$ALL_PROGRESS.tmp" "$NET_PROGRESS" "$V4_PAUSE_FLAG"
       log "[all] --fresh：清空本地+网络进度台账；已有 checkpoint 仍可由各训练脚本自行续训"
     else
       ALL_RESUME_FLAG=(--resume)
