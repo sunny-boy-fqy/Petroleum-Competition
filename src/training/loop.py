@@ -91,6 +91,7 @@ class TrainConfig:
     lam1_frac: float = 0.6
     lam_atom: float = 0.5
     lam_joint: float = 0.2
+    joint_cont_weight: float = 0.2      # 联合占位行在连续头损失中的权重（硬切换后主要靠 q_atom）
     grad_clip: float = 1.0
     amp_dtype: str = "bf16"          # "bf16" | "fp32"
     device: str = "auto"             # "auto" | "cpu" | "cuda" | "cuda:0"
@@ -228,10 +229,21 @@ def train_epoch(model, opt, data: TorchFold, cfg: TrainConfig, epoch: int,
         xb = data.X[idx]
         batch = data.batch(idx)
         opt.zero_grad(set_to_none=True)
+        # 联合占位行由 q_atom/q_joint + 硬切换负责；连续头不应被 66% 的占位尖峰支配。
+        slice_weight = None
+        y_joint = batch.get("y_joint")
+        if y_joint is not None:
+            jw = float(getattr(cfg, "joint_cont_weight", 0.2))
+            w = torch.ones_like(y_joint, dtype=xb.dtype, device=xb.device).unsqueeze(-1)
+            w = w.expand(-1, 3).clone()
+            w = torch.where(y_joint.unsqueeze(-1) > 0.5,
+                            torch.full_like(w, jw), w)
+            slice_weight = w
         with amp_context(cfg, data.device):
             out = model(xb)
             loss, parts = total_loss(out, batch, lam1=lam1, lam_atom=cfg.lam_atom,
-                                     lam_joint=cfg.lam_joint, s_por=s_por, s_sw=s_sw)
+                                     lam_joint=cfg.lam_joint, s_por=s_por, s_sw=s_sw,
+                                     slice_weight=slice_weight)
         if not torch.isfinite(loss):
             raise FloatingPointError(f"non-finite loss at epoch {epoch} (batch {nb})")
         loss.backward()

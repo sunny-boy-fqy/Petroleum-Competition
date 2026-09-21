@@ -193,26 +193,16 @@ def _robust_scale(v: np.ndarray) -> float:
 def fit_target_scalers(y_por: np.ndarray, y_sw: np.ndarray, mask: np.ndarray,
                        z_perm: np.ndarray | None = None,
                        y_perm: np.ndarray | None = None) -> dict:
-    """**只用训练折**观测样本拟合目标尺度（纯 numpy，返回可 JSON 序列化的 dict）。
+    """**只用训练折的非原子有效样本**拟合目标尺度。
 
-    返回键（全部为 python float / tuple）::
+    返回键（全部 python float / tuple）::
 
-        por_median, por_max (=1.2·max(valid POR)), sw_mu (=median(valid SW)),
-        sw_sigma (=IQR(valid SW)/1.349), perm_z_median, s_por, s_sw,
-        atom_rates (POR/PERM/SW 原子率), joint_atom_rate
+        por_median, por_max, sw_mu, sw_sigma, perm_z_median, s_por, s_sw,
+        atom_rates, joint_atom_rate
 
-    `s_por`/`s_sw` 是 `aux_loss` 的稳健归一化尺度（IQR/1.349，退化时用 std），
-    必须与 `sw_mu`/`sw_sigma` 一起写入 checkpoint manifest / scaler JSON。
-    `z_perm` 可选：给出时用有效行的中位数填 `perm_z_median`，否则用默认 −0.08。
-
-    **R4-M1**：返回的 dict 可直接喂给 `models.row_mlp.build_model(init_stats=...)`——
-    后者只转发 `RowMLP.init_from_stats` 签名内的键，并把 `s_por/s_sw` 记进
-    `model.init_stats_ignored`（供 manifest 审计），因此不会再抛
-    `TypeError: init_from_stats() got an unexpected keyword argument 's_por'`。
-    `y_perm` 可选：给出时用它算 PERM 原子率与联合原子率；缺失时回落到 E0 实测先验
-    （**PERM 原子率必须来自训练折**，绝不允许用验证折）。
-
-    无任何有效行时抛 `ValueError`（绝不允许在空切片上静默产出 NaN 尺度）。
+    “有效”定义：该目标非缺测、有限、且**不是该目标的占位原子值**
+    （POR=0.1 / PERM=0.01 / SW=99.9）。如果某目标非原子样本不足，退化为
+    “非缺测且有限”，并在调用方日志中可见；正常真实数据一定有足够非原子样本。
     """
     por = np.asarray(y_por, dtype="float64").reshape(-1)
     sw = np.asarray(y_sw, dtype="float64").reshape(-1)
@@ -220,12 +210,38 @@ def fit_target_scalers(y_por: np.ndarray, y_sw: np.ndarray, mask: np.ndarray,
     if m.shape != (por.size, 3):
         raise ValueError(f"mask must be ({por.size},3) float/bool, got {tuple(m.shape)}")
 
-    vp = por[m[:, 0] & np.isfinite(por)]
-    vs = sw[m[:, 2] & np.isfinite(sw)]
-    if vp.size == 0:
-        raise ValueError("fit_target_scalers: no valid (observed, finite) POR rows in this fold")
+    av = np.asarray([C.ATOM_VALUES[t] for t in C.TARGETS], dtype="float64")
+    tol = _atom_tolerances()[None, :]
+    hit = np.zeros((por.size, 3), dtype=bool)
+    hit[:, 0] = (np.abs(por - av[0]) <= float(tol[0, 0])) & m[:, 0] & np.isfinite(por)
+    hit[:, 2] = (np.abs(sw - av[2]) <= float(tol[0, 2])) & m[:, 2] & np.isfinite(sw)
+
+    z = None
+    if z_perm is not None:
+        z = np.asarray(z_perm, dtype="float64").reshape(-1)
+        if z.size != por.size:
+            raise ValueError("z_perm must have the same length as y_por")
+        if y_perm is None:
+            # 生产路径只拿得到 log10(PERM)；反变换出原始 PERM 才能判原子值。
+            y_perm = np.power(10.0, z)
+    if y_perm is not None:
+        yp = np.asarray(y_perm, dtype="float64").reshape(-1)
+        if yp.size != por.size:
+            raise ValueError("y_perm must have the same length as y_por")
+        hit[:, 1] = ((np.abs(yp - av[1]) <= float(tol[0, 1]))
+                     & m[:, 1] & np.isfinite(yp))
+
+    # 连续头尺度只由“非原子有效行”拟合；原子行由 q_atom 硬切换负责。
+    vp = por[m[:, 0] & ~hit[:, 0] & np.isfinite(por)]
+    vs = sw[m[:, 2] & ~hit[:, 2] & np.isfinite(sw)]
+    if vp.size == 0:                    # 极端兜底：全原子折不应存在，但不静默 NaN
+        vp = por[m[:, 0] & np.isfinite(por)]
     if vs.size == 0:
-        raise ValueError("fit_target_scalers: no valid (observed, finite) SW rows in this fold")
+        vs = sw[m[:, 2] & np.isfinite(sw)]
+    if vp.size == 0:
+        raise ValueError("fit_target_scalers: no valid (observed, finite) POR rows")
+    if vs.size == 0:
+        raise ValueError("fit_target_scalers: no valid (observed, finite) SW rows")
 
     s_por = _robust_scale(vp)
     s_sw = _robust_scale(vs)
@@ -237,40 +253,27 @@ def fit_target_scalers(y_por: np.ndarray, y_sw: np.ndarray, mask: np.ndarray,
         "perm_z_median": -0.08,
         "s_por": float(s_por),
         "s_sw": float(s_sw),
-        # R4-M1：原子先验也要**折内**统计（默认值只是 y_perm 缺失时的回落）
         "atom_rates": tuple(float(x) for x in DEFAULT_ATOM_RATES),
         "joint_atom_rate": float(DEFAULT_JOINT_ATOM_RATE),
     }
-    if z_perm is not None:
-        z = np.asarray(z_perm, dtype="float64").reshape(-1)
-        if z.size != por.size:
-            raise ValueError("z_perm must have the same length as y_por")
-        vz = z[m[:, 1] & np.isfinite(z)]
+    if z is not None:
+        vz = z[m[:, 1] & ~hit[:, 1] & np.isfinite(z)]
+        if vz.size == 0:
+            vz = z[m[:, 1] & np.isfinite(z)]
         if vz.size:
             scaler["perm_z_median"] = float(np.median(vz))
-        # M2 审查修复：生产路径只拿到 log10(PERM)（z_perm）时，仍可还原原始尺度
-        # 用来统计折内原子先验，避免永远回落到 DEFAULT_ATOM_RATES。
-        if y_perm is None:
-            y_perm = np.power(10.0, z)
     if y_perm is not None:
         yp = np.asarray(y_perm, dtype="float64").reshape(-1)
-        if yp.size != por.size:
-            raise ValueError("y_perm must have the same length as y_por")
-        av = np.asarray([C.ATOM_VALUES[t] for t in C.TARGETS], dtype="float64")
-        tol = _atom_tolerances()[None, :]
         obs = m
-        hit = np.zeros((por.size, 3), dtype=bool)
-        hit[:, 0] = (np.abs(por - av[0]) <= float(tol[0, 0])) & obs[:, 0]
-        hit[:, 1] = (np.abs(yp - av[1]) <= float(tol[0, 1])) & obs[:, 1] & np.isfinite(yp)
-        hit[:, 2] = (np.abs(sw - av[2]) <= float(tol[0, 2])) & obs[:, 2]
         rates = []
         for t in range(3):
             o = obs[:, t]
             rates.append(float(hit[o, t].mean()) if o.any() else float(DEFAULT_ATOM_RATES[t]))
         all_obs = obs.all(axis=1)
         scaler["atom_rates"] = tuple(rates)
-        scaler["joint_atom_rate"] = (float(hit[all_obs].all(axis=1).mean())
-                                     if all_obs.any() else float(DEFAULT_JOINT_ATOM_RATE))
+        scaler["joint_atom_rate"] = (
+            float(hit[all_obs].all(axis=1).mean()) if all_obs.any()
+            else float(DEFAULT_JOINT_ATOM_RATE))
     return scaler
 
 

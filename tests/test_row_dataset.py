@@ -76,6 +76,24 @@ class TestRowPipeline(unittest.TestCase):
         self.assertTrue(np.isfinite(t.X[:, 14:28]).all())
 
     # ------------------------------------------------------------ 折内 fit
+    def test_target_scalers_exclude_atomic_rows(self):
+        """sw_mu/por_median/perm_z_median 必须由非原子有效行拟合，不能被占位尖峰拉走。"""
+        n, valid = 200, 60
+        por = np.full(n, C.ATOM_VALUES["POR"], dtype="float64")
+        perm = np.full(n, C.ATOM_VALUES["PERM"], dtype="float64")
+        sw = np.full(n, C.ATOM_VALUES["SW"], dtype="float64")
+        por[:valid] = np.linspace(5.0, 25.0, valid)
+        perm[:valid] = np.logspace(-1.0, 1.0, valid)
+        sw[:valid] = np.linspace(75.0, 95.0, valid)
+        mask = np.ones((n, 3), dtype="float64")
+        sc = F.fit_target_scalers(por, sw, mask, z_perm=np.log10(perm), y_perm=perm)
+        self.assertAlmostEqual(sc["por_median"], float(np.median(por[:valid])), places=6)
+        self.assertAlmostEqual(sc["sw_mu"], float(np.median(sw[:valid])), places=6)
+        self.assertAlmostEqual(sc["perm_z_median"],
+                              float(np.median(np.log10(perm[:valid]))), places=6)
+        self.assertLess(sc["por_max"], 1.2 * 25.0 + 1e-9)
+        self.assertGreater(sc["sw_sigma"], 1e-6)
+
     def test_row_scaler_fit_uses_only_given_rows(self):
         t = RD.assemble(WELLS, self.cache, scaler=None, with_targets=True)
         head = t.X[:100]

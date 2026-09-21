@@ -374,8 +374,10 @@ class TestTargetScalersAndDecode(unittest.TestCase):
         self.assertIsInstance(sc["atom_rates"], tuple)
         json.dumps(sc)                                    # 可 JSON 序列化
         self.assertAlmostEqual(sc["por_max"], C.POR_MAX_BUFFER * 30.0, places=9)
-        self.assertAlmostEqual(sc["sw_mu"], 80.0, places=9)
-        self.assertAlmostEqual(sc["por_median"], 10.0, places=9)
+        # 尺度只由非原子有效行拟合：SW 去掉 99.9 -> median([10,50,80,95])=65；
+        # POR 去掉 0.1 -> median([0,10,20,30])=15。
+        self.assertAlmostEqual(sc["sw_mu"], 65.0, places=9)
+        self.assertAlmostEqual(sc["por_median"], 15.0, places=9)
         # M2：只给 z_perm（log10(PERM)）时也要还原原始尺度统计折内原子率先验，
         # 不再无条件回落到 E0 默认值。本数据里 POR/PERM/SW 各只有第 0 行是原子。
         self.assertEqual(tuple(sc["atom_rates"]), (0.2, 0.2, 0.2))

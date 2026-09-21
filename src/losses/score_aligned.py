@@ -133,7 +133,7 @@ def aligned_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,
                  eps: float = 1e-3, alpha: float = 1e-3, beta: float = 20.0,
                  boundary_kappa: float = 0.0, boundary_sigma: float = 0.25,
                  y_atom=None, include_atom_mask: bool = True,
-                 perm_clamp: bool = True):
+                 perm_clamp: bool = True, slice_weight=None):
     """三目标加权对齐损失（返回标量，越小越好）。
 
     mask : (B, 3) float，1=该目标参与监督（缺测为 0）
@@ -154,6 +154,11 @@ def aligned_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,
     s_por = align_score_relative(y_por, p_por, 0.08, eps, alpha, beta)
     s_perm = align_score_log(z_perm, zhat_perm, alpha, beta, clamp=perm_clamp)
     s_sw = align_score_relative(y_sw, p_sw, 0.05, eps, alpha, beta)
+    if slice_weight is not None:
+        W = _as_slice_weight(slice_weight, s_por)
+        m_por = W[..., 0] if m_por is None else m_por * W[..., 0]
+        m_perm = W[..., 1] if m_perm is None else m_perm * W[..., 1]
+        m_sw = W[..., 2] if m_sw is None else m_sw * W[..., 2]
 
     atom = None
     if boundary_kappa and y_atom is not None and include_atom_mask:
@@ -368,7 +373,8 @@ def total_loss(out: dict, batch: dict, lam1: float = 1.0, lam2: float | None = N
     if use_align:
         _add("align", aligned_loss(
             batch["por"], out["por"], batch["perm_z"], out["perm_z"],
-            batch["sw"], out["sw"], mask, y_atom=batch.get("y_atom"), **kw), 1.0)
+            batch["sw"], out["sw"], mask, y_atom=batch.get("y_atom"),
+            slice_weight=slice_weight, **kw), 1.0)
     if use_aux:
         _add("aux", aux_loss(
             batch["por"], out["por"], batch["perm_z"], out["perm_z"],
