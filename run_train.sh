@@ -42,13 +42,30 @@
 # 平台集成（已按官方提示落实）：
 #   * TensorBoard：导出 TENSORBOARD_LOGDIR=$V4_DATA_ROOT/v4/tb，
 #     训练脚本用 src/training/tb_logger.py::RunLogger 写指标，平台任务详情页可见曲线。
-#   * 云盘持久化：所有产物（cache/runs/reports/logs/tb）都在 $V4_DATA_ROOT(=/data)/v4 下，
-#     任务结束或资源释放后仍保留。
+#   * 本地高速盘：训练期数据/缓存/checkpoint/报告/日志全部写到 `$V4_LOCAL_ROOT/v4/*`
+#     （默认自动选择 /workspace、/code/workspace 或 /tmp/v4_local，**不写网络盘 /data**）。
+#   * 网络盘 `/data` 只用于两件事：读取上传的数据分发包；训练结束后 publish 最终模型。
 # =============================================================================
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"     # 自定位：/code/workspace/<仓库名>
-DATA_ROOT="${V4_DATA_ROOT:-/data}"
+NETWORK_ROOT="${V4_NETWORK_ROOT:-/data}"
+LOCAL_ROOT="${V4_LOCAL_ROOT:-}"
+# 兼容旧调用：显式 V4_DATA_ROOT 指向非 /data 时，仍视为本地运行时根。
+if [[ -z "$LOCAL_ROOT" && -n "${V4_DATA_ROOT:-}" && "${V4_DATA_ROOT}" != "/data" ]]; then
+  LOCAL_ROOT="${V4_DATA_ROOT}"
+fi
+if [[ -z "$LOCAL_ROOT" ]]; then
+  # 优先本地大容量目录；不写 /data 网络盘。
+  if [[ -d /workspace && -w /workspace ]]; then
+    LOCAL_ROOT="/workspace"
+  else
+    LOCAL_ROOT="$HERE/.v4_runtime"
+  fi
+fi
+mkdir -p "$LOCAL_ROOT" 2>/dev/null || LOCAL_ROOT="${TMPDIR:-/tmp}/v4_local"
+mkdir -p "$LOCAL_ROOT"
+DATA_ROOT="$LOCAL_ROOT"                 # 训练期运行时数据根（本地高速盘）
 RUN_ROOT="${V4_RUN_ROOT:-$DATA_ROOT/v4/runs}"
 CACHE_ROOT="${V4_CACHE_ROOT:-$DATA_ROOT/v4/cache}"
 LOG_DIR="${V4_LOG_DIR:-$DATA_ROOT/v4/logs}"
@@ -84,29 +101,32 @@ mkdir -p "$RUN_ROOT" "$CACHE_ROOT" "$LOG_DIR" "$REPORTS_DIR" "$STATE_DIR"
 TS="$(date +%Y%m%d_%H%M%S)"
 LOG="$LOG_DIR/train_${MODE}_${TS}.log"
 
+export V4_LOCAL_ROOT="$LOCAL_ROOT"
+export V4_NETWORK_ROOT="$NETWORK_ROOT"
 export V4_DATA_ROOT="$DATA_ROOT"
 export V4_RUN_ROOT="$RUN_ROOT"
 export V4_CACHE_ROOT="$CACHE_ROOT"
 export V4_REPORTS_DIR="$REPORTS_DIR"
 export V4_REPO_ROOT="$HERE"
-# H6：候选表与版本注册表是**运行时可变状态**，必须放 /data 持久区（仓库/临时目录会丢）。
+# 候选表与版本注册表是运行时可变状态：放本地 runtime，最终 publish 再复制到 /data。
 export V4_STATE_DIR="$STATE_DIR"
 export V4_CANDIDATES="$CANDIDATES"
 export V4_REGISTRY="$REGISTRY"
 ALL_PROGRESS="$STATE_DIR/all_pipeline_progress.json"
+NET_PROGRESS="$NETWORK_ROOT/v4/state/all_pipeline_progress.json"
 # 让 bootstrap_data.sh 也能看到 tarball 位置（同一份事实，不重复解析参数）
 if [[ -n "$DATA_TARBALL" ]]; then export V4_DATA_TARBALL="$DATA_TARBALL"; fi
 if [[ -n "$DATA_MANIFEST" ]]; then export V4_DATA_MANIFEST="$DATA_MANIFEST"; fi
 # 平台集成 TensorBoard：日志写到 TENSORBOARD_LOGDIR（若有）
 export TENSORBOARD_LOGDIR="${TENSORBOARD_LOGDIR:-$DATA_ROOT/v4/tb}"
 mkdir -p "$TENSORBOARD_LOGDIR"
-# 避免任何东西写到临时目录导致丢失
+# torch/XDG 缓存也放本地运行时目录，避免写满网络盘
 export TORCH_HOME="${TORCH_HOME:-$CACHE_ROOT/torch}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$CACHE_ROOT/xdg}"
 
 log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
 
-# all 模式的持久进度台账（$STATE_DIR=/data/v4/state，任务结束不丢）
+# all 模式进度台账（本地 STATE_DIR，最终 publish 时随模型一起复制到 /data）
 mark_progress() {
   python3 - "$ALL_PROGRESS" "$1" "$2" "${3:-running}" <<'PY'
 import json, os, sys, time
@@ -151,11 +171,13 @@ PY
 log "=============================================================="
 log "v4 training task  mode=$MODE stage=$STAGE"
 log "repo(HERE)   = $HERE            <- /code/workspace/<仓库名> (临时，实测值即本行)"
-log "DATA_ROOT    = $DATA_ROOT       <- 云盘（持久）"
+log "LOCAL_ROOT   = $LOCAL_ROOT       <- 训练期本地高速盘（数据/cache/runs/reports/logs/state）"
+log "NETWORK_ROOT = $NETWORK_ROOT     <- 网络盘：只读 tarball + 收最终模型"
+log "DATA_ROOT    = $DATA_ROOT       <- 本地运行时数据根（$V4_DATA_ROOT）"
 log "RUN_ROOT     = $RUN_ROOT"
 log "CACHE_ROOT   = $CACHE_ROOT"
 log "REPORTS_DIR  = $REPORTS_DIR"
-log "STATE_DIR    = $STATE_DIR    <- 候选/注册表持久区"
+log "STATE_DIR    = $STATE_DIR    <- 本地候选/注册表/进度"
 log "CANDIDATES   = $CANDIDATES"
 log "REGISTRY     = $REGISTRY"
 log "LOG          = $LOG"
@@ -266,6 +288,45 @@ run_e0() {
       log "!! [e0] copy $base 失败（忽略，权威副本仍在 $REPORTS_DIR）"
     fi
   done
+}
+
+publish_progress_to_network() {
+  # 只同步极小体积的进度/状态文件：大 cache/runs 永不写 /data。
+  if [[ ! -f "$ALL_PROGRESS" ]]; then return 0; fi
+  local dst="$NETWORK_ROOT/v4/state"
+  mkdir -p "$dst" || return 1
+  cp -a "$ALL_PROGRESS" "$dst/" || return 1
+  for f in "$CANDIDATES" "$REGISTRY"; do
+    if [[ -f "$f" ]]; then cp -a "$f" "$dst/" || return 1; fi
+  done
+  log "[publish] progress/state -> $dst"
+}
+
+publish_final_to_network() {
+  # 训练结束后只把最终模型（+ 可选 E10 提交包）复制到网络盘 /data。
+  local src_final="$RUN_ROOT/v4/final"
+  local dst_final="$NETWORK_ROOT/v4/final"
+  local copied=0
+  if [[ -d "$src_final" ]]; then
+    mkdir -p "$dst_final" || return 1
+    cp -a "$src_final/." "$dst_final/" || return 1
+    copied=1
+    log "[publish] final model -> $dst_final"
+  else
+    log "[publish] 未找到最终模型目录 $src_final（跳过）"
+  fi
+  local src_sub="$RUN_ROOT/E10/submission"
+  if [[ -d "$src_sub" ]]; then
+    local dst_sub="$NETWORK_ROOT/v4/submission"
+    mkdir -p "$dst_sub" || return 1
+    cp -a "$src_sub/." "$dst_sub/" || return 1
+    copied=1
+    log "[publish] submission -> $dst_sub"
+  fi
+  publish_progress_to_network || log "[publish] progress 同步失败（不阻塞最终模型已发布）"
+  if [[ "$copied" == "0" ]]; then
+    log "[publish] 无模型可发布（可能还没跑到 E10）"
+  fi
 }
 
 run_smoke() {
@@ -554,6 +615,7 @@ PY
           python3 "$HERE/E10/code/$stage.py" --reports-dir "$REPORTS_DIR" \
             "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG"
         }
+        e10_sub="$RUN_ROOT/E10/submission"
         if [[ "$e10_phase" == "all" || "$e10_phase" == "final" ]]; then e10_run final_train --out-dir "$RUN_ROOT/v4/final" || return 1; fi
         if [[ "$e10_phase" == "all" || "$e10_phase" == "export" ]]; then
           e10_ckpt="$(ls -1 "$RUN_ROOT/v4/final"/*.fp32.pt 2>/dev/null | head -1)"
@@ -564,20 +626,30 @@ PY
         fi
         if [[ "$e10_phase" == "all" || "$e10_phase" == "build" ]]; then
           python3 "$HERE/E10/code/build_submission.py" --weights "$RUN_ROOT/v4/final" \
+            --out "$e10_sub/submission_code_v4.zip" \
+            --result-zip "$e10_sub/result.zip" \
+            --manifest "$e10_sub/submission_manifest.json" \
             --reports-dir "$REPORTS_DIR" "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
         fi
         if [[ "$e10_phase" == "all" || "$e10_phase" == "b0" ]]; then
           python3 "$HERE/E10/code/build_b0_fallback.py" --reports-dir "$REPORTS_DIR" \
+            --out "$e10_sub/submission_code_b0_fallback.zip" \
             "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
         fi
         if [[ "$e10_phase" == "all" || "$e10_phase" == "verify" ]]; then
           python3 "$HERE/E10/code/verify_inference.py" --reports-dir "$REPORTS_DIR" \
-            --data-dir "$DATA_ROOT/v4/data" "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
+            --data-dir "$DATA_ROOT/v4/data" \
+            --zip "$e10_sub/submission_code_v4.zip" \
+            "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
         fi
         if [[ "$e10_phase" == "all" || "$e10_phase" == "submit" ]]; then
           python3 "$HERE/E10/code/submit.py" --reports-dir "$REPORTS_DIR" \
+            --zip "$e10_sub/result.zip" \
+            --code-zip "$e10_sub/submission_code_v4.zip" \
+            --log "$REPORTS_DIR/E10_submission_log.json" \
             "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
-        fi ;;
+        fi
+        publish_final_to_network || return 1 ;;
     *)  log "!! 阶段 $STAGE 尚未实现（见 v4/PLAN.md §七 与各 E*/PLAN.md）"; return 1 ;;
   esac
 }
@@ -624,10 +696,15 @@ case "$MODE" in
     fi
     if [[ "$ALL_FRESH" == "1" ]]; then
       ALL_RESUME_FLAG=()
-      rm -f "$ALL_PROGRESS" "$ALL_PROGRESS.tmp"
-      log "[all] --fresh：清空进度台账；已有 checkpoint 仍可由各训练脚本自行续训"
+      rm -f "$ALL_PROGRESS" "$ALL_PROGRESS.tmp" "$NET_PROGRESS"
+      log "[all] --fresh：清空本地+网络进度台账；已有 checkpoint 仍可由各训练脚本自行续训"
     else
       ALL_RESUME_FLAG=(--resume)
+      if [[ ! -f "$ALL_PROGRESS" && -f "$NET_PROGRESS" ]]; then
+        mkdir -p "$(dirname "$ALL_PROGRESS")"
+        cp -a "$NET_PROGRESS" "$ALL_PROGRESS"
+        log "[all] 本地无进度，已从 $NET_PROGRESS 恢复"
+      fi
     fi
     if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
       log "!! [all] 全链路模式忽略额外参数，请用 --through N 控制范围：${EXTRA_ARGS[*]}"
@@ -653,13 +730,17 @@ case "$MODE" in
       log "=== [all] task $_n/$_name 开始 ==="
       run_all_task "$_n" || {
         mark_progress "$_n" "$_name" failed
+        publish_progress_to_network || true
         log "!! [all] task $_n/$_name 失败，链路停止（exit 21）"
         exit 21
       }
       mark_progress "$_n" "$_name" done
+      publish_progress_to_network || log "[all] 进度同步 /data 失败（不阻塞当前任务）"
       log "=== [all] task $_n/$_name 完成 ==="
     done
+    publish_final_to_network || { log "!! [all] 最终模型复制到 /data 失败（exit 22）"; exit 22; }
     mark_progress "DONE" "all" done
+    publish_progress_to_network || true
     log "--- [all] 已完成到 task $ALL_THROUGH/${ALL_TASK_NAMES[$ALL_THROUGH]}"
     ;;
   *) log "unknown mode: $MODE"; exit 2 ;;

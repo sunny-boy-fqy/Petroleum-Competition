@@ -19,7 +19,7 @@
 | 启动命令最长 **500 字符** | 训练任务文档 §填写启动命令 | 所有编排逻辑封装进 `run_train.sh`，启动命令只有一句 |
 | 单次任务运行时长最长 **7×24 h** | 训练任务文档 §设置运行时长 | 与 D1（用户放宽 100h）兼容；但仍要求 checkpoint 可续训 |
 | TensorBoard 日志写到环境变量 `TENSORBOARD_LOGDIR` 指向目录 | 训练任务文档 §TensorBoard 日志 | `run_train.sh` 已导出 `TENSORBOARD_LOGDIR=/data/v4/tb`（**持久**）；训练脚本用 `src/training/tb_logger.py::RunLogger` 写入，平台任务详情页可见迭代曲线 |
-| 停止任务后**不能直接续跑**，只能用【重新训练】新建任务 | 训练任务文档 §常见问题 3 | 必须实现 `--resume` 并从 `/data/v4/runs/<stage>/last.pt` 恢复 |
+| 停止任务后**不能直接续跑**，只能用【重新训练】新建任务 | 训练任务文档 §常见问题 3 | 必须实现 `--resume` 并从 `$V4_LOCAL_ROOT/v4/runs/<stage>/last.pt` 恢复 |
 | 本地上传的代码包 ≤ 500 MB，**禁止包含模型权重与大数据集** | 训练任务文档 §本地上传 | v4 的 git 仓库只放代码 + 31 MB 数据 tarball 的**生成脚本**；数据集单独上传到云盘 |
 | 平台**最多创建 5 个镜像**；镜像使用场景（开发机 / 训练任务）互不通用 | 镜像文档 §常见问题 4、6 | 只构建**一个**「训练任务」场景镜像；开发机侧用官方镜像即可 |
 | 镜像可用【快捷安装】(apt/pip) 或【Dockerfile 编辑】 | 镜像文档 §配置构建方式 | v4 用快捷安装即可（只需 pip 轻量包） |
@@ -50,23 +50,25 @@
 ```
 本机（开发机，无 GPU）                     云端（Intern InkStone）
 ├── 写代码、跑口径层单测                    ├── /code/workspace/<仓库名>/  ← git clone（临时！）
-├── tools/pack_dataset.py 生成 31 MB 数据包  ├── /data/v4/data/         ← 云盘（持久）
-└── git push                               ├── /data/v4/cache/        ← 云盘（持久）
-                                           ├── /data/v4/runs/         ← 云盘（持久，checkpoint）
-                                           ├── /data/v4/reports/      ← 云盘（持久，Gate 报告）
-                                           └── /data/v4/logs/         ← 云盘（持久，stdout 日志）
+├── tools/pack_dataset.py 生成 31 MB 数据包  ├── /workspace/v4/data/         ← 本地高速盘（训练期）
+└── git push                               ├── /workspace/v4/cache/        ← 本地高速盘（训练期）
+                                           ├── /workspace/v4/runs/         ← 本地 checkpoint/OOF
+                                           ├── /workspace/v4/reports/      ← 本地 Gate 报告
+                                           └── /data/v4/final/            ← 网络盘：最终模型
 ```
 
 **环境变量契约**（`run_train.sh` 会设置好，Python 侧读取）：
 
 | 变量 | 默认 | 用途 |
 |---|---|---|
-| `V4_DATA_ROOT` | `/data` | 数据根；数据实际位于 `$V4_DATA_ROOT/v4/data/{train,test}` |
-| `V4_RUN_ROOT` | `$V4_DATA_ROOT/v4/runs` | checkpoint / OOF |
-| `V4_CACHE_ROOT` | `$V4_DATA_ROOT/v4/cache` | 特征与张量缓存 |
-| `V4_REPORTS_DIR` | `$V4_DATA_ROOT/v4/reports` | Gate 报告 / 数据卡 |
-| `V4_LOG_DIR` | `$V4_DATA_ROOT/v4/logs` | 训练日志 |
-| `TENSORBOARD_LOGDIR` | `$V4_DATA_ROOT/v4/tb` | 平台迭代曲线 |
+| `V4_LOCAL_ROOT` | 自动：`/workspace` 或 `$HERE/.v4_runtime` | 本地高速盘运行时根 |
+| `V4_NETWORK_ROOT` | `/data` | 网络盘：只读 tarball + 最终模型回写 |
+| `V4_DATA_ROOT` | `$V4_LOCAL_ROOT` | 训练期数据根；数据位于 `$V4_DATA_ROOT/v4/data/{train,test}` |
+| `V4_RUN_ROOT` | `$V4_DATA_ROOT/v4/runs` | checkpoint / OOF（本地） |
+| `V4_CACHE_ROOT` | `$V4_DATA_ROOT/v4/cache` | 特征与张量缓存（本地） |
+| `V4_REPORTS_DIR` | `$V4_DATA_ROOT/v4/reports` | Gate 报告 / 数据卡（本地） |
+| `V4_LOG_DIR` | `$V4_DATA_ROOT/v4/logs` | 训练日志（本地） |
+| `TENSORBOARD_LOGDIR` | `$V4_DATA_ROOT/v4/tb` | 平台迭代曲线（本地） |
 | `V4_REPO_ROOT` | `$HERE` | 本次任务的代码目录（临时） |
 
 ---
@@ -199,8 +201,8 @@ git log --oneline -1                     # 记下这个 revision —— 平台�
 
 | # | 任务名 | 启动命令 | 预期 |
 |---|---|---|---|
-| 1 | `v4-bootstrap` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env` | 打印 torch 2.8.0 / Ascend 910B / bf16 / 磁盘剩余；把 `E0_env.json`、`E0_disk_budget.json` 写入 `/data/v4/reports/` |
-| 2 | `v4-data` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data` | 解压数据到 `/data/v4/data`，`RESULT: OK` |
+| 1 | `v4-bootstrap` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env` | 打印 torch 2.8.0 / Ascend 910B / bf16 / 本地磁盘剩余；把 `E0_env.json`、`E0_disk_budget.json` 写入本地 runtime 的 `reports/` |
+| 2 | `v4-data` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data` | 从 `/data` 读 tarball，解压到本地 `$V4_LOCAL_ROOT/v4/data`，`RESULT: OK` |
 | 3 | `v4-e0` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode e0` | 数据卡 + 常数基线 70.490735 + 折指纹 + 契约自检；`E0_gate.json` passed=true |
 | 4 | `v4-smoke` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode smoke` | 1 折 / 2 epoch / 8 井，验证训练链路（需 E1 代码实现后） |
 | 5+ | `v4-E1`…`v4-E8` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage E1` | 按 PLAN §七 推进 |
@@ -223,12 +225,12 @@ df -h / /data /code/workspace        # 运行任务时看，确认容量与是�
 du -sh /data/* 2>/dev/null | sort -h # 确认占用分布
 V4="$(dirname "$(find /code/workspace -name run_train.sh | head -1)")"
 python3 "$V4/src/data/disk_guard.py" --min-free-gb 8 \
-        --report /code/workspace,/data --json /data/v4/reports/disk.json
+        --report /code/workspace,/data --json "$V4_LOCAL_ROOT/v4/reports/disk.json"
 ```
 
 无论实测结果如何，v4 的规则不变：
 
-1. **只往 `/data` 写有保留价值的东西**（checkpoint / 缓存 / 报告 / 日志）；`/code/workspace` 只读代码。
+1. **训练期大产物只写本地 `$V4_LOCAL_ROOT`**（数据/缓存/checkpoint/报告/日志）；`/data` 网络盘只读 tarball、写最终模型。
 2. **checkpoint 滚动淘汰**：每个 run 只留 `best.pt`、`last.pt`、`last_prev.pt`（bf16 存储，单个 ≤1.2 GB）。
 3. **特征按版本目录落盘**，换版本先删旧目录；不落任何逐 epoch 的中间张量。
 4. 每个 epoch 调 `assert_disk_headroom(8.0)`；<5 GB 时**保存 `last.pt` 后优雅退出**，用【重新训练】+ `--resume` 继续。
@@ -270,24 +272,26 @@ with RunLogger(f"E3_unet_fold{fold}") as log:
 - 平台镜像若不带 `tensorboard`，模块**静默降级**，不影响训练。
 - 纪律：曲线只用于观测；**早停与模型选择仍以 `src/score.py` 的真实分数为准**。
 
-### 2. 云盘 `/data` 持久化
+### 2. 本地高速盘 + 网络盘 `/data`
 
-所有产物都在 `/data/v4/` 下，任务结束或资源释放后保留：
+训练期所有大数据都写本地 `$V4_LOCAL_ROOT/v4/`；`/data` 只保留上传数据包和最终模型：
 
 | 路径 | 内容 |
 |---|---|
-| `/data/v4/data/` | 数据集（一次性部署） |
-| `/data/v4/cache/` | 分片缓存与特征缓存 |
-| `/data/v4/runs/` | checkpoint（`best/last/last_prev.pt`）、OOF |
-| `/data/v4/reports/` | Gate 报告、数据卡、`cloud_frozen.txt` |
-| `/data/v4/logs/` | `run_train.sh` 的 stdout 日志 |
+| `$V4_LOCAL_ROOT/v4/data/` | 数据集（从 `/data` tarball 解压，本地） |
+| `$V4_LOCAL_ROOT/v4/cache/` | 分片缓存与特征缓存（本地） |
+| `$V4_LOCAL_ROOT/v4/runs/` | checkpoint（`best/last/last_prev.pt`）、OOF（本地） |
+| `$V4_LOCAL_ROOT/v4/reports/` | Gate 报告、数据卡、`cloud_frozen.txt`（本地） |
+| `$V4_LOCAL_ROOT/v4/logs/` | `run_train.sh` 的 stdout 日志（本地） |
+| `/data/v4_data.tar.gz` | 上传的数据分发包（网络盘，只读） |
+| `/data/v4/final/` | 训练结束后 publish 的最终模型（网络盘） |
 | `/data/v4/tb/` | TensorBoard 事件文件 + JSONL |
 
 **禁止**把上述任何内容写到 `/code/workspace`（临时目录，任务结束即丢）。
 
 ## 六、注意事项与已知坑
 
-1. **`/code/workspace` 是临时的**：不要在那里放数据集副本或让训练脚本把结果写在那里（会随任务结束丢失）。
+1. **本地 runtime 是临时/高速的**：训练期数据、缓存、checkpoint 写 `$V4_LOCAL_ROOT`；任务结束前会把最终模型 publish 到 `/data/v4/final`。
 2. **不要在任务里 `pip install torch`**：会替换镜像内版本并消耗数 GB；`run_train.sh` 的 `setup_deps.sh` 会预检并拒绝触碰 torch/nvidia/cuda 系列。
 3. **镜像场景要选「训练任务」**：选成「开发机」后训练任务里看不到该镜像（镜像文档 §常见问题 4）。
 4. **平台最多 5 个镜像**：只建一个训练镜像即可，避免占满配额。

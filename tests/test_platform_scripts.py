@@ -484,6 +484,24 @@ class TestRunTrainAllModeRunsFullPipeline(unittest.TestCase):
         self.assertIn('mark_progress "$_n" "$_name" running', self.src)
         self.assertIn('mark_progress "$_n" "$_name" done', self.src)
 
+    def test_training_paths_are_local_and_final_model_publishes_to_network(self):
+        for token in (
+            'NETWORK_ROOT="${V4_NETWORK_ROOT:-/data}"',
+            'LOCAL_ROOT="${V4_LOCAL_ROOT:-}"',
+            'export V4_LOCAL_ROOT="$LOCAL_ROOT"',
+            'export V4_NETWORK_ROOT="$NETWORK_ROOT"',
+            'publish_final_to_network',
+            'publish_progress_to_network',
+        ):
+            self.assertIn(token, self.src)
+
+    def test_bootstrap_searches_network_root_for_tarball(self):
+        src = _read("tools/bootstrap_data.sh")
+        self.assertIn('V4_NETWORK_ROOT', src)
+        self.assertIn('"$NETWORK_ROOT"', src)
+        self.assertIn('"$NETWORK_ROOT/dist"', src)
+
+
     def test_through_parameter_controls_task_range(self):
         for token in ("--through|--all-to", "1..14", "_n<=ALL_THROUGH"):
             self.assertIn(token, self.src)

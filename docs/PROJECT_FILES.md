@@ -167,7 +167,7 @@ v4/
 │   ├── reference/v1_well_folds.json  冻结折文件（随 git）
 │   └── locks/{cloud.txt,submit.txt}  训练/推理依赖快照
 │
-├── reports/                  必须进 git 的**门禁证据快照**（权威副本在 $V4_REPORTS_DIR=/data/v4/reports）
+├── reports/                  必须进 git 的**门禁证据快照**（权威副本在本地 $V4_REPORTS_DIR）
 │   ├── E0_gate.json              本地契约 Gate 判定（mandatory 13/13，passed=true）
 │   ├── E0_goal_audit.json        目标达成度审计（E0–E10 全部 OK + 云端待办清单）
 │   ├── E0_cloud_gate.json        云端 Gate（blocked_pending_cloud_run）
@@ -280,7 +280,7 @@ v4/
 | `reports/E0_*.json`（门禁证据） | ✅ | 小而关键，是"已复算"的凭据 |
 | `versions/{candidates,status,folds_sha256}.json`、`versions/locks/*` | ✅ | 事实源 |
 | 数据包 `dist/*.tar.gz` | ❌ | 30 MB 二进制；走平台云盘 `/data` |
-| 权重 `*.pt/*.onnx`、缓存 `*.npz/*.parquet` | ❌ | 体积大；留在 `/data/v4/runs` |
+| 权重 `*.pt/*.onnx`、缓存 `*.npz/*.parquet` | ❌ | 体积大；留在本地 `$V4_LOCAL_ROOT/v4/runs`，最终模型 publish 到 `/data/v4/final` |
 | 训练日志、TensorBoard、实验中间产物 | ❌ | 运行时产物 |
 | `cache/ runs/ logs/ tb/ experiments/ models/ submission/` | ❌ | 同上（`.gitignore` 已覆盖） |
 
@@ -290,9 +290,11 @@ v4/
 
 ```
 /code/workspace/<仓库名>/      git clone（**临时**，任务结束即丢；目录名由平台决定）
-/data/v4/data/{train,test}/    数据集（部署一次，永久）
-/data/v4/{cache,runs,reports,logs,tb}/
-                              缓存 / checkpoint / Gate 报告 / 日志 / TensorBoard（永久）
+/workspace/v4/data/{train,test}/        本地解压数据（训练期用本地高速盘）
+/workspace/v4/{cache,runs,reports,logs,tb,state}/
+                              本地缓存 / checkpoint / 报告 / 日志 / 进度
+/data/v4_data.tar.gz          网络盘：上传的数据分发包
+/data/v4/final/               网络盘：训练结束后 publish 的最终模型
 ```
 
 环境变量契约见 `configs/paths.yaml` 与 `docs/platform_setup.md` §二。

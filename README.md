@@ -27,14 +27,21 @@
 
 ## 本仓库就是平台训练任务的代码来源（Git 仓库）
 
-平台把 git 代码克隆到**临时**目录 `/code/workspace`，云盘挂载在**持久**目录 `/data`。
-因此本仓库只放代码，数据/缓存/checkpoint/报告全部写 `/data`：
+平台把 git 代码克隆到**临时**目录 `/code/workspace`，网络盘挂载在 `/data`。
+训练期的大数据/缓存/checkpoint 不写网络盘，而是写本地高速盘：
 
 ```
-/code/workspace/<仓库名>/    <- 本仓库（临时，任务结束即丢；仓库根 = v4 的内容）
-/data/v4/data/               <- 数据集（一次性部署，永久保留）
-/data/v4/{cache,runs,reports,logs,tb}/   <- 缓存 / checkpoint / Gate 报告 / 日志 / TensorBoard
+/code/workspace/<仓库名>/    <- 本仓库（git clone；仓库根 = v4 的内容）
+/workspace/v4/data/          <- 本地解压后的训练/测试数据（本地高速盘）
+/workspace/v4/{cache,runs,reports,logs,tb,state}/  <- 本地缓存 / checkpoint / 报告 / 日志
+
+/data/v4_data.tar.gz         <- 网络盘：只放上传的数据分发包
+/data/v4/final/              <- 网络盘：训练结束后 publish 的最终模型
+/data/v4/submission/         <- 网络盘：可选，E10 提交包
 ```
+
+> 若 `/workspace` 不存在，`run_train.sh` 自动回退到 `$HERE/.v4_runtime`；可用
+> `V4_LOCAL_ROOT` 显式指定本地盘，用 `V4_NETWORK_ROOT` 指定网络盘（默认 `/data`）。
 
 平台【启动命令】只填一句：
 
@@ -127,7 +134,7 @@ E0 契约 → E1 行级基线 → E2 特征 → E3 序列主干 → E4 多尺度
 
 ```bash
 bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env    # ① 环境 + 磁盘 + 装轻量依赖
-bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data   # ② 解压数据到 /data/v4/data（只需一次）
+bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data   # ② 从 /data 读 tarball，解压到本地 runtime（只需一次）
 bash "$(find /code/workspace -name run_train.sh | head -1)" --mode e0     # ③ 数据卡 + 常数基线 70.490735 + 折指纹 + 契约自检
 bash "$(find /code/workspace -name run_train.sh | head -1)" --mode smoke  # ④ 极小规模冒烟（E1 实现后）
 bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage E1 --resume   # ⑤ 训练（可续训）
@@ -166,6 +173,6 @@ python3 v4/predict.py --use-version CONST --data_dir ../data --output /tmp/r.jso
 3. **输入列泄漏事故（已修复 + 已加回归）**：`inputs = arr[:, 1:15]` 曾把 **POR 标签**当作第 14 个输入（80 口井全部泄漏），且测试井只有 13 列会导致提交崩溃。现为 **13 条曲线 + DEPTH 分离**，并强制 `input_no_label_leak` 检查。
 4. **SW 是单一标签尺度（百分数）**：实测有效 SW 为 min 8.305 / median 82.805 / max 99.9，小于 1 的行数为 **0** → 取消"×100 双尺度"假设；连续头在**训练折内**做仿射归一化并反变换，仍严禁全局裁剪到小数区间。
 5. **逐目标原子事件远多于联合原子事件**：`q_joint` 只有 487,225 行，而 SW 原子行 518,255 / PERM 494,598 / POR 487,382 → **单 joint 头会漏保护 31,030 个 SW 原子行**，必须用逐目标原子头（见 `PLAN.md` §5.3/§6.4）。
-6. **分片缓存证据可复现**：`E0_data_card.json::shard_cache.cache_root` 现为 `$V4_CACHE_ROOT`（云端 `/data/v4/cache`）或 repo 相对路径，不再是 `/tmp` 临时路径。
+6. **分片缓存证据可复现**：`E0_data_card.json::shard_cache.cache_root` 现为 `$V4_CACHE_ROOT`（本地 `$V4_CACHE_ROOT`）或 repo 相对路径，不再是 `/tmp` 临时路径。
 
 > 未实现的部分在 README 与各 `PLAN.md` 中显式列出；**不宣称任何尚未复算的分数**。

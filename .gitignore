@@ -60,3 +60,6 @@ reports/*.csv
 # ---- R3: 本机 CPU-torch 校验 venv 与本地缓存（绝不进 git）----
 .venv-torch/
 .v4cache/
+
+# ---- 本地运行时回退根（/workspace 不存在时使用）----
+.v4_runtime/

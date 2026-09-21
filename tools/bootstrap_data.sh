@@ -14,8 +14,10 @@
 # 定位顺序（先显式、后约定；找不到就报错并列出全部搜索位置）：
 #   1) `--tarball PATH` 或 `$V4_DATA_TARBALL`（最高优先，指向任何位置）
 #   2) `$V4/dist/v4_data.tar.gz`            本机开发：pack_dataset.py 的产物
-#   3) `$DATA_ROOT/v4_data.tar.gz`          云端推荐：把 tarball 直接传到云盘根
-#   4) `$DATA_ROOT/dist/v4_data.tar.gz`     云端：保持 dist/ 目录结构上传
+#   3) `$V4_NETWORK_ROOT/v4_data.tar.gz`    云端推荐：tarball 传到网络盘 /data 根
+#   4) `$V4_NETWORK_ROOT/dist/v4_data.tar.gz` 云端：网络盘保留 dist/ 目录结构
+#   5) `$DATA_ROOT/v4_data.tar.gz`          本地运行时备份位置（兼容/可选）
+#   6) `$DATA_ROOT/dist/v4_data.tar.gz`     本地运行时 dist/（兼容/可选）
 # manifest（可选但推荐）同法搜索：`--manifest` / `$V4_DATA_MANIFEST`，然后与
 # tarball 同目录、再上述 dist 位置。manifest **存在**时额外校验 tarball sha256
 # 与逐项计数；**不存在**时仍无条件校验 80/10 井与 730,268/95,948 行（R5-H2）。
@@ -34,7 +36,8 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V4="$(cd "$HERE/.." && pwd)"
-DATA_ROOT="${V4_DATA_ROOT:-/data}"
+DATA_ROOT="${V4_DATA_ROOT:-/data}"                 # 运行时数据根（run_train 传本地盘）
+NETWORK_ROOT="${V4_NETWORK_ROOT:-/data}"         # 网络盘：只读 tarball / 最终模型回写
 DEST="$DATA_ROOT/v4/data"
 FROM_DIR=""
 VERIFY_ONLY=0
@@ -71,7 +74,7 @@ if [[ "$MANIFEST_EXPLICIT" == "1" && ! -f "$MANIFEST" ]]; then
 fi
 
 # ---------------- 1) 定位 tarball（R5-B1）
-TARBALL_DIRS=("$V4/dist" "$DATA_ROOT" "$DATA_ROOT/dist")
+TARBALL_DIRS=("$V4/dist" "$NETWORK_ROOT" "$NETWORK_ROOT/dist" "$DATA_ROOT" "$DATA_ROOT/dist")
 if [[ "$VERIFY_ONLY" != "1" && -z "$FROM_DIR" ]]; then
   if [[ -n "$TARBALL" ]]; then
     if [[ ! -f "$TARBALL" ]]; then

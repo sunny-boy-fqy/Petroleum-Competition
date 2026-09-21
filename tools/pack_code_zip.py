@@ -37,7 +37,7 @@ DEFAULT_OUT_DIR = "/mnt/d/tmp/Petroleum-Competition"
 
 # 这些是仓库根级运行时/临时目录，即使误被 git 列出也不进包。
 SKIP_TOP_LEVEL = {
-    ".git", ".venv", ".venv-torch", ".v4cache", "__pycache__",
+    ".git", ".venv", ".venv-torch", ".v4cache", ".v4_runtime", "__pycache__",
     "cache", "runs", "artifacts", "submission", "experiments",
     "models", "tb", "logs", "dist",
 }

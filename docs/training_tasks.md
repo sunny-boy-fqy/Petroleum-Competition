@@ -75,7 +75,7 @@ git archive --format=zip --prefix='' -o dist/v4_code_src.zip HEAD
 |---|---|
 | 启动命令 | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env` |
 | 运行时长 | 0h30m |
-| 产出（持久） | `/data/v4/reports/E0_env.json`、`/data/v4/reports/E0_disk_budget.json`、`/data/v4/logs/*.log` |
+| 产出（本地 runtime） | `$V4_LOCAL_ROOT/v4/reports/E0_env.json`、`E0_disk_budget.json`、`$V4_LOCAL_ROOT/v4/logs/*.log` |
 | 判据 | 日志中 `hard failures: 0`；`torch 2.8.0` / `Ascend 910B` / `bf16=True` / `free >= 8 GiB` |
 | 失败处置 | 若 torch 版本或 GPU 不符 → 检查镜像与资源配置；若磁盘 < 8 GiB → 见 `docs/platform_setup.md` §五 收缩预案 |
 
@@ -95,7 +95,7 @@ git archive --format=zip --prefix='' -o dist/v4_code_src.zip HEAD
 | 启动命令 | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data` |
 | 备选启动命令 | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode data --tarball /data/uploads/v4_data.tar.gz` |
 | 运行时长 | 0h30m |
-| 产出（持久） | `/data/v4/data/{train,test}/*.txt`、`/data/v4/data/folds/v1_well_folds.json` |
+| 产出（本地 runtime） | `$V4_LOCAL_ROOT/v4/data/{train,test}/*.txt`、`$V4_LOCAL_ROOT/v4/data/folds/v1_well_folds.json` |
 | 判据 | 日志出现 `train wells=80 rows=730268`、`test wells=10 rows=95948`、`RESULT: OK` |
 | 幂等 | 可重复执行；manifest 存在时重算 tarball sha256，井数与行数**每次都无条件硬校验**（R5-H2） |
 
@@ -108,7 +108,7 @@ git archive --format=zip --prefix='' -o dist/v4_code_src.zip HEAD
 |---|---|
 | 启动命令 | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode e0` |
 | 运行时长 | 0h30m |
-| 产出（持久） | `/data/v4/reports/E0_data_card.json`、`E0_gate.json`、`E0_contract_tests.json` |
+| 产出（本地 runtime） | `$V4_LOCAL_ROOT/v4/reports/E0_data_card.json`、`E0_gate.json`、`E0_contract_tests.json` |
 | 判据 | `const_baseline_drop: 70.490735`、`anchor_hit: true`、`contract_selftest: true`、`gate_passed: true` |
 | 备注 | 这一步**不需要 GPU**，CPU 资源也能跑；但仍建议与训练任务用同一镜像以保证版本一致 |
 
@@ -143,7 +143,7 @@ bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage
 
 **长任务建议**：单次任务上限 7×24 h，但为降低风险，把 E3/E8 拆成
 「每折一个任务」或「每 12 h 一个任务 + `--resume`」，checkpoint 写
-`/data/v4/runs/<stage>/{best,last,last_prev}.pt`。
+`$V4_LOCAL_ROOT/v4/runs/<stage>/{best,last,last_prev}.pt`；最终模型 publish 到 `/data/v4/final`。
 
 ---
 
