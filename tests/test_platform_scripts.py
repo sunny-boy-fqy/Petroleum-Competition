@@ -502,6 +502,19 @@ class TestRunTrainAllModeRunsFullPipeline(unittest.TestCase):
         self.assertIn('"$NETWORK_ROOT/dist"', src)
 
 
+    def test_e2_ablation_uses_work_dir_not_run_root(self):
+        block = self.src[self.src.index("    E2)"): self.src.index("    E3)")]
+        self.assertIn('--work-dir "$RUN_ROOT/E2"', block)
+        self.assertNotIn('--run-root "$RUN_ROOT"', block)
+
+    def test_e9_runner_does_not_pass_run_root_to_all_subcommands(self):
+        block = self.src[self.src.index("    E9)"): self.src.index("    E10)")]
+        self.assertNotIn('--run-root "$RUN_ROOT"', block)
+
+    def test_all_mode_task7_runs_e3_all_including_compare(self):
+        block = self.src[self.src.index("run_all_task()"): self.src.index('case "$MODE" in')]
+        self.assertIn('7) STAGE="E3"; EXTRA_ARGS=(--phase all', block)
+
     def test_through_parameter_controls_task_range(self):
         for token in ("--through|--all-to", "1..14", "_n<=ALL_THROUGH"):
             self.assertIn(token, self.src)

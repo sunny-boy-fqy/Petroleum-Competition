@@ -34,7 +34,7 @@
 #                   每个阶段自动带 all 子路由（E3 main+ablation+compare、
 #                   E4 三个消融、E5 三目标、E6 P0/P1/P2、E8 四路、E9/E10 全子阶段）；
 #                   `--through N` 只跑到第 N 个任务（1~14；默认 14）；
-#                   1 env, 2 data, 3 e0, 4 E1, 5 E2, 6 E3-main, 7 E3-ablation,
+#                   1 env, 2 data, 3 e0, 4 E1, 5 E2, 6 E3-main, 7 E3-all,
 #                   8 E4, 9 E5, 10 E6, 11 E7, 12 E8, 13 E9, 14 E10。
 #                   已完成任务会自动跳过（断点续跑）；`--fresh` 可清空进度并重跑。
 #                   任一步失败立即退出；进度写入 $STATE_DIR/all_pipeline_progress.json。
@@ -436,7 +436,7 @@ run_stage() {
         if [[ "$e2_phase" == "all" || "$e2_phase" == "ablate" ]]; then
           log "--- [E2] 单组消融 + 吞吐画像"
           python3 "$HERE/E2/code/ablate_groups.py" --cache-root "$CACHE_ROOT" \
-            --reports-dir "$REPORTS_DIR" --run-root "$RUN_ROOT" 2>&1 | tee -a "$LOG" || return 1
+            --reports-dir "$REPORTS_DIR" --work-dir "$RUN_ROOT/E2" 2>&1 | tee -a "$LOG" || return 1
         fi ;;
     E3)
         # `--phase main|ablation|compare|all`；缺省 main 保持旧行为。
@@ -648,18 +648,27 @@ PY
         elif [[ "$e8_target" == "transductive" ]]; then run_e8_one pseudo_label
         else run_e8_one ensemble; fi ;;
     E9)
-        # `--phase aggregate|choose|leakage|confirm|submit|all`
-        e9_phase="all"
+        # `--phase leakage|aggregate|choose|confirm|submit|all`
+        e9_phase="all"; e9_args=(); e9_expect=""
         for a in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
-          case "${a,,}" in
-            aggregate|choose|leakage|confirm|submit|all) e9_phase="${a,,}" ;;
-          esac
+          if [[ "$e9_expect" == "phase" ]]; then
+            case "${a,,}" in
+              leakage|aggregate|choose|confirm|submit|all) e9_phase="${a,,}" ;;
+              *) log "!! E9 --phase 只支持 leakage/aggregate/choose/confirm/submit/all，got $a"; return 1 ;;
+            esac
+            e9_expect=""; continue
+          fi
+          if [[ "$a" == "--phase" ]]; then e9_expect="phase"; continue; fi
+          e9_args+=("$a")
         done
+        if [[ "$e9_expect" == "phase" ]]; then log "!! E9 --phase 缺少取值"; return 1; fi
         run_e9() {
           local stage="$1"; shift
           log "--- [E9] $stage"
+          # 只传各脚本共同支持的 --reports-dir；V4_RUN_ROOT 已由 run_train.sh 导出，
+          # choose_submission/confirm_check/submit_batch 的 argparse 不接受 --run-root。
           python3 "$HERE/E9/code/$stage.py" --reports-dir "$REPORTS_DIR" \
-            --run-root "$RUN_ROOT" 2>&1 | tee -a "$LOG"
+            "${e9_args[@]+"${e9_args[@]}"}" 2>&1 | tee -a "$LOG"
         }
         # H5：leakage_audit 先产出真实证据，后面的 aggregate/choose/... 才能
         # 从文件读取 no_label_leak，而不是硬编码 True。
@@ -728,7 +737,7 @@ PY
   esac
 }
 
-ALL_TASK_NAMES=("" "env" "data" "e0" "E1" "E2" "E3-main" "E3-ablation" \
+ALL_TASK_NAMES=("" "env" "data" "e0" "E1" "E2" "E3-main" "E3-all" \
                 "E4" "E5" "E6" "E7" "E8" "E9" "E10")
 
 run_all_task() {
@@ -743,7 +752,7 @@ run_all_task() {
     5) STAGE="E2"; EXTRA_ARGS=(); run_stage ;;
     6) STAGE="E3"; EXTRA_ARGS=(--phase main "${r[@]+"${r[@]}"}"); run_stage ;;
     # E3 消融的多个组合可能共用 checkpoint 目录，--resume 有串配置风险，故不自动续训。
-    7) STAGE="E3"; EXTRA_ARGS=(--phase ablation); run_stage ;;
+    7) STAGE="E3"; EXTRA_ARGS=(--phase all "${r[@]+"${r[@]}"}"); run_stage ;;
     8) STAGE="E4"; EXTRA_ARGS=(--channel-independence-ablation --rel-pos-ablation \
                                --capacity-ablation "${r[@]+"${r[@]}"}"); run_stage ;;
     9) STAGE="E5"; EXTRA_ARGS=(--target all); run_stage ;;

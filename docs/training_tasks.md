@@ -128,7 +128,7 @@ git archive --format=zip --prefix='' -o dist/v4_code_src.zip HEAD
 | **E1→E10 全链路** | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode all [--through N]` | 数十小时（受平台 7×24h 限制，需拆任务） | `$V4_LOCAL_ROOT/v4/{runs,reports,state,logs}` 本地；最终模型 `/data/v4/final`；`--through 1~14` 指定跑到第几个任务；已完成任务自动跳过，`--fresh` 强制重跑；进度见 `/data/v4/state/all_pipeline_progress.json` |
 
 > `--through N` 的 1~14 任务映射：
-> 1 env、2 data、3 e0、4 E1、5 E2、6 E3-main、7 E3-ablation、8 E4、
+> 1 env、2 data、3 e0、4 E1、5 E2、6 E3-main、7 E3-all（含 ablation+compare）、8 E4、
 > 9 E5、10 E6、11 E7、12 E8、13 E9、14 E10。
 | E1 行级基线 | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage E1` | 2h | `$RUN_ROOT/E1/*`、OOF |
 | E3 序列主干 | `... --stage E3` | 20h | `$RUN_ROOT/E3/*` |
