@@ -519,6 +519,10 @@ class TestRunTrainAllModeRunsFullPipeline(unittest.TestCase):
         for token in ("--through|--all-to", "1..14", "_n<=ALL_THROUGH"):
             self.assertIn(token, self.src)
 
+    def test_running_status_is_published_immediately(self):
+        self.assertIn('publish_progress_to_network || log "[all] running', self.src)
+        self.assertIn("上次状态=failed -> 重跑本任务", self.src)
+
     def test_completed_tasks_are_skipped_for_resume(self):
         for token in ("task_status", "already done", "task_local_ready"):
             self.assertIn(token, self.src)

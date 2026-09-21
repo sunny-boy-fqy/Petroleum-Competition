@@ -809,7 +809,14 @@ case "$MODE" in
       if [[ "$ALL_FRESH" != "1" && "$_status" == "done" ]]; then
         log "[all] task $_n/$_name 进度 done 但本地产物缺失，需重跑"
       fi
+      if [[ "$_status" == "failed" ]]; then
+        log "[all] task $_n/$_name 上次状态=failed -> 重跑本任务"
+      elif [[ "$_status" == "running" ]]; then
+        log "[all] task $_n/$_name 上次状态=running（疑似中断）-> 重跑本任务"
+      fi
       mark_progress "$_n" "$_name" running
+      # 立即把 running 状态同步到 /data，避免仍显示旧的 failed/running 像卡死。
+      publish_progress_to_network || log "[all] running 进度同步 /data 失败（不阻塞训练）"
       log "=== [all] task $_n/$_name 开始 ==="
       run_all_task "$_n" || {
         mark_progress "$_n" "$_name" failed
