@@ -451,10 +451,11 @@ class TestRunTrainAllModeRunsFullPipeline(unittest.TestCase):
     def setUp(self):
         self.src = _read("run_train.sh")
 
-    def test_all_mode_has_full_stage_sequence(self):
+    def test_all_mode_has_14_task_runner_and_full_chain(self):
         for token in (
-            "all_stages=(E1 E2 E3 E4 E5 E6 E7 E8 E9 E10)",
-            "run_stage ||",
+            "ALL_TASK_NAMES=",
+            "run_all_task()",
+            "run_all_task \"$_n\"",
             "exit 21",
             "all_pipeline_progress.json",
         ):
@@ -480,8 +481,16 @@ class TestRunTrainAllModeRunsFullPipeline(unittest.TestCase):
 
     def test_progress_file_is_written_to_persistent_data_root(self):
         self.assertIn('ALL_PROGRESS="$STATE_DIR/all_pipeline_progress.json"', self.src)
-        self.assertIn('mark_progress "$STAGE" running', self.src)
-        self.assertIn('mark_progress "$STAGE" done', self.src)
+        self.assertIn('mark_progress "$_n" "$_name" running', self.src)
+        self.assertIn('mark_progress "$_n" "$_name" done', self.src)
+
+    def test_through_parameter_controls_task_range(self):
+        for token in ("--through|--all-to", "1..14", "_n<=ALL_THROUGH"):
+            self.assertIn(token, self.src)
+
+    def test_completed_tasks_are_skipped_for_resume(self):
+        for token in ("task_status", "already done", "_force_downstream"):
+            self.assertIn(token, self.src)
 
 
 class TestBootstrapDataTarballResolution(unittest.TestCase):

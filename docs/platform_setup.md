@@ -206,8 +206,10 @@ git log --oneline -1                     # 记下这个 revision —— 平台�
 | 5+ | `v4-E1`…`v4-E8` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage E1` | 按 PLAN §七 推进 |
 
 > `--mode all` 会串行执行 env → data → e0 → **E1→E10 全链路**，每个阶段自动带 all 子路由；
-> 任一步失败立即退出，进度写 `/data/v4/state/all_pipeline_progress.json`。
-> 全链路可能运行数十小时，建议先按任务 1–3 单独确认 env/data/e0，再开 `--mode all`。
+> `--through N` 可只跑到第 N 个任务（1~14，默认 14）；已完成任务会根据
+> `/data/v4/state/all_pipeline_progress.json` 自动跳过，`--fresh` 强制从头重跑。
+> 任一步失败立即退出。全链路可能运行数十小时，建议先按任务 1–3 单独确认 env/data/e0，
+> 再用 `--through` 拆成多个训练任务。
 
 ---
 

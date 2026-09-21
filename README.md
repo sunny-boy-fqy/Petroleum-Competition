@@ -46,7 +46,8 @@ bash "$(find /code/workspace -name run_train.sh | head -1)" --mode all
 `e0`（口径复算）、`smoke`（极小规模冒烟）、`stage --stage E1`（训练单个阶段）、
 `all`（env → data → e0 → **E1→E10 全链路串行**；每个阶段自动带 all 子路由：
 E3 主模型+感受野消融+行级对照、E4 三消融、E5 三目标、E6 P0/P1/P2、E8 四路、
-E9/E10 全部子阶段。任一步失败立即退出；进度写 `/data/v4/state/all_pipeline_progress.json`）。
+E9/E10 全部子阶段。`--through N` 只跑到第 N 个任务（1~14，默认 14），已完成任务自动跳过；
+`--fresh` 强制从头重跑。任一步失败立即退出；进度写 `/data/v4/state/all_pipeline_progress.json`）。
 
 首次上手顺序见 [`docs/platform_setup.md`](docs/platform_setup.md) §四。
 

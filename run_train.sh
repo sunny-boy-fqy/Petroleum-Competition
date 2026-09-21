@@ -33,6 +33,10 @@
 #   --mode all      env -> data -> e0 -> E1 -> E2 -> ... -> E10 **全链路串行**；
 #                   每个阶段自动带 all 子路由（E3 main+ablation+compare、
 #                   E4 三个消融、E5 三目标、E6 P0/P1/P2、E8 四路、E9/E10 全子阶段）；
+#                   `--through N` 只跑到第 N 个任务（1~14；默认 14）；
+#                   1 env, 2 data, 3 e0, 4 E1, 5 E2, 6 E3-main, 7 E3-ablation,
+#                   8 E4, 9 E5, 10 E6, 11 E7, 12 E8, 13 E9, 14 E10。
+#                   已完成任务会自动跳过（断点续跑）；`--fresh` 可清空进度并重跑。
 #                   任一步失败立即退出；进度写入 $STATE_DIR/all_pipeline_progress.json。
 #
 # 平台集成（已按官方提示落实）：
@@ -55,6 +59,9 @@ REGISTRY="${V4_REGISTRY:-$STATE_DIR/registry.json}"
 
 MODE="all"
 STAGE="E1"
+ALL_THROUGH=14
+ALL_FRESH=0
+ALL_RESUME_FLAG=()
 EXTRA_ARGS=()
 # R5-B1：git 仓库里**没有** dist/*.tar.gz（.gitignore 忽略），云端必须能从云盘找到它。
 # 因此 tarball/manifest 是一等参数（不会被塞进 EXTRA_ARGS 污染 smoke/stage 的命令行）。
@@ -65,6 +72,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode)     MODE="$2"; shift 2 ;;
     --stage)    STAGE="$2"; shift 2 ;;
+    --through|--all-to) ALL_THROUGH="$2"; shift 2 ;;
+    --fresh)    ALL_FRESH=1; shift ;;
     --tarball)  DATA_TARBALL="$2"; shift 2 ;;
     --manifest) DATA_MANIFEST="$2"; shift 2 ;;
     *)          EXTRA_ARGS+=("$1"); shift ;;
@@ -99,9 +108,9 @@ log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
 
 # all 模式的持久进度台账（$STATE_DIR=/data/v4/state，任务结束不丢）
 mark_progress() {
-  python3 - "$ALL_PROGRESS" "$1" "${2:-running}" <<'PY'
+  python3 - "$ALL_PROGRESS" "$1" "$2" "${3:-running}" <<'PY'
 import json, os, sys, time
-path, stage, status = sys.argv[1], sys.argv[2], sys.argv[3]
+path, task, name, status = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 obj = {}
 if os.path.exists(path):
     try:
@@ -110,17 +119,32 @@ if os.path.exists(path):
     except Exception:
         obj = {}
 obj.setdefault("pipeline", "all")
-obj.setdefault("stages", {})
+obj.setdefault("tasks", {})
 now = time.strftime("%Y-%m-%dT%H:%M:%S")
 obj["updated_at"] = now
-obj["current"] = stage
+obj["current_task"] = task
+obj["current_name"] = name
 obj["status"] = status
-obj["stages"][stage] = {"status": status, "updated_at": now}
+obj["tasks"][str(task)] = {"name": name, "status": status, "updated_at": now}
 tmp = path + ".tmp"
 with open(tmp, "w", encoding="utf-8") as f:
     json.dump(obj, f, ensure_ascii=False, indent=2)
 os.replace(tmp, path)
-print(f"[progress] {stage}: {status} -> {path}")
+print(f"[progress] task {task} ({name}): {status} -> {path}")
+PY
+}
+
+task_status() {
+  python3 - "$ALL_PROGRESS" "$1" <<'PY'
+import json, os, sys
+path, task = sys.argv[1], str(sys.argv[2])
+obj = {}
+try:
+    with open(path, encoding="utf-8") as f:
+        obj = json.load(f)
+except Exception:
+    obj = {}
+print(obj.get("tasks", {}).get(task, {}).get("status", ""))
 PY
 }
 
@@ -201,7 +225,7 @@ run_data() {
   if [[ -n "$DATA_TARBALL" ]]; then bargs+=(--tarball "$DATA_TARBALL"); fi
   if [[ -n "$DATA_MANIFEST" ]]; then bargs+=(--manifest "$DATA_MANIFEST"); fi
   log "[data] bootstrap_data.sh ${bargs[*]:-（自动搜索 repo dist/ 与 $DATA_ROOT）}"
-  bash "$HERE/tools/bootstrap_data.sh" ${bargs[@]+"${bargs[@]}"} 2>&1 | tee -a "$LOG"
+  bash "$HERE/tools/bootstrap_data.sh" ${bargs[@]+"${bargs[@]}"} 2>&1 | tee -a "$LOG" || return 1
 
   log "--- [data] 数据健康校验（profile=full：数据缺失为 hard）"
   if check_env_profile full; then
@@ -217,7 +241,7 @@ run_e0() {
   # R2-B3 修复：默认建缓存，否则 E1/P0 无输入
   python3 "$HERE/E0/code/run_all.py" --train-dir "$DATA_ROOT/v4/data/train" \
     --test-dir "$DATA_ROOT/v4/data/test" --cache-root "$CACHE_ROOT" --with-cache \
-    --out "$REPORTS_DIR/E0_data_card.json" 2>&1 | tee -a "$LOG"
+    --out "$REPORTS_DIR/E0_data_card.json" 2>&1 | tee -a "$LOG" || return 1
   # R4-H2：计划行数证据 JSON 也在云端重生成（纯标准库，不需要 torch），
   # 使 $REPORTS_DIR 的 E0_*.json 集合自洽，而不是只在开发机上存在。
   python3 "$HERE/tools/plan_stats.py" --json "$REPORTS_DIR/E0_plan_stats.json" \
@@ -558,6 +582,34 @@ PY
   esac
 }
 
+ALL_TASK_NAMES=("" "env" "data" "e0" "E1" "E2" "E3-main" "E3-ablation" \
+                "E4" "E5" "E6" "E7" "E8" "E9" "E10")
+
+run_all_task() {
+  local n="$1"
+  local -a r=()
+  if [[ "${ALL_RESUME_FLAG[0]:-}" == "--resume" ]]; then r=(--resume); fi
+  case "$n" in
+    1) run_env ;;
+    2) run_data ;;
+    3) run_e0 ;;
+    4) STAGE="E1"; EXTRA_ARGS=("${r[@]+"${r[@]}"}"); run_stage ;;
+    5) STAGE="E2"; EXTRA_ARGS=(); run_stage ;;
+    6) STAGE="E3"; EXTRA_ARGS=(--phase main "${r[@]+"${r[@]}"}"); run_stage ;;
+    # E3 消融的多个组合可能共用 checkpoint 目录，--resume 有串配置风险，故不自动续训。
+    7) STAGE="E3"; EXTRA_ARGS=(--phase ablation); run_stage ;;
+    8) STAGE="E4"; EXTRA_ARGS=(--channel-independence-ablation --rel-pos-ablation \
+                               --capacity-ablation "${r[@]+"${r[@]}"}"); run_stage ;;
+    9) STAGE="E5"; EXTRA_ARGS=(--target all); run_stage ;;
+    10) STAGE="E6"; EXTRA_ARGS=(--phase all); run_stage ;;
+    11) STAGE="E7"; EXTRA_ARGS=(); run_stage ;;
+    12) STAGE="E8"; EXTRA_ARGS=(--target all); run_stage ;;
+    13) STAGE="E9"; EXTRA_ARGS=(); run_stage ;;
+    14) STAGE="E10"; EXTRA_ARGS=(); run_stage ;;
+    *)  log "!! unknown all task: $n"; return 1 ;;
+  esac
+}
+
 case "$MODE" in
   env)   run_env ;;
   data)  run_data ;;
@@ -566,42 +618,49 @@ case "$MODE" in
   data-health) check_env_profile full ;;
   stage) run_stage ;;
   all)
-    mark_progress "ENV" running
-    run_env
-    mark_progress "ENV" done
-    mark_progress "DATA" running
-    run_data
-    mark_progress "DATA" done
-    mark_progress "E0" running
-    run_e0
-    mark_progress "E0" done
-    log "--- [all] 前置 env + data + e0 完成；开始全链路 E1→E10"
-    if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
-      log "!! [all] 全链路模式使用各阶段默认/全子路由参数，忽略附加参数：${EXTRA_ARGS[*]}"
+    if ! [[ "$ALL_THROUGH" =~ ^[0-9]+$ ]] || (( ALL_THROUGH < 1 || ALL_THROUGH > 14 )); then
+      log "!! --through/--all-to 只支持 1..14，got $ALL_THROUGH"
+      exit 2
     fi
-    all_stages=(E1 E2 E3 E4 E5 E6 E7 E8 E9 E10)
-    for _stage in "${all_stages[@]}"; do
-      STAGE="$_stage"
-      case "$STAGE" in
-        E1|E2|E7|E9|E10) EXTRA_ARGS=() ;;
-        E3) EXTRA_ARGS=(--phase all) ;;
-        E4) EXTRA_ARGS=(--channel-independence-ablation --rel-pos-ablation --capacity-ablation) ;;
-        E5) EXTRA_ARGS=(--target all) ;;
-        E6) EXTRA_ARGS=(--phase all) ;;
-        E8) EXTRA_ARGS=(--target all) ;;
-      esac
-      mark_progress "$STAGE" running
-      log "=== [all] stage $STAGE 开始 ==="
-      run_stage || {
-        mark_progress "$STAGE" failed
-        log "!! [all] stage $STAGE 失败，链路停止（exit 21）"
+    if [[ "$ALL_FRESH" == "1" ]]; then
+      ALL_RESUME_FLAG=()
+      rm -f "$ALL_PROGRESS" "$ALL_PROGRESS.tmp"
+      log "[all] --fresh：清空进度台账；已有 checkpoint 仍可由各训练脚本自行续训"
+    else
+      ALL_RESUME_FLAG=(--resume)
+    fi
+    if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+      log "!! [all] 全链路模式忽略额外参数，请用 --through N 控制范围：${EXTRA_ARGS[*]}"
+    fi
+    log "--- [all] 运行任务 1..$ALL_THROUGH（共 14 个）；已完成任务自动跳过"
+    _force_downstream=0
+    for ((_n=1; _n<=ALL_THROUGH; _n++)); do
+      _name="${ALL_TASK_NAMES[$_n]}"
+      _status=""
+      if [[ "$ALL_FRESH" != "1" ]]; then
+        _status="$(task_status "$_n")"
+      fi
+      if [[ "$ALL_FRESH" != "1" && "$_force_downstream" == "0" ]]; then
+        if [[ "$_status" == "done" ]]; then
+          log "[all] task $_n/$_name already done，跳过"
+          continue
+        fi
+        # 从这里开始有任务未完成：后续任务全部重跑，避免用旧的上游结果跳过下游。
+        _force_downstream=1
+        log "[all] task $_n/$_name 未完成 -> 从本任务起不再跳过后续任务"
+      fi
+      mark_progress "$_n" "$_name" running
+      log "=== [all] task $_n/$_name 开始 ==="
+      run_all_task "$_n" || {
+        mark_progress "$_n" "$_name" failed
+        log "!! [all] task $_n/$_name 失败，链路停止（exit 21）"
         exit 21
       }
-      mark_progress "$STAGE" done
-      log "=== [all] stage $STAGE 完成 ==="
+      mark_progress "$_n" "$_name" done
+      log "=== [all] task $_n/$_name 完成 ==="
     done
-    mark_progress "DONE" done
-    log "--- [all] E1→E10 全链路完成"
+    mark_progress "DONE" "all" done
+    log "--- [all] 已完成到 task $ALL_THROUGH/${ALL_TASK_NAMES[$ALL_THROUGH]}"
     ;;
   *) log "unknown mode: $MODE"; exit 2 ;;
 esac

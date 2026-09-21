@@ -309,7 +309,7 @@ v4/
 | `src/` | constants, portability, score, data/{parse,labels,dataset,disk_guard,row_dataset,seq_dataset,augment}, features/{basic,physics,window,well,groups}, losses/score_aligned, models/{row_mlp,unet1d,tcn,patchtf,heads,mmoe,well_head,target_heads}, training/{loop,metrics,fold_runner,seq_loop,checkpoint,tb_logger,state_train,frozen,ema}, inference/{contract,atomic_gate,predictor,decode}, ensemble/blend, validation/{folds,gates}, versioning/registry | 唯一未实现：**`L_phys` 物理一致性项**（E7/P0 的 exp7，已在 `E7_loss_ablation.json::not_implemented` 与报告中显式标注） |
 | 根目录 | predict.py（含 PD1 折集成）、train.py（阶段转发/配置默认值）、run_train.sh（E0–E10 全部阶段）、requirements.txt、configs/v4.yaml、configs/paths.yaml | — |
 | 产物 | reports/E0_*.json（13 份）——其中 E0_goal_audit.json / E0_pipeline_check.json / E0_final_acceptance.json 是自检证据；另有 `versions/{registry,candidates,status,folds_sha256}.json`、`versions/prereg_templates/`（33 份） | 各阶段 Gate/报告在**云端**产出（`$V4_REPORTS_DIR`），本仓库只保留 E0 口径证据快照 |
-| `run_train.sh` | `env` / `data` / `e0` / `smoke` / `data-health`；`--stage E1..E10`（E2/E3/E5/E6/E7/E8/E9/E10 带 `--phase`/`--target` 子路由） | `--mode all` = env→data→e0→E1…E10 全链路串行；阶段内自动带 all 子路由；失败即停，进度写 `/data/v4/state/all_pipeline_progress.json` |
+| `run_train.sh` | `env` / `data` / `e0` / `smoke` / `data-health`；`--stage E1..E10`（E2/E3/E5/E6/E7/E8/E9/E10 带 `--phase`/`--target` 子路由） | `--mode all [--through 1..14] [--fresh]` = env→data→e0→E1…E10 共 14 个任务；已完成任务自动跳过，失败即停，进度写 `/data/v4/state/all_pipeline_progress.json` |
 
 ### 三之三、本地与云端的边界（避免把"契约层通过"当成"成绩已拿到"）
 
