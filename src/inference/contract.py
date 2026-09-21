@@ -121,6 +121,13 @@ def validate_payload(payload: dict[str, Any], test_dir: str | Path | None = None
     n_rows_total = 0
     n_wells = len(data)
     wells_seen: set[str] = set()
+    # M3 审查修复：POR/PERM 也有物理范围，不能只查有限与 PERM>0。
+    # 缺省上界取模型/标签物理量级（PERM=10**6，POR=60 与现有 row_scales 一致）；
+    # 调用方可用 row_scales 覆盖。SW 的 [0,100] 是官方标签软上界，低于 0/高于 100 必拒。
+    bounds = row_scales or {"SWeX": (0.0, 100.0)}
+    por_lo, por_hi = (bounds.get("POR") or (0.0, 60.0))
+    perm_lo, perm_hi = (bounds.get("PERM") or (0.0, 1e6))
+    sw_lo, sw_hi = (bounds.get("SW") or (0.0, 100.0))
 
     for i, item in enumerate(data):
         if not isinstance(item, dict):
@@ -145,6 +152,7 @@ def validate_payload(payload: dict[str, Any], test_dir: str | Path | None = None
         n_rows_total += len(preds)
         prev_depth = None
         n_bad_perm = n_bad_finite = n_bad_keys = 0
+        n_bad_range = 0
         for j, p in enumerate(preds):
             if not isinstance(p, dict):
                 n_bad_keys += 1
@@ -159,6 +167,13 @@ def validate_payload(payload: dict[str, Any], test_dir: str | Path | None = None
             perm_f = float(perm)
             if perm_f <= 0:
                 n_bad_perm += 1
+            por_f, sw_f = float(por), float(sw)
+            if not (float(por_lo) <= por_f <= float(por_hi)):
+                n_bad_range += 1
+            if not (float(perm_lo) < perm_f <= float(perm_hi)):
+                n_bad_range += 1
+            if not (float(sw_lo) <= sw_f <= float(sw_hi)):
+                n_bad_range += 1
             if prev_depth is not None and float(d) <= prev_depth:
                 res.ok = False
                 if len(res.errors) < 40:
@@ -178,6 +193,12 @@ def validate_payload(payload: dict[str, Any], test_dir: str | Path | None = None
         if n_bad_perm:
             res.ok = False
             res.errors.append(f"{log_id}: {n_bad_perm} rows with PERM <= 0")
+        if n_bad_range:
+            res.ok = False
+            res.errors.append(
+                f"{log_id}: {n_bad_range} rows outside physical ranges "
+                f"(POR∈[{por_lo},{por_hi}], PERM∈({perm_lo},{perm_hi}], "
+                f"SW∈[{sw_lo},{sw_hi}])")
 
         # R2-B6：逐井行数必须与输入文件一致
         if test_dir is not None:

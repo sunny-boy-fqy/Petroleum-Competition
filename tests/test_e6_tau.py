@@ -43,6 +43,7 @@ def _make_oof(path: Path, seed: int = 0, signal: float = 0.6) -> None:
     well_index = np.repeat(np.arange(N_WELLS), ROWS_PER_WELL)
     np.savez_compressed(path, cont=cont, q_atom=q, q_joint=rng.rand(N_ROWS),
                         y_true=y_true, mask=mask, well_index=well_index,
+                        y_atom=y_atom.astype("float64"),
                         fold_of_row=np.zeros(N_ROWS, dtype="int64"),
                         well_ids=np.asarray([f"w{i}" for i in range(N_WELLS)], dtype=object))
 
@@ -132,6 +133,15 @@ class TestE6TauSearch(unittest.TestCase):
         self.assertEqual(e["status"], "local_only")
         self.assertIn("oof_sha256", e["atomic"])
 
+    def test_atom_metrics_use_inner_oof_y_atom_and_real_delta_ci(self):
+        """H4：原子指标口径必须来自 y_atom；P1 delta 必须给出真实配对 CI。"""
+        self._run(self.reports, self.oof, "--smoke", "--candidates", str(self.cand))
+        rep = json.loads((self.reports / "E6_tau_search.json").read_text(encoding="utf-8"))
+        self.assertEqual(rep["y_atom_source"], "inner_oof.y_atom")
+        self.assertTrue(rep["delta_ci"]["ok"], rep["delta_ci"])
+        self.assertIsInstance(rep["delta_ci"]["ci_low"], float)
+        self.assertNotEqual(rep["delta_ci"]["ci_low"], 0.0)
+
     def test_joint_guard_decision_is_documented(self):
         _run(self.reports, self.oof, "--smoke", "--joint-guard", "--tau-joint-high", "0.5",
              "--iters", "200")
@@ -161,6 +171,14 @@ class TestE6Routing(unittest.TestCase):
         self.assertIn("E6/code/train_state.py", src)
         self.assertIn("E6/code/search_tau.py", src)
         self.assertIn("--phase", src)
+
+    def test_run_train_wires_p2_and_persistent_state(self):
+        src = (V4 / "run_train.sh").read_text(encoding="utf-8")
+        self.assertIn("p0|p1|p2|all", src)
+        self.assertIn("build_pd1.py", src)
+        self.assertIn("V4_CANDIDATES", src)
+        self.assertIn("V4_REGISTRY", src)
+        self.assertIn("STATE_DIR", src)
 
     def test_help_lists_tau_knobs(self):
         out = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True,

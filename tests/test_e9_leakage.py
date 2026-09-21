@@ -120,6 +120,15 @@ class TestLeakageAudit(unittest.TestCase):
 
     def test_clean_run_passes_gate_without_residual_risk(self):
         self._scaler("E6_state_fold0.json", ["a"], ["b"])
+        # H5：Gate 的 atomic/resumable/time 证据必须来自真实报告文件，
+        # 因此干净运行也要提供 E6 证据（生产顺序里 E6 先于 E9）。
+        (self.reports / "E6_atomic_report.json").write_text(json.dumps({
+            "atom_metrics_tau_half": {"POR": {}, "PERM": {}, "SW": {}},
+            "folds_detail": [{"fold": 0, "resumable": {"ok": True}}],
+        }), encoding="utf-8")
+        (self.reports / "training_time_log.json").write_text(json.dumps({
+            "valid": True, "folds": [{"fold": 0, "seconds": 1.0}]}),
+            encoding="utf-8")
         csv = self.root / "prov.csv"
         csv.write_text("name,group\nGR,F1\n", encoding="utf-8")
         (self.reports / "E8_transductive.json").write_text(json.dumps({

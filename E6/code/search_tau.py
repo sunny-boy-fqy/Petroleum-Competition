@@ -78,7 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--reports-dir", default=str(default_reports_dir()))
     ap.add_argument("--atomic-report", default=None,
                     help="E6/P0 报告（缺省 $REPORTS/E6_atomic_report.json，用于 P1 Gate 的共享 checks）")
-    ap.add_argument("--candidates", default=str(V4 / "versions" / "candidates.json"))
+    ap.add_argument("--candidates", default=os.environ.get("V4_CANDIDATES") or str(V4 / "versions" / "candidates.json"))
     ap.add_argument("--baseline-oof", default=None, help="对照 OOF（可选，给配对 CI）")
     ap.add_argument("--tol", type=float, default=AG.DEFAULT_PLATEAU_TOL)
     ap.add_argument("--joint-guard", action="store_true", help="启用联合守卫（默认关）")
@@ -120,15 +120,17 @@ def run(args) -> int:
         return 4
     with np.load(oof_path, allow_pickle=True) as z:
         z = {k: z[k] for k in z.files}
-    for key in ("cont", "q_atom", "y_true", "mask"):
+    for key in ("cont", "q_atom", "y_true", "mask", "y_atom"):
         if key not in z:
-            print(f"[E6] FATAL: OOF 缺少键 {key!r}", file=sys.stderr)
+            print(f"[E6] FATAL: OOF 缺少键 {key!r}（H4：原子指标必须使用 y_atom，"
+                  f"不得用 y>=0.5 冒充）", file=sys.stderr)
             return 4
     cont = np.asarray(z["cont"], dtype="float64")
     q_atom = np.asarray(z["q_atom"], dtype="float64")
     q_joint = (np.asarray(z["q_joint"], dtype="float64").reshape(-1)
                if "q_joint" in z else None)
     y = np.asarray(z["y_true"], dtype="float64")
+    y_atom = np.asarray(z["y_atom"], dtype="float64") >= 0.5
     mask = np.asarray(z["mask"], dtype="float64")
     well_index = (np.asarray(z["well_index"], dtype="int64") if "well_index" in z
                   else np.zeros(y.shape[0], dtype="int64"))
@@ -137,12 +139,12 @@ def run(args) -> int:
     sel = AG.select_tau_per_target(cont=cont, q_atom=q_atom, y=y, mask=mask,
                                    tol=float(args.tol))
     tau = np.asarray(sel["tau"], dtype="float64")
-    pr_star = M.atomic_precision_recall(y >= 0.5, q_atom, tau)
-    pr_half = M.atomic_precision_recall(y >= 0.5, q_atom, np.full(3, 0.5))
+    pr_star = M.atomic_precision_recall(y_atom, q_atom, tau)
+    pr_half = M.atomic_precision_recall(y_atom, q_atom, np.full(3, 0.5))
     acc_star, acc_half = {}, {}
     for i, t in enumerate(C.TARGETS):
         obs = mask[:, i] > 0
-        truth = (y[:, i] >= 0.5) & obs
+        truth = y_atom[:, i] & obs
         if obs.any():
             acc_star[t] = float(((q_atom[:, i] >= tau[i]) == truth)[obs].mean())
             acc_half[t] = float(((q_atom[:, i] >= 0.5) == truth)[obs].mean())
@@ -197,6 +199,38 @@ def run(args) -> int:
             baseline = {"path": str(args.baseline_oof),
                         "reason": "形状不匹配或缺少 cont 键，未做对照"}
 
+    # H4：P1 delta 的真实配对 CI。基线优先用 --baseline-oof 的 cont；
+    # 没有基线时按预注册 baseline_version="CONST" 与常数基线比较。
+    gated_star = AG.per_target_hard_switch(cont, q_atom, tau)
+    if baseline is not None and "baseline_total" in baseline and args.baseline_oof:
+        with np.load(args.baseline_oof, allow_pickle=True) as bz:
+            b = {kk: bz[kk] for kk in bz.files}
+        base_pred = np.asarray(b["cont"], dtype="float64")
+    else:
+        base_pred = np.tile([C.ATOM_VALUES[t] for t in C.TARGETS], (y.shape[0], 1))
+    if base_pred.shape != y.shape:
+        delta_ci = {"ok": False, "reason": f"baseline shape {base_pred.shape} != {y.shape}"}
+    else:
+        d_w = np.full(n_wells, np.nan, dtype="float64")
+        rows_w = np.zeros(n_wells, dtype="float64")
+        for iw in range(n_wells):
+            sw = well_index == iw
+            rows_w[iw] = float(sw.sum())
+            if sw.any():
+                d_w[iw] = (M.score_of(y[sw], gated_star[sw], mask[sw])["total"]
+                           - M.score_of(y[sw], base_pred[sw], mask[sw])["total"])
+        okw = ~np.isnan(d_w)
+        if okw.any():
+            boot = FOLDS.bootstrap_ci(d_w[okw], iters=int(args.iters),
+                                      weights=rows_w[okw], seed=42)
+            delta_ci = {"ok": True, "delta": float(boot["point"]),
+                        "ci_low": float(boot["ci_low"]), "ci_high": float(boot["ci_high"]),
+                        "n_wells": int(okw.sum()),
+                        "baseline": ("baseline_oof_cont" if baseline is not None
+                                     and "baseline_total" in baseline else "CONST")}
+        else:
+            delta_ci = {"ok": False, "reason": "没有可用的逐井配对差分"}
+
     audit = ST.input_no_label_leak_full(FB.FEATURE_NAMES)
     atomic_report_path = Path(args.atomic_report) if args.atomic_report else \
         reports / "E6_atomic_report.json"
@@ -229,6 +263,8 @@ def run(args) -> int:
         "cont_slice": cont_slice, "gated_slice": gated_slice,
         "joint_guard": guard,
         "baseline": baseline,
+        "delta_ci": delta_ci,
+        "y_atom_source": "inner_oof.y_atom",
         "input_no_label_leak_full": audit,
         "shared": {
             "atomic_report": str(atomic_report_path) if atomic else None,
@@ -328,8 +364,9 @@ def run(args) -> int:
               "atomic_acc": atom_acc_mean, "atom_acc": payload["min_atom_acc"],
               "atom_recall": payload["min_atom_recall"],
               "joint_atom_auc": payload["shared"]["joint_atom_auc"],
-              "delta": (baseline or {}).get("delta", 0.0),
-              "paired_ci_low": 0.0}
+              "delta": (float(delta_ci["delta"]) if delta_ci.get("ok") else None),
+              "paired_ci_low": (float(delta_ci["ci_low"]) if delta_ci.get("ok") else None),
+              "delta_source": delta_ci.get("baseline")}
     try:
         agg = GATES.aggregate_gate(prereg, result)
     except Exception as exc:

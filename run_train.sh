@@ -30,7 +30,8 @@
 #   --mode data-health  数据健康硬校验（profile=full）
 #   --mode smoke    5 分钟极小规模冒烟（1 折 / 少量 epoch），验证全链路可跑
 #   --mode stage --stage E1   训练指定阶段
-#   --mode all      依次执行 env -> data -> e0 -> E1 ...
+#   --mode all      env -> data -> e0，然后跑单个 STAGE（缺省 E1）；
+#                   不是全阶段串行。E6 全阶段：--mode stage --stage E6 --phase all
 #
 # 平台集成（已按官方提示落实）：
 #   * TensorBoard：导出 TENSORBOARD_LOGDIR=$V4_DATA_ROOT/v4/tb，
@@ -46,6 +47,9 @@ RUN_ROOT="${V4_RUN_ROOT:-$DATA_ROOT/v4/runs}"
 CACHE_ROOT="${V4_CACHE_ROOT:-$DATA_ROOT/v4/cache}"
 LOG_DIR="${V4_LOG_DIR:-$DATA_ROOT/v4/logs}"
 REPORTS_DIR="$DATA_ROOT/v4/reports"
+STATE_DIR="${V4_STATE_DIR:-$DATA_ROOT/v4/state}"
+CANDIDATES="${V4_CANDIDATES:-$STATE_DIR/candidates.json}"
+REGISTRY="${V4_REGISTRY:-$STATE_DIR/registry.json}"
 
 MODE="all"
 STAGE="E1"
@@ -65,7 +69,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-mkdir -p "$RUN_ROOT" "$CACHE_ROOT" "$LOG_DIR" "$REPORTS_DIR"
+mkdir -p "$RUN_ROOT" "$CACHE_ROOT" "$LOG_DIR" "$REPORTS_DIR" "$STATE_DIR"
 TS="$(date +%Y%m%d_%H%M%S)"
 LOG="$LOG_DIR/train_${MODE}_${TS}.log"
 
@@ -74,6 +78,10 @@ export V4_RUN_ROOT="$RUN_ROOT"
 export V4_CACHE_ROOT="$CACHE_ROOT"
 export V4_REPORTS_DIR="$REPORTS_DIR"
 export V4_REPO_ROOT="$HERE"
+# H6：候选表与版本注册表是**运行时可变状态**，必须放 /data 持久区（仓库/临时目录会丢）。
+export V4_STATE_DIR="$STATE_DIR"
+export V4_CANDIDATES="$CANDIDATES"
+export V4_REGISTRY="$REGISTRY"
 # 让 bootstrap_data.sh 也能看到 tarball 位置（同一份事实，不重复解析参数）
 if [[ -n "$DATA_TARBALL" ]]; then export V4_DATA_TARBALL="$DATA_TARBALL"; fi
 if [[ -n "$DATA_MANIFEST" ]]; then export V4_DATA_MANIFEST="$DATA_MANIFEST"; fi
@@ -93,6 +101,9 @@ log "DATA_ROOT    = $DATA_ROOT       <- 云盘（持久）"
 log "RUN_ROOT     = $RUN_ROOT"
 log "CACHE_ROOT   = $CACHE_ROOT"
 log "REPORTS_DIR  = $REPORTS_DIR"
+log "STATE_DIR    = $STATE_DIR    <- 候选/注册表持久区"
+log "CANDIDATES   = $CANDIDATES"
+log "REGISTRY     = $REGISTRY"
 log "LOG          = $LOG"
 log "=============================================================="
 log "host: $(hostname)  python: $(python3 -V 2>&1)  pwd: $(pwd)"
@@ -295,8 +306,8 @@ run_stage() {
         for a in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
           if [[ "$e6_expect" == "phase" ]]; then
             case "${a,,}" in
-              p0|p1|all) e6_phase="${a,,}" ;;
-              *) log "!! E6 --phase 只支持 p0/p1/all，got $a"; return 1 ;;
+              p0|p1|p2|all) e6_phase="${a,,}" ;;
+              *) log "!! E6 --phase 只支持 p0/p1/p2/all，got $a"; return 1 ;;
             esac
             e6_expect=""
             continue
@@ -315,6 +326,16 @@ run_stage() {
           log "--- [E6] P1 τ 搜索（内折 OOF）"
           python3 "$HERE/E6/code/search_tau.py" \
             --run-root "$RUN_ROOT" --reports-dir "$REPORTS_DIR" 2>&1 | tee -a "$LOG"
+        fi
+        if [[ "$e6_phase" == "p2" || "$e6_phase" == "all" ]]; then
+          log "--- [E6] P2 折平均 PD1（OOF + 注册 + CPU 冒烟）"
+          python3 "$HERE/E6/code/build_pd1.py" \
+            --run-root "$RUN_ROOT" --reports-dir "$REPORTS_DIR" \
+            --cache-root "$CACHE_ROOT" \
+            --test-dir "$DATA_ROOT/v4/data/test" \
+            --out-dir "$RUN_ROOT/E6/P2/pd1" \
+            --models-dir "$DATA_ROOT/v4/models/E6" \
+            "${e6_args[@]+"${e6_args[@]}"}" 2>&1 | tee -a "$LOG"
         fi ;;
     E7)
         # `--phase loss|decode|all`（loss=七组损失消融；decode=解码搜索）
@@ -383,9 +404,11 @@ run_stage() {
           python3 "$HERE/E9/code/$stage.py" --reports-dir "$REPORTS_DIR" \
             --run-root "$RUN_ROOT" 2>&1 | tee -a "$LOG"
         }
+        # H5：leakage_audit 先产出真实证据，后面的 aggregate/choose/... 才能
+        # 从文件读取 no_label_leak，而不是硬编码 True。
+        if [[ "$e9_phase" == "all" || "$e9_phase" == "leakage" ]]; then run_e9 leakage_audit || return 1; fi
         if [[ "$e9_phase" == "all" || "$e9_phase" == "aggregate" ]]; then run_e9 aggregate_oof || return 1; fi
         if [[ "$e9_phase" == "all" || "$e9_phase" == "choose" ]]; then run_e9 choose_submission || return 1; fi
-        if [[ "$e9_phase" == "all" || "$e9_phase" == "leakage" ]]; then run_e9 leakage_audit || return 1; fi
         if [[ "$e9_phase" == "all" || "$e9_phase" == "confirm" ]]; then run_e9 confirm_check || return 1; fi
         if [[ "$e9_phase" == "all" || "$e9_phase" == "submit" ]]; then run_e9 submit_batch || return 1; fi ;;
     E10)

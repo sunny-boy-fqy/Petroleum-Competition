@@ -345,6 +345,19 @@ class TestFeatureCacheRoundTrip(unittest.TestCase):
         self.assertEqual(t.X.shape[1], F.N_FEATURES)
         self.assertEqual(list(F.FEATURE_NAMES)[:3], ["GR", "PE", "SP"])
 
+    def test_fold_phys_overrides_cached_global_phys(self):
+        """H2：调用方给了折内 phys_params 时，必须现场构造而不是读全局缓存。"""
+        spec = G.spec_from_name("F1+phys")
+        G.build_feature_cache(self.cache, spec, self.wells, self.phys, split="train",
+                              from_raw=lambda w: D.read_well_shard(self.cache, w, "train"))
+        X_cached, _ = G.read_feature_cache(self.cache, spec, self.wells[0], "train")
+        other = PH.PhysicsParams(gr_min=0.0, gr_max=1000.0, sp_min=0.0, sp_max=1000.0)
+        X_fold, names = RD._well_feature_matrix(self.cache, self.wells[0], "train", spec,
+                                                phys_params=other)
+        self.assertEqual(list(names), spec.names())
+        self.assertFalse(np.allclose(X_cached, X_fold),
+                         "缓存里的全局 phys 分位数不得覆盖调用方传入的折内参数")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

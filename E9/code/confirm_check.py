@@ -32,6 +32,7 @@ sys.path.insert(0, str(V4))
 import numpy as np  # noqa: E402
 
 from src import constants as C  # noqa: E402
+from src.validation import evidence as EVID  # noqa: E402
 from src.score import score_arrays  # noqa: E402
 from src.training import metrics as M  # noqa: E402
 from src.validation import gates as GATES  # noqa: E402
@@ -63,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
         V4.parent / "v2" / "artifacts" / "E0" / "E0_folds_confirm.json"))
     ap.add_argument("--checkpoints", default=None,
                     help="name=path,...（缺省从候选表里找带 checkpoints/checkpoint 的候选）")
-    ap.add_argument("--candidates", default=str(V4 / "versions" / "candidates.json"))
+    ap.add_argument("--candidates", default=os.environ.get("V4_CANDIDATES") or str(V4 / "versions" / "candidates.json"))
     ap.add_argument("--validation-report", default=None)
     ap.add_argument("--cache-root", default=os.environ.get("V4_CACHE_ROOT")
                     or str(env_path("V4_DATA_ROOT", "/data") / "v4" / "cache"))
@@ -187,8 +188,9 @@ def run(args) -> int:
                 "decision": "not_run", "status": "missing_confirm_folds",
                 "checks": {"confirm_no_breakdown": False,
                            "label_shuffle_control_ran": False,
-                           "not_independent_confirmation_flagged": True,
-                           "v1_exposed_flagged": True,
+                           "not_independent_confirmation_flagged": bool(
+            report.get("not_independent_confirmation") is True),
+                           "v1_exposed_flagged": bool(report.get("v1_exposed") is True),
                            "leakage_audit_complete": False},
                 "reason": report["reason"], "report_path": str(out_path)}
         write_json(reports / "E9_confirm_gate.json", gate)
@@ -284,13 +286,17 @@ def run(args) -> int:
     except Exception as exc:
         disk = {"level": "unknown", "error": str(exc)}
     shuffle_ran = all("label_shuffle" in r for r in results if r.get("status") == "ok")
+    atomic_ok, atomic_ev = EVID.atomic_precision_reported(reports)
+    resume_ok, resume_ev = EVID.checkpoint_resumable(reports)
+    time_ok, time_ev = EVID.training_time_log_valid(reports)
+    leak_ok, leak_ev = EVID.leakage_audit_ok(reports)
     checks = {
         "contract_ok": bool(results and not perrs),
-        "atomic_precision_reported": True,
-        "disk_budget_ok": bool(disk.get("level") == "ok"),
-        "training_time_log_valid": bool((reports / "training_time_log.json").is_file()),
-        "checkpoint_resumable": bool(all(r.get("status") == "ok" for r in results)),
-        "no_label_leak": True,
+        "atomic_precision_reported": bool(atomic_ok),
+        "disk_budget_ok": EVID.disk_budget_ok(disk.get("level")),
+        "training_time_log_valid": bool(time_ok),
+        "checkpoint_resumable": bool(resume_ok),
+        "no_label_leak": bool(leak_ok),
         "confirm_no_breakdown": bool(not breakdowns),
         "label_shuffle_control_ran": bool(shuffle_ran),
         "not_independent_confirmation_flagged": True,
@@ -312,6 +318,8 @@ def run(args) -> int:
             "nogo": bool(passed is False), "decision": report["decision"],
             "breakdown_candidates": breakdowns, "checks": checks,
             "prereg_errors": perrs, "aggregate": agg, "disk": disk,
+            "evidence": {"atomic": atomic_ev, "resumable": resume_ev,
+                         "time_log": time_ev, "leakage": leak_ev},
             "report_path": str(out_path)}
     write_json(reports / "E9_confirm_gate.json", gate)
     print(json.dumps({"stage": "E9/P1-confirm", "n_wells": len(wells),

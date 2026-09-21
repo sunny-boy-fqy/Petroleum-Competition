@@ -110,6 +110,24 @@ class TestFinalTrainEnsemble(unittest.TestCase):
         self.assertEqual(rep["status"], "dry_run")
         self.assertFalse((self.out / "final_manifest.json").is_file())
 
+    def test_fit_wells_difference_does_not_block_ensemble(self):
+        """H1：row_scaler 的 fit_wells/n_fit_rows 是折元数据，不参与平均语义。"""
+        second = self.root / "fold1.pt"
+        second.write_bytes(b"weights2")
+        man = json.loads(self.ckpt.with_suffix(".manifest.json").read_text(encoding="utf-8"))
+        man = {**man, "row_scaler": {**man["row_scaler"],
+                                     "fit_wells": ["different", "wells"],
+                                     "n_fit_rows": 999},
+               "tau_atom": [0.7, 0.7, 0.7]}
+        second.with_suffix(".manifest.json").write_text(json.dumps(man), encoding="utf-8")
+        (self.root / "cands.json").write_text(json.dumps({"schema_version": 1, "candidates": [
+            {"candidate_id": "PD1", "stage": "E6", "status": "shortlisted", "oof_total": 83.0,
+             "checkpoints": [str(self.ckpt), str(second)]}]}), encoding="utf-8")
+        rep = self._run("--smoke")
+        self.assertEqual(rep["status"], "ok")
+        self.assertEqual(rep["result"]["manifest"]["folds"], 2)
+        self.assertEqual(len(rep["result"]["manifest"]["taus"]), 2)
+
     def test_inconsistent_folds_refused(self):
         second = self.root / "fold1.pt"
         second.write_bytes(b"weights2")

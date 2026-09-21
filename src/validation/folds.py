@@ -130,8 +130,13 @@ def bootstrap_ci(values: Any, iters: int = 1000, alpha: float = 0.05,
 
     v = np.asarray(values, dtype="float64")
     w = None if weights is None else np.asarray(weights, dtype="float64")
+    n = int(v.shape[0])
+    # M8：空数组返回 NaN 会被 Gate 当成数值；这里明确拒绝，调用方必须处理。
+    if n == 0:
+        raise ValueError("bootstrap_ci: values is empty (n=0); Gate 不得把 NaN 当证据")
+    if w is not None and w.shape[0] != n:
+        raise ValueError(f"bootstrap_ci: weights {w.shape[0]} != values {n}")
     rng = np.random.default_rng(seed)
-    n = v.shape[0]
     stats = np.empty(iters, dtype="float64")
     for i in range(iters):
         idx = rng.integers(0, n, size=n)

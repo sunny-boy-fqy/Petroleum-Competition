@@ -84,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--homology-threshold", type=float, default=0.99)
     ap.add_argument("--iters", type=int, default=1000)
     ap.add_argument("--prereg", default=None)
-    ap.add_argument("--candidates", default=str(V4 / "versions" / "candidates.json"))
+    ap.add_argument("--candidates", default=os.environ.get("V4_CANDIDATES") or str(V4 / "versions" / "candidates.json"))
     ap.add_argument("--tag", default="")
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--exploratory", action="store_true")

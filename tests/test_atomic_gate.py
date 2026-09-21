@@ -376,7 +376,16 @@ class TestTargetScalersAndDecode(unittest.TestCase):
         self.assertAlmostEqual(sc["por_max"], C.POR_MAX_BUFFER * 30.0, places=9)
         self.assertAlmostEqual(sc["sw_mu"], 80.0, places=9)
         self.assertAlmostEqual(sc["por_median"], 10.0, places=9)
-        # 未提供 y_perm -> 原子先验回落到 E0 实测默认值（而不是 0）
+        # M2：只给 z_perm（log10(PERM)）时也要还原原始尺度统计折内原子率先验，
+        # 不再无条件回落到 E0 默认值。本数据里 POR/PERM/SW 各只有第 0 行是原子。
+        self.assertEqual(tuple(sc["atom_rates"]), (0.2, 0.2, 0.2))
+        self.assertAlmostEqual(sc["joint_atom_rate"], 0.2, places=9)
+
+    def test_fit_target_scalers_defaults_only_when_perm_absent(self):
+        from src.features.basic import (DEFAULT_ATOM_RATES, DEFAULT_JOINT_ATOM_RATE,
+                                        fit_target_scalers)
+        por, sw, _z, mask = self._data()
+        sc = fit_target_scalers(por, sw, mask, None)
         self.assertEqual(tuple(sc["atom_rates"]), tuple(DEFAULT_ATOM_RATES))
         self.assertAlmostEqual(sc["joint_atom_rate"], DEFAULT_JOINT_ATOM_RATE, places=9)
 

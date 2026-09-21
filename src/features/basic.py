@@ -248,6 +248,10 @@ def fit_target_scalers(y_por: np.ndarray, y_sw: np.ndarray, mask: np.ndarray,
         vz = z[m[:, 1] & np.isfinite(z)]
         if vz.size:
             scaler["perm_z_median"] = float(np.median(vz))
+        # M2 审查修复：生产路径只拿到 log10(PERM)（z_perm）时，仍可还原原始尺度
+        # 用来统计折内原子先验，避免永远回落到 DEFAULT_ATOM_RATES。
+        if y_perm is None:
+            y_perm = np.power(10.0, z)
     if y_perm is not None:
         yp = np.asarray(y_perm, dtype="float64").reshape(-1)
         if yp.size != por.size:

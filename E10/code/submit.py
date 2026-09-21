@@ -68,7 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--reason", default=None)
     ap.add_argument("--candidate-id", default=None)
     ap.add_argument("--decision", default=None, help="E9_submission_decision.json（取 choice）")
-    ap.add_argument("--candidates", default=str(V4 / "versions" / "candidates.json"))
+    ap.add_argument("--candidates", default=os.environ.get("V4_CANDIDATES") or str(V4 / "versions" / "candidates.json"))
     ap.add_argument("--log", default=None)
     ap.add_argument("--budget-per-day", type=int, default=5)
     ap.add_argument("--freeze", action="store_true", help="记录后把候选标为 submitted 并冻结")

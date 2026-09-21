@@ -30,6 +30,7 @@ sys.path.insert(0, str(V4))
 import numpy as np  # noqa: E402
 
 from src import constants as C  # noqa: E402
+from src.validation import evidence as EVID  # noqa: E402
 from src.score import score_arrays  # noqa: E402
 from src.training import metrics as M  # noqa: E402
 from src.validation import folds as FOLDS  # noqa: E402
@@ -72,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
                     or str(env_path("V4_DATA_ROOT", "/data") / "v4" / "runs"))
     ap.add_argument("--reports-dir", default=os.environ.get("V4_REPORTS_DIR")
                     or str(env_path("V4_DATA_ROOT", "/data") / "v4" / "reports"))
-    ap.add_argument("--candidates", default=str(V4 / "versions" / "candidates.json"))
+    ap.add_argument("--candidates", default=os.environ.get("V4_CANDIDATES") or str(V4 / "versions" / "candidates.json"))
     ap.add_argument("--folds", default=None, help="折文件（缺省用冻结折）")
     ap.add_argument("--bootstrap-iters", type=int, default=1000)
     ap.add_argument("--seed", type=int, default=42)
@@ -110,7 +111,11 @@ def candidate_oof_path(cand: dict, run_root: Path) -> Path | None:
 def metrics_of(oof: dict) -> dict:
     y = np.asarray(oof["y_true"], dtype="float64")
     mask = np.asarray(oof["mask"], dtype="float64")
-    pred = np.asarray(oof.get("gated", oof.get("cont", oof.get("pred"))), dtype="float64")
+    # M1 审查修复：E1/E3 的 OOF 键是 y_pred（已门控）与 cont（未门控），
+    # 不存在 gated 键；取列顺序必须是 gated → y_pred → cont → pred，否则复核分会
+    # 丢掉原子门结果、系统性低估。
+    pred = np.asarray(oof.get("gated", oof.get("y_pred", oof.get("cont",
+                               oof.get("pred")))), dtype="float64")
     if pred is None or pred.shape != y.shape:
         raise ValueError("OOF 里没有可用的预测（gated/cont/pred）")
     s = score_arrays(y, pred, missing=~mask.astype(bool),
@@ -259,18 +264,21 @@ def run(args) -> int:
         disk = disk_report(os.environ.get("V4_DATA_ROOT", "/"))
     except Exception as exc:
         disk = {"level": "unknown", "error": str(exc)}
-    time_log = reports / "training_time_log.json"
+    atomic_ok, atomic_ev = EVID.atomic_precision_reported(reports)
+    resume_ok, resume_ev = EVID.checkpoint_resumable(reports)
+    time_ok, time_ev = EVID.training_time_log_valid(reports)
+    leak_ok, leak_ev = EVID.leakage_audit_ok(reports)
     checks = {
         "contract_ok": bool(out_rows and not perrs),
-        "atomic_precision_reported": True,
-        "disk_budget_ok": bool(disk.get("level") == "ok"),
-        "training_time_log_valid": bool(time_log.is_file()),
-        "checkpoint_resumable": True,
-        "no_label_leak": bool(all(r.get("status_detail") != "oof_missing" or True
-                                  for r in out_rows)),
+        "atomic_precision_reported": bool(atomic_ok),
+        "disk_budget_ok": EVID.disk_budget_ok(disk.get("level")),
+        "training_time_log_valid": bool(time_ok),
+        "checkpoint_resumable": bool(resume_ok),
+        "no_label_leak": bool(leak_ok),
         "guardrail_evaluated": bool(out_rows) and all("guardrail_pass" in r for r in out_rows),
         "oof_recomputable": bool(ranked) and all(r.get("total") is not None for r in ranked),
-        "protocol_matched_reported": True,
+        "protocol_matched_reported": bool(out_rows) and all(
+            isinstance(r.get("protocol_matched"), bool) for r in out_rows),
         "candidates_have_provenance": bool(all(r.get("stage") for r in out_rows)) if out_rows
         else False,
     }
@@ -287,6 +295,8 @@ def run(args) -> int:
             "n_candidates": len(out_rows), "n_passing": len(passing),
             "shortlist": shortlist, "missing_oof": missing,
             "checks": checks, "prereg_errors": perrs, "aggregate": agg, "disk": disk,
+            "evidence": {"atomic": atomic_ev, "resumable": resume_ev,
+                         "time_log": time_ev, "leakage": leak_ev},
             "report_path": str(out_path)}
     write_json(reports / "E9_P0_gate.json", gate)
     print(json.dumps({"stage": "E9/P0", "floor": floor["floor"],

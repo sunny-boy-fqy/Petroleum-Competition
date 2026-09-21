@@ -237,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--scalers-dir",
                     default=os.environ.get("V4_SCALERS_DIR")
                     or str(_env_root("V4_DATA_ROOT", "/data") / "v4" / "scalers"))
-    ap.add_argument("--candidates", default=str(V4 / "versions" / "candidates.json"),
+    ap.add_argument("--candidates", default=os.environ.get("V4_CANDIDATES") or str(V4 / "versions" / "candidates.json"),
                     help="候选注册表路径（测试必须指向 tmp，避免污染仓库）")
     ap.add_argument("--folds", default="all", help="all | 0 | 0,3")
     ap.add_argument("--max-wells", type=int, default=None)
@@ -477,8 +477,11 @@ def main(argv: list[str] | None = None) -> int:
     min_ph = M.placeholder_min_acc({"atomic_rows": atom_rows})
     checks = {
         "contract_ok": bool(contract["ok"]),
+        # "reported" = 指标字段真实存在；NaN 可以表示"该折无正例"，
+        # 不能像 H5 那样直接写 True。
         "atomic_precision_reported": bool(head) and all(
-            v["precision"] == v["precision"] for v in head.values()),
+            isinstance(v, dict) and "precision" in v and "recall" in v
+            for v in head.values()),
         "disk_budget_ok": bool((disk or {}).get("level") == "ok"),
         "training_time_log_valid": bool(json.loads(time_log.read_text(encoding="utf-8"))["valid"]),
         "checkpoint_resumable": bool(results and results[0]["resumable"]["ok"]),

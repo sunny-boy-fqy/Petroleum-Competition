@@ -43,7 +43,9 @@ bash "$(find /code/workspace -name run_train.sh | head -1)" --mode all
 ```
 
 `run_train.sh` 的模式：`env`（环境+磁盘自检+装轻量依赖）、`data`（部署数据集到 `/data`）、
-`e0`（口径复算）、`smoke`（极小规模冒烟）、`stage --stage E1`（训练）、`all`（串行全部）。
+`e0`（口径复算）、`smoke`（极小规模冒烟）、`stage --stage E1`（训练）、
+`all`（env + data + e0，然后跑**单个** `STAGE`，缺省 E1；它不是全阶段串行）。
+要产出 PD1，请显式跑 `--mode stage --stage E6 --phase all`（P0→P1→P2），再按需跑 E9/E10。
 
 首次上手顺序见 [`docs/platform_setup.md`](docs/platform_setup.md) §四。
 

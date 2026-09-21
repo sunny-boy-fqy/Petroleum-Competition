@@ -270,6 +270,13 @@ def _well_feature_matrix(cache_root: str | Path, well: str, split: str, spec,
     from ..features import groups as GRP   # 延迟导入：避免 data<->features 循环
     if spec is None or spec.is_f1_only:
         return read_row_shard(cache_root, well, split)["X_raw"], list(F.FEATURE_NAMES)
+    # H2 审查修复：只要调用方提供了训练折拟合的 phys_params，就必须现场构造，
+    # 不得优先读 `cache/feat/<spec>/` —— 否则缓存的全局分位数会静默覆盖折内参数，
+    # 造成验证折分布进入训练特征（distribution leakage）。
+    if phys_params is not None and "phys" in tuple(spec.groups):
+        shard = D.read_well_shard(cache_root, well, split)
+        X, names = GRP.build_matrix(shard, spec, phys_params)
+        return X, names
     try:
         return GRP.read_feature_cache(cache_root, spec, well, split)
     except FileNotFoundError:
@@ -423,9 +430,17 @@ def feature_report(t: FoldTensors, scaler: RowScaler | None = None) -> dict[str,
     if not HAS_NUMPY:
         raise RuntimeError("feature_report requires numpy")
     X_raw = np.asarray(t.X, dtype="float32")
+    n_feat = int(X_raw.shape[1])
+    # M7：F2 有 368 列，不能固定用 F1 的 32 个列名（否则 IndexError/名字错配）。
+    if scaler is not None and scaler.names and len(scaler.names) == n_feat:
+        names = list(scaler.names)
+    elif n_feat == len(F.FEATURE_NAMES):
+        names = list(F.FEATURE_NAMES)
+    else:
+        names = [f"f{j}" for j in range(n_feat)]
     rep: dict[str, Any] = {
-        "n_features": int(X_raw.shape[1]),
-        "feature_names": list(F.FEATURE_NAMES),
+        "n_features": n_feat,
+        "feature_names": names,
         "n_rows": t.n_rows,
         "n_wells": t.n_wells,
         "nan_rate_overall": float(np.mean(~np.isfinite(X_raw))),
@@ -435,8 +450,9 @@ def feature_report(t: FoldTensors, scaler: RowScaler | None = None) -> dict[str,
     if scaler is not None:
         rep["row_scaler"] = {"n_fit_rows": scaler.n_fit_rows,
                              "fit_wells": list(scaler.fit_wells),
-                             "zero_std_features": [F.FEATURE_NAMES[j]
-                                                   for j in range(scaler.std.shape[0])
+                             "zero_std_features": [names[j]
+                                                   for j in range(min(len(names),
+                                                                      scaler.std.shape[0]))
                                                    if scaler.std[j] == 1.0]}
     return rep
 

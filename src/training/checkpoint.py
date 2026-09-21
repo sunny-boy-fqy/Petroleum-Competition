@@ -41,7 +41,8 @@ def _tensor_to_bf16(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def save_checkpoint(path: str | Path, model, meta: dict[str, Any] | None = None,
-                    optimizer=None, bf16: bool = True, extra: dict[str, Any] | None = None) -> Path:
+                    optimizer=None, scheduler=None, bf16: bool = True,
+                    extra: dict[str, Any] | None = None) -> Path:
     """原子写 checkpoint（tmp → rename）+ manifest。"""
     require("torch")
     p = Path(path)
@@ -54,6 +55,8 @@ def save_checkpoint(path: str | Path, model, meta: dict[str, Any] | None = None,
     }
     if optimizer is not None:
         payload["optimizer"] = optimizer.state_dict()
+    if scheduler is not None:
+        payload["scheduler"] = scheduler.state_dict()
     tmp = p.with_suffix(".tmp.pt")
     torch.save(payload, tmp)
     tmp.replace(p)
@@ -111,18 +114,28 @@ def load_checkpoint(path: str | Path, model=None, map_location: str = "cpu",
                      for k, v in state.items()}
         model.load_state_dict(state_f32, strict=strict)
     return {"state_dict": state, "dtype": payload.get("dtype"),
-            "optimizer": payload.get("optimizer")}
+            "optimizer": payload.get("optimizer"),
+            "scheduler": payload.get("scheduler")}
 
 
-def load_for_resume(path: str | Path, model, optimizer=None,
+def load_for_resume(path: str | Path, model, optimizer=None, scheduler=None,
                     map_location: str = "cpu") -> dict[str, Any]:
-    """续训：恢复权重（+optimizer）。返回 `{"epoch": int, "manifest": {...}}`。"""
+    """续训：恢复权重（+optimizer + LR scheduler）。
+
+    返回 `{"epoch": int, "manifest": {...}, "scheduler_state": ...}`，
+    调用方在创建 scheduler 后加载 `scheduler_state`。
+    """
     out = load_checkpoint(path, model=model, map_location=map_location)
     if optimizer is not None and out.get("optimizer"):
         optimizer.load_state_dict(out["optimizer"])
+    sched_state = out.get("scheduler")
+    if scheduler is not None and sched_state:
+        scheduler.load_state_dict(sched_state)
     man = read_manifest(path)
     return {"epoch": int(man.get("epoch", -1)), "manifest": man,
-            "optimizer_restored": bool(optimizer is not None and out.get("optimizer"))}
+            "optimizer_restored": bool(optimizer is not None and out.get("optimizer")),
+            "scheduler_state": sched_state,
+            "scheduler_restored": bool(scheduler is not None and sched_state)}
 
 
 def rotate(run_dir: str | Path, keep: tuple[str, ...] = ("best.pt", "last.pt", "last_prev.pt")

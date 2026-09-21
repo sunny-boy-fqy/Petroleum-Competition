@@ -69,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--aggregate", default="fold_ensemble", choices=AGGREGATES)
     ap.add_argument("--from-candidate", default=None,
                     help="候选 id（缺省取候选表里 oof_total 最高且有 checkpoints 的候选）")
-    ap.add_argument("--candidates", default=str(V4 / "versions" / "candidates.json"))
+    ap.add_argument("--candidates", default=os.environ.get("V4_CANDIDATES") or str(V4 / "versions" / "candidates.json"))
     ap.add_argument("--cache-root", default=os.environ.get("V4_CACHE_ROOT")
                     or str(env_path("V4_DATA_ROOT", "/data") / "v4" / "cache"))
     ap.add_argument("--scalers-dir", default=os.environ.get("V4_SCALERS_DIR") or "")
@@ -143,8 +143,10 @@ def fold_ensemble(args, out_dir: Path, reports: Path) -> dict:
         return {"status": "checkpoint_missing", "missing": missing}
     mans = [CK.read_manifest(p) for p in ckpts]
     ref = mans[0]
+    # H1 审查修复：row_scaler/tau_atom 允许逐折不同；推理端会按每个权重自己的
+    # manifest 做 scaler 变换与门控。只拒绝真正破坏平均语义的结构不一致。
     problems = [f"fold{i} {k} 不一致" for i, m in enumerate(mans[1:], start=1)
-                for k in ("row_scaler", "feature_names", "model", "tau_atom")
+                for k in ("feature_names", "model")
                 if m.get(k) != ref.get(k)]
     if problems:
         return {"status": "inconsistent_folds", "problems": problems}
@@ -159,12 +161,16 @@ def fold_ensemble(args, out_dir: Path, reports: Path) -> dict:
     manifest = {"aggregate": "fold_ensemble", "candidate_id": cand.get("candidate_id"),
                 "folds": len(ckpts), "weights": [e["dst"] for e in exported],
                 "feature_names": ref.get("feature_names"),
-                "model": ref.get("model"), "tau_atom": ref.get("tau_atom"),
+                "model": ref.get("model"),
+                "tau_atom": ref.get("tau_atom"),
+                "taus": [m.get("tau_atom") for m in mans],
                 "target_scalers": ref.get("target_scalers"),
                 "scalers_fitted_on": ref.get("scalers_fitted_on"),
+                "per_fold_scalers": [m.get("row_scaler") for m in mans],
                 "oof_total": cand.get("oof_total"),
                 "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "notes": "推理时按连续头平均（predict.py 的 checkpoints 列表路径）"}
+                "notes": ("推理时每个折权重用自己的 row_scaler/tau_atom 预测，"
+                          "再在标签尺度平均（predict.py 的 checkpoints 列表路径）")}
     write_json(out_dir / "final_manifest.json", manifest)
     return {"status": "ok", "manifest": manifest, "exported": exported,
             "already_fp32": fp32_ok}

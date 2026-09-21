@@ -29,6 +29,7 @@ V4 = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(V4))
 
 from src import constants as C  # noqa: E402
+from src.validation import evidence as EVID  # noqa: E402
 from src.training import metrics as M  # noqa: E402
 from src.validation import gates as GATES  # noqa: E402
 from src.versioning import registry as REG  # noqa: E402
@@ -69,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
                            / "E9_submission_decision.json"))
     ap.add_argument("--reports-dir", default=os.environ.get("V4_REPORTS_DIR")
                     or str(env_path("V4_DATA_ROOT", "/data") / "v4" / "reports"))
-    ap.add_argument("--candidates", default=str(V4 / "versions" / "candidates.json"))
+    ap.add_argument("--candidates", default=os.environ.get("V4_CANDIDATES") or str(V4 / "versions" / "candidates.json"))
     ap.add_argument("--a-board-log", default=None)
     ap.add_argument("--budget-per-day", type=int, default=5)
     ap.add_argument("--max-submits", type=int, default=3)
@@ -237,13 +238,17 @@ def run(args) -> int:
         disk = {"level": "unknown", "error": str(exc)}
     n_breakdown = sum(1 for r in log.get("records", [])
                       if r.get("no_breakdown") is False)
+    atomic_ok, atomic_ev = EVID.atomic_precision_reported(reports)
+    resume_ok, resume_ev = EVID.checkpoint_resumable(reports)
+    time_ok, time_ev = EVID.training_time_log_valid(reports)
+    leak_ok, leak_ev = EVID.leakage_audit_ok(reports)
     checks = {
         "contract_ok": bool(decision.get("choice") and not perrs),
-        "atomic_precision_reported": True,
-        "disk_budget_ok": bool(disk.get("level") == "ok"),
-        "training_time_log_valid": bool((reports / "training_time_log.json").is_file()),
-        "checkpoint_resumable": True,
-        "no_label_leak": True,
+        "atomic_precision_reported": bool(atomic_ok),
+        "disk_budget_ok": EVID.disk_budget_ok(disk.get("level")),
+        "training_time_log_valid": bool(time_ok),
+        "checkpoint_resumable": bool(resume_ok),
+        "no_label_leak": bool(leak_ok),
         "a_board_log_complete": bool(log.get("records") is not None and budget_ok),
         "budget_ok": bool(budget_ok),
         "a_board_no_breakdown": bool(n_breakdown == 0),
@@ -266,6 +271,8 @@ def run(args) -> int:
             "budget_ok": budget_ok, "used_today": used_today,
             "n_breakdown_in_log": n_breakdown, "checks": checks,
             "prereg_errors": perrs, "aggregate": agg, "disk": disk,
+            "evidence": {"atomic": atomic_ev, "resumable": resume_ev,
+                         "time_log": time_ev, "leakage": leak_ev},
             "log_path": str(log_path)}
     write_json(reports / "E9_a_board_gate.json", gate)
     print(json.dumps({"stage": "E9/P2", "choice": report["choice"],

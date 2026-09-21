@@ -32,6 +32,7 @@ V4 = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(V4))
 
 from src import constants as C  # noqa: E402
+from src.validation import evidence as EVID  # noqa: E402
 from src.features import basic as FB  # noqa: E402
 from src.training import metrics as M  # noqa: E402
 from src.training import state_train as ST  # noqa: E402
@@ -264,12 +265,15 @@ def run(args) -> int:
         disk = disk_report(os.environ.get("V4_DATA_ROOT", "/"))
     except Exception as exc:
         disk = {"level": "unknown", "error": str(exc)}
+    atomic_ok, atomic_ev = EVID.atomic_precision_reported(reports)
+    resume_ok, resume_ev = EVID.checkpoint_resumable(reports)
+    time_ok, time_ev = EVID.training_time_log_valid(reports)
     checks = {
         "contract_ok": bool(len(audits) == len(AUDIT_IDS) and not perrs),
-        "atomic_precision_reported": True,
-        "disk_budget_ok": bool(disk.get("level") == "ok"),
-        "training_time_log_valid": bool((reports / "training_time_log.json").is_file()),
-        "checkpoint_resumable": True,
+        "atomic_precision_reported": bool(atomic_ok),
+        "disk_budget_ok": EVID.disk_budget_ok(disk.get("level")),
+        "training_time_log_valid": bool(time_ok),
+        "checkpoint_resumable": bool(resume_ok),
         "no_label_leak": bool(not high_risk),
         "leakage_audit_complete": bool({a["id"] for a in audits} == set(AUDIT_IDS)),
         "no_high_risk_leak": bool(not high_risk),
@@ -288,6 +292,8 @@ def run(args) -> int:
             "exploratory": bool(args.exploratory or args.smoke), "passed": passed,
             "nogo": bool(passed is False), "high_risk_leak": high_risk,
             "n_fail": n_fail, "n_residual_risk": n_residual,
+            "evidence": {"atomic": atomic_ev, "resumable": resume_ev,
+                         "time_log": time_ev},
             "verdict": report["verdict"], "checks": checks, "prereg_errors": perrs,
             "aggregate": agg, "disk": disk, "report_path": str(out_path)}
     write_json(reports / "E9_leakage_gate.json", gate)

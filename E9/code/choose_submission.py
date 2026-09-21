@@ -30,6 +30,7 @@ sys.path.insert(0, str(V4))
 import numpy as np  # noqa: E402
 
 from src import constants as C  # noqa: E402
+from src.validation import evidence as EVID  # noqa: E402
 from src.training import metrics as M  # noqa: E402
 from src.validation import gates as GATES  # noqa: E402
 from src.versioning import registry as REG  # noqa: E402
@@ -64,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
                            / "E9_validation_report.json"))
     ap.add_argument("--reports-dir", default=os.environ.get("V4_REPORTS_DIR")
                     or str(env_path("V4_DATA_ROOT", "/data") / "v4" / "reports"))
-    ap.add_argument("--candidates", default=str(V4 / "versions" / "candidates.json"))
+    ap.add_argument("--candidates", default=os.environ.get("V4_CANDIDATES") or str(V4 / "versions" / "candidates.json"))
     ap.add_argument("--max-shortlist", type=int, default=3)
     ap.add_argument("--a-board-log", default=None)
     ap.add_argument("--dry-run", action="store_true",
@@ -188,13 +189,17 @@ def run(args) -> int:
     submitted_untouched = all(
         status_before.get(cid) != "submitted" or status_after.get(cid) == "submitted"
         for cid in status_before)
+    atomic_ok, atomic_ev = EVID.atomic_precision_reported(reports)
+    resume_ok, resume_ev = EVID.checkpoint_resumable(reports)
+    time_ok, time_ev = EVID.training_time_log_valid(reports)
+    leak_ok, leak_ev = EVID.leakage_audit_ok(reports)
     checks = {
         "contract_ok": bool(report.get("candidates") is not None and not perrs),
-        "atomic_precision_reported": True,
-        "disk_budget_ok": bool(disk.get("level") == "ok"),
-        "training_time_log_valid": bool((reports / "training_time_log.json").is_file()),
-        "checkpoint_resumable": True,
-        "no_label_leak": bool(report.get("missing_mode") == C.SCORE_MISSING_MODE),
+        "atomic_precision_reported": bool(atomic_ok),
+        "disk_budget_ok": EVID.disk_budget_ok(disk.get("level")),
+        "training_time_log_valid": bool(time_ok),
+        "checkpoint_resumable": bool(resume_ok),
+        "no_label_leak": bool(leak_ok),
         "decision_made": bool(decision["choice"]),
         "shortlist_within_budget": bool(len(shortlist) <= max(int(args.max_shortlist), 0)),
         "rejected_kept_in_registry": bool(all(cid in status_after for cid in rejected)),
@@ -214,6 +219,8 @@ def run(args) -> int:
             "shortlist": shortlist, "rejected": rejected,
             "skipped_immutable": immutable, "dry_run": bool(args.dry_run),
             "checks": checks, "prereg_errors": perrs, "aggregate": agg, "disk": disk,
+            "evidence": {"atomic": atomic_ev, "resumable": resume_ev,
+                         "time_log": time_ev, "leakage": leak_ev},
             "decision_path": str(out_path)}
     write_json(reports / "E9_choice_gate.json", gate)
     print(json.dumps({"stage": "E9/P0", "choice": decision["choice"],

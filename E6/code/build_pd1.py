@@ -77,16 +77,16 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--run-root", default=str(default_run_root()))
     ap.add_argument("--reports-dir", default=str(default_reports_dir()))
     ap.add_argument("--cache-root", default=os.environ.get("V4_CACHE_ROOT") or "")
-    ap.add_argument("--out-dir", default=str(V4 / "experiments" / "E6" / "P2" / "pd1"))
-    ap.add_argument("--models-dir", default=str(V4 / "models" / "E6"))
+    ap.add_argument("--out-dir", default=str(default_run_root() / "E6" / "P2" / "pd1"))
+    ap.add_argument("--models-dir", default=str(env_path("V4_DATA_ROOT", "/data") / "v4" / "models" / "E6"))
     ap.add_argument("--folds", default="all")
     ap.add_argument("--aggregate", default="mean", choices=("mean", "best_fold", "weighted"))
     ap.add_argument("--tau-source", default=None,
                     help="E6_tau_search.json（缺省 $REPORTS/E6_tau_search.json）")
     ap.add_argument("--loss-config", default=str(V4 / "versions" / "configs" / "loss_v1.json"))
     ap.add_argument("--decode-config", default=str(V4 / "versions" / "configs" / "decode_v1.json"))
-    ap.add_argument("--candidates", default=str(V4 / "versions" / "candidates.json"))
-    ap.add_argument("--registry", default=str(V4 / "versions" / "registry.json"))
+    ap.add_argument("--candidates", default=os.environ.get("V4_CANDIDATES") or str(V4 / "versions" / "candidates.json"))
+    ap.add_argument("--registry", default=os.environ.get("V4_REGISTRY") or str(V4 / "versions" / "registry.json"))
     ap.add_argument("--test-dir", default=str(DEFAULT_TEST_DIR))
     ap.add_argument("--prereg", default=None)
     ap.add_argument("--gate-threshold", type=float, default=82.0)
@@ -111,21 +111,26 @@ def load_folds_n() -> int:
 
 
 def check_fold_manifests(ckpts: list[Path]) -> dict:
-    """逐折 manifest 一致性校验（特征名/行标尺/结构/τ 必须一致，否则禁止平均）。"""
+    """逐折 manifest 一致性校验（特征 schema/模型结构必须一致，否则禁止平均）。
+
+    H1 审查修复：`row_scaler` 与 `tau_atom` 是**折内拟合/折内选择**的产物，允许逐折不同。
+    推理端已改为"每个权重用自己的 scaler/tau 推理，再在标签尺度平均"，
+    因此这里只校验真正不能不同的结构信息（feature_names/model）。
+    """
     from src.training import checkpoint as CK
     mans = [CK.read_manifest(p) for p in ckpts]
     ref = mans[0]
     problems = []
     for i, man in enumerate(mans[1:], start=1):
-        for key in ("row_scaler", "feature_names", "model"):
+        for key in ("feature_names", "model"):
             if man.get(key) != ref.get(key):
                 problems.append(f"fold{i} 的 {key} 与 fold0 不一致")
-        if man.get("tau_atom") != ref.get("tau_atom"):
-            problems.append(f"fold{i} 的 tau_atom 与 fold0 不一致")
     return {"n_folds": len(mans), "consistent": not problems, "problems": problems,
             "feature_names": ref.get("feature_names"),
             "model": ref.get("model"), "tau_atom": ref.get("tau_atom"),
+            "taus": [m.get("tau_atom") for m in mans],
             "scalers_fitted_on": ref.get("scalers_fitted_on"),
+            "scalers_fitted": [m.get("row_scaler") for m in mans],
             "manifests": [{"path": str(p), "sha256": sha256_file(p),
                            "manifest_sha256": sha256_file(
                                p.with_suffix(".manifest.json"))}

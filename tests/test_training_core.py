@@ -131,6 +131,23 @@ class TestRunTraining(unittest.TestCase):
         self.assertEqual(hist["stopped_reason"], "time_budget")
         self.assertEqual(hist["n_epochs_run"], 0)
 
+    def test_resume_epoch_and_save_hook_are_wired(self):
+        """H3：resume_epoch 必须真的跳过已完成 epoch，save_hook 必须每 epoch 调用。"""
+        t, data = self._data(n_rows=256)
+        cfg = L.TrainConfig(epochs=5, batch_size=64, patience=99, seed=0, hidden=16,
+                            layers=1, dropout=0.0, amp_dtype="fp32")
+        model = build_model(n_features=F.N_FEATURES, hidden=16, layers=1, dropout=0.0, seed=0)
+        calls: list[int] = []
+
+        def hook(epoch, rec, model_, opt_, sched_):
+            calls.append(int(epoch))
+
+        hist = L.run_training(model, data, cfg, eval_fn=None, keep_best=False,
+                              resume_epoch=2, save_hook=hook)
+        self.assertEqual(calls, [3, 4])
+        self.assertEqual([r["epoch"] for r in hist["epochs"]], [3, 4])
+        self.assertEqual(hist["n_epochs_run"], 2)
+
     def test_early_stop_on_real_score(self):
         t, data = self._data(n_rows=256)
         cfg = L.TrainConfig(epochs=50, batch_size=64, patience=2, seed=0, hidden=16,
@@ -260,6 +277,22 @@ class TestCheckpoint(unittest.TestCase):
             left = sorted(f.name for f in d.glob("*.pt"))
             self.assertEqual(left, ["best.pt", "last.pt", "last_prev.pt"])
             self.assertIn("epoch5.pt", removed)
+
+    def test_scheduler_state_roundtrip(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "last.pt"
+            m = self._model()
+            opt = torch.optim.AdamW(m.parameters(), lr=1e-3)
+            sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=10)
+            sched.step()
+            CK.save_checkpoint(p, m, meta={"epoch": 4}, optimizer=opt, scheduler=sched)
+            m2 = self._model()
+            opt2 = torch.optim.AdamW(m2.parameters(), lr=1e-3)
+            sched2 = torch.optim.lr_scheduler.CosineAnnealingLR(opt2, T_max=10)
+            rr = CK.load_for_resume(p, m2, optimizer=opt2, scheduler=sched2)
+            self.assertEqual(rr["epoch"], 4)
+            self.assertTrue(rr["scheduler_restored"])
+            self.assertAlmostEqual(float(sched2.last_epoch), float(sched.last_epoch))
 
     def test_missing_file_raises(self):
         with tempfile.TemporaryDirectory() as td:

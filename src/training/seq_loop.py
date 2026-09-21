@@ -247,25 +247,63 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
     opt2 = torch.optim.AdamW(model2.parameters(), lr=float(cfg.lr),
                              weight_decay=float(cfg.weight_decay))
     fold_dir = Path(opt.run_dir) / f"fold{fold}" if opt.run_dir is not None else None
+    resume_epoch = -1
+    resume_sched = None
     if fold_dir is not None:
         fold_dir.mkdir(parents=True, exist_ok=True)
+        from ..data.disk_guard import register_cache_dirs, register_cleanup_paths
+        register_cleanup_paths([fold_dir / "last_prev.pt"])
+        register_cache_dirs([Path(cache) / "tmp"])
+        if opt.resume and (fold_dir / "last.pt").is_file():
+            rr = CK.load_for_resume(fold_dir / "last.pt", model2, optimizer=opt2)
+            resume_epoch = int(rr["epoch"])
+            resume_sched = rr.get("scheduler_state")
+
+    save_last_hook = capacity_hook = None
+    if fold_dir is not None and opt.save_checkpoints:
+        state = {"epoch": int(resume_epoch)}
+
+        def _meta(ep: int) -> dict[str, Any]:
+            return {"stage": opt.scaler_prefix, "arch": opt.arch, "fold": fold,
+                    "phase": "final", "epoch": int(ep), "n_epochs_run": int(ep) + 1,
+                    "best_epoch_from_inner": int(best_epoch),
+                    "inner_oof_total": hist1["best_total"], "tau_atom": tau_info["tau"],
+                    "target_scalers": dict(target), "config": cfg.as_dict(),
+                    "row_scaler": scaler.to_dict(), "arch_kwargs": arch_kwargs,
+                    "feature_spec": opt.spec.as_dict() if opt.spec else None}
+
+        def save_last(epoch: int, rec: dict, model, opt_, sched_) -> None:
+            state["epoch"] = int(epoch)
+            if (fold_dir / "last.pt").is_file():
+                CK.rotate(fold_dir)
+            CK.save_checkpoint(fold_dir / "last.pt", model, meta=_meta(epoch),
+                               optimizer=opt_, scheduler=sched_)
+
+        def save_on_disk_pressure() -> None:
+            ep = int(state["epoch"])
+            if (fold_dir / "last.pt").is_file():
+                CK.rotate(fold_dir)
+            CK.save_checkpoint(fold_dir / "last.pt", model2, meta=_meta(ep), optimizer=opt2)
+
+        save_last_hook = save_last
+        capacity_hook = save_on_disk_pressure
+
     hist2 = _train_loop(model2, ds_all, cfg2, eval_fn=None, opt=opt, dev=dev,
                         scaler_params=target, logger=None, on_epoch=opt.on_final_epoch,
-                        optimizer=opt2, keep_best=False)
+                        optimizer=opt2, keep_best=False, resume_epoch=resume_epoch,
+                        resume_scheduler_state=resume_sched,
+                        save_hook=save_last_hook, capacity_hook=capacity_hook)
 
     resumable = {"ok": False, "skipped": True}
     if fold_dir is not None and opt.save_checkpoints:
-        from . import fold_runner as _FR
-        meta = {"stage": opt.scaler_prefix, "arch": opt.arch, "fold": fold, "phase": "final",
-                "epoch": cfg2.epochs - 1, "best_epoch_from_inner": int(best_epoch),
-                "inner_oof_total": hist1["best_total"], "tau_atom": tau_info["tau"],
-                "target_scalers": dict(target), "config": cfg.as_dict(),
-                "row_scaler": scaler.to_dict(), "arch_kwargs": arch_kwargs,
-                "feature_spec": opt.spec.as_dict() if opt.spec else None}
-        CK.rotate(fold_dir)
-        CK.save_checkpoint(fold_dir / "last.pt", model2, meta=meta, optimizer=opt2)
+        actual_epoch = (int(hist2["epochs"][-1]["epoch"]) if hist2["epochs"]
+                        else int(resume_epoch))
+        meta = _meta(actual_epoch)
+        meta["n_epochs_run"] = int(hist2["n_epochs_run"])
+        if not (fold_dir / "last.pt").is_file():
+            CK.save_checkpoint(fold_dir / "last.pt", model2, meta=meta, optimizer=opt2)
         CK.save_checkpoint(fold_dir / "best.pt", model2, meta=meta)
-        CK.rotate(fold_dir)
+        CK.prune_keep_only(fold_dir, ("best.pt", "last.pt", "last_prev.pt"))
         resumable = CK.verify_resumable(fold_dir / "best.pt", _mk)
 
     # ---- outer-val 只推理一次（分块 + 拼接）
@@ -301,7 +339,9 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
 
 def _train_loop(model, ds, cfg: L.TrainConfig, eval_fn, opt: SeqOptions, dev,
                 scaler_params: dict, logger=None, on_epoch=None, optimizer=None,
-                keep_best: bool = True) -> dict[str, Any]:
+                keep_best: bool = True, resume_epoch: int = -1,
+                resume_scheduler_state: dict | None = None,
+                save_hook=None, capacity_hook=None) -> dict[str, Any]:
     """序列版训练循环（与 `loop.run_training` 同语义：真实评分早停 + best 权重写回）。"""
     require("torch")
     import torch
@@ -311,13 +351,18 @@ def _train_loop(model, ds, cfg: L.TrainConfig, eval_fn, opt: SeqOptions, dev,
                                        weight_decay=float(cfg.weight_decay))
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(o, T_max=max(int(cfg.epochs), 1),
                                                        eta_min=float(cfg.lr_min))
+    if resume_scheduler_state:
+        try:
+            sched.load_state_dict(resume_scheduler_state)
+        except Exception:
+            pass
     t0 = time.time()
     hist: list[dict[str, Any]] = []
     best = {"epoch": -1, "total": float("-inf")}
     best_state = None
     n_bad = 0
     stopped = "completed"
-    for epoch in range(int(cfg.epochs)):
+    for epoch in range(int(resume_epoch) + 1, int(cfg.epochs)):
         if cfg.time_budget_h is not None and (time.time() - t0) > cfg.time_budget_h * 3600:
             stopped = "time_budget"
             break
@@ -340,6 +385,8 @@ def _train_loop(model, ds, cfg: L.TrainConfig, eval_fn, opt: SeqOptions, dev,
         hist.append(rec)
         if on_epoch is not None:
             on_epoch(epoch, rec)
+        if save_hook is not None:
+            save_hook(epoch, rec, model, o, sched)
         if logger is not None:
             vals = {"loss/total": rec.get("total", float("nan")), "lr": rec["lr"]}
             for k in ("align", "aux", "joint", "atom"):
@@ -348,7 +395,7 @@ def _train_loop(model, ds, cfg: L.TrainConfig, eval_fn, opt: SeqOptions, dev,
             if eval_fn is not None:
                 vals["score/inner_oof_total"] = rec.get("val_total", 0.0)
             logger.scalars(vals, step=epoch)
-        L.check_disk(cfg)
+        L.check_disk(cfg, capacity_hook=capacity_hook)
         if eval_fn is not None and n_bad >= int(cfg.patience):
             stopped = "early_stop"
             break

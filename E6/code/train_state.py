@@ -314,7 +314,7 @@ def run(args) -> int:
     fold_records, ckpts = [], []
     # E6/P1（search_tau.py）需要**内折 OOF**：τ 只能在内折上选，因此这里把它落盘
     oof = {"cont": [], "q_atom": [], "q_joint": [], "y_true": [], "mask": [],
-           "fold_of_row": [], "well_index": [], "tau_row": []}
+           "y_atom": [], "fold_of_row": [], "well_index": [], "tau_row": []}
     oof_wells: list[str] = []
     # E6/P2（build_pd1.py）需要**外折 OOF**：每折 val 只推理一次，用于 cv.json 与 OOF 汇总
     oof_out = {"cont": [], "q_atom": [], "q_joint": [], "y_true": [], "mask": [],
@@ -401,6 +401,7 @@ def run(args) -> int:
         oof["q_joint"].append(np.asarray(pred_in["q_joint"], dtype="float64").reshape(-1))
         oof["y_true"].append(np.asarray(lin["y"], dtype="float64"))
         oof["mask"].append(np.asarray(lin["mask"], dtype="float64"))
+        oof["y_atom"].append(np.asarray(lin["y_atom"], dtype="float64"))
         oof["fold_of_row"].append(np.full(int(np.asarray(lin["y"]).shape[0]), k))
         oof["tau_row"].append(np.tile(tau[None, :], (int(np.asarray(lin["y"]).shape[0]), 1)))
         oof["well_index"].append(np.asarray(t_in_va.well_index, dtype="int64")
@@ -622,9 +623,40 @@ def run(args) -> int:
         "no_atom_continuous_interpolation": all_interp_ok,
         "input_no_label_leak_full": bool(audit["ok"]),
     }
+    # H4：P0 的 delta 不是占位 0.0，而是对外的 OOF gated total 相对 CONST
+    # 的按井配对自助 CI（与 E6/code/gate.py 的 P2 口径同源）。
+    delta = paired_ci_low = None
+    delta_error = None
+    if report.get("oof_path"):
+        try:
+            with np.load(report["oof_path"], allow_pickle=True) as z:
+                oo = {kk: z[kk] for kk in z.files}
+            y_o = np.asarray(oo["y_true"], dtype="float64")
+            p_o = np.asarray(oo["gated"], dtype="float64")
+            m_o = np.asarray(oo["mask"], dtype="float64")
+            w_o = np.asarray(oo["well_index"], dtype="int64")
+            nw = int(w_o.max()) + 1 if y_o.shape[0] else 0
+            const_o = np.tile([C.ATOM_VALUES[t] for t in C.TARGETS], (y_o.shape[0], 1))
+            d_o = np.full(nw, np.nan, dtype="float64")
+            rows_o = np.zeros(nw, dtype="float64")
+            for iw in range(nw):
+                sw = w_o == iw
+                rows_o[iw] = float(sw.sum())
+                if sw.any():
+                    d_o[iw] = (M.score_of(y_o[sw], p_o[sw], m_o[sw])["total"]
+                               - M.score_of(y_o[sw], const_o[sw], m_o[sw])["total"])
+            ok = ~np.isnan(d_o)
+            if ok.any():
+                boot = FOLDS.bootstrap_ci(d_o[ok], iters=1000, weights=rows_o[ok], seed=42)
+                delta = float(boot["point"])
+                paired_ci_low = float(boot["ci_low"])
+        except Exception as exc:                         # noqa: BLE001
+            delta_error = f"{type(exc).__name__}: {exc}"
+    if delta_error:
+        report["delta_error"] = delta_error
     result = {"checks": checks, "score": report["state_auc"], "auc": report["state_auc"],
-              "delta": 0.0 if fold_records else None,
-              "paired_ci_low": 0.0 if fold_records else None,
+              "delta": delta, "paired_ci_low": paired_ci_low,
+              "delta_source": "oof_gated_vs_CONST_per_well_bootstrap",
               "atom_acc": min_acc, "atom_recall": min_recall,
               "joint_atom_auc": (float(np.mean(report["joint_atom_auc"]))
                                  if report["joint_atom_auc"] else None)}

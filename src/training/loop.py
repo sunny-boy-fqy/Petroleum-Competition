@@ -228,10 +228,15 @@ def predict_torch(model, data: TorchFold, cfg: TrainConfig) -> dict[str, Any]:
     return pred
 
 
-def check_disk(cfg: TrainConfig, verbose: bool = False) -> dict[str, Any]:
-    """每个 epoch 的磁盘余量检查（E1/P1 §5 步 2）。"""
+def check_disk(cfg: TrainConfig, verbose: bool = False, capacity_hook=None) -> dict[str, Any]:
+    """每个 epoch 的磁盘余量检查（E1/P1 §5 步 2）。
+
+    H3 审查修复：`capacity_hook` 必须真正接进 `assert_disk_headroom`；
+    磁盘低于 save_and_exit 线时先保存 last.pt 再抛错，`--resume` 才有东西可续。
+    """
     from ..data.disk_guard import assert_disk_headroom, disk_report
-    assert_disk_headroom(float(cfg.min_free_gb), path=cfg.disk_path, verbose=verbose)
+    assert_disk_headroom(float(cfg.min_free_gb), path=cfg.disk_path, verbose=verbose,
+                         capacity_hook=capacity_hook)
     return disk_report(cfg.disk_path)
 
 
@@ -239,8 +244,11 @@ def run_training(model, data: TorchFold, cfg: TrainConfig,
                  eval_fn: Callable[[Any], dict[str, Any]] | None = None,
                  on_epoch: Callable[[int, dict[str, Any]], None] | None = None,
                  optimizer=None, resume_epoch: int = -1,
+                 resume_scheduler_state: dict[str, Any] | None = None,
                  scaler_params: dict[str, Any] | None = None,
-                 keep_best: bool = True) -> dict[str, Any]:
+                 keep_best: bool = True,
+                 save_hook: Callable[[int, dict[str, Any], Any, Any, Any], None] | None = None,
+                 capacity_hook: Callable[[], None] | None = None) -> dict[str, Any]:
     """训练 `cfg.epochs` 个 epoch；每个 epoch 用 `eval_fn` 拿**真实分数**做早停。
 
     eval_fn(model) -> dict，至少含 `total`（越高越好）。
@@ -258,6 +266,11 @@ def run_training(model, data: TorchFold, cfg: TrainConfig,
                                          weight_decay=float(cfg.weight_decay))
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(
         opt, T_max=max(int(cfg.epochs), 1), eta_min=float(cfg.lr_min))
+    if resume_scheduler_state:
+        try:
+            sched.load_state_dict(resume_scheduler_state)
+        except Exception:                              # 旧 checkpoint 无 scheduler 时允许没有
+            pass
     gen = torch.Generator(device=device)
     gen.manual_seed(int(cfg.seed))
 
@@ -290,8 +303,11 @@ def run_training(model, data: TorchFold, cfg: TrainConfig,
         hist.append(rec)
         if on_epoch is not None:
             on_epoch(epoch, rec)
+        if save_hook is not None:
+            save_hook(epoch, rec, model, opt, sched)
         try:
-            rec["disk_free_gb"] = round(float(check_disk(cfg)["free_gb"]), 3)
+            rec["disk_free_gb"] = round(float(check_disk(
+                cfg, capacity_hook=capacity_hook)["free_gb"]), 3)
         except Exception as exc:                      # 磁盘检查失败不静默：记录原因
             rec["disk_error"] = str(exc)
             raise

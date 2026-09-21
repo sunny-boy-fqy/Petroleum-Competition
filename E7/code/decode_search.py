@@ -67,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--reports-dir", default=env_path("V4_REPORTS_DIR",
                     str(env_path("V4_DATA_ROOT", "/data") / "v4" / "reports")).__str__())
     ap.add_argument("--out-config", default=str(V4 / "versions" / "configs" / "decode_v1.json"))
-    ap.add_argument("--candidates", default=str(V4 / "versions" / "candidates.json"))
+    ap.add_argument("--candidates", default=os.environ.get("V4_CANDIDATES") or str(V4 / "versions" / "candidates.json"))
     ap.add_argument("--prereg", default=None)
     ap.add_argument("--baseline-oof", default=None)
     ap.add_argument("--expected-decode", default="on", choices=("on", "off"))

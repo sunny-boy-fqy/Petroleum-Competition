@@ -102,9 +102,11 @@ def predict_pd1(test_dir: Path, info: dict, batch_size: int = 65536,
                 device: str = "cpu") -> tuple[list, dict]:
     """纯 DL 管线推理（**CPU 主路径**）：manifest → 权重 → 逐井解码 → 提交载荷。
 
-    * 特征变换与训练**逐位同源**：`build_row_features` + 折内 `RowScaler`（从 manifest 读回）；
-    * `missing` 由 `~isfinite(inputs)` 现场导出（与写分片缓存时的口径完全一致）；
-    * 原子硬切换用 manifest 里的 `tau_atom`（若训练时选了 τ）；SW 只做 [0,100] 软裁剪。
+    折集成语义（H1 审查修复）
+    ------------------------
+    每个折权重都用**自己的 manifest 中的 row_scaler/tau_atom** 做特征标准化与原子门控，
+    然后在**标签尺度**平均最终预测。这样不同折可以用各自折内拟合的标尺（这正是
+    "每折只用自己的训练井"纪律的结果），不会再把 fold0 的 scaler 强加到所有折上。
     """
     import numpy as np
 
@@ -116,39 +118,45 @@ def predict_pd1(test_dir: Path, info: dict, batch_size: int = 65536,
     ckpts = _resolve_checkpoints(info)
     manifests = [PR.load_manifest(c) for c in ckpts]
     ref = manifests[0]
-    # 折集成的硬前提：所有折的**标尺与特征口径必须一致**，否则"平均"没有意义
+    ref_names = list(ref.raw.get("feature_names", []))
+    # 折集成只需要结构一致（模型/特征 schema/特征宽度）。row_scaler 允许因折而异，
+    # 因为每个模型在推理时都使用与训练时同源的折内 scaler。
     for i, man in enumerate(manifests[1:], start=1):
-        if man.raw.get("row_scaler") != ref.raw.get("row_scaler"):
-            raise SystemExit(f"[predict] 折 {i} 的 row_scaler 与 fold0 不一致，禁止平均")
-        if list(man.raw.get("feature_names", [])) != list(ref.raw.get("feature_names", [])):
+        if list(man.raw.get("feature_names", [])) != ref_names:
             raise SystemExit(f"[predict] 折 {i} 的 feature_names 与 fold0 不一致，禁止平均")
+        if man.raw.get("model") != ref.raw.get("model"):
+            raise SystemExit(f"[predict] 折 {i} 的模型结构与 fold0 不一致，禁止平均")
     taus = [man.tau_atom for man in manifests]
-    if len(ckpts) > 1 and any(t != taus[0] for t in taus[1:]):
-        raise SystemExit(f"[predict] 折间 tau_atom 不一致：{taus}（不允许静默取第一折）")
+    has_tau = [t is not None for t in taus]
+    if has_tau and any(h != has_tau[0] for h in has_tau):
+        raise SystemExit(f"[predict] 折间 tau_atom 存在/缺失状态不一致：{taus}")
     models = [PR.load_model(c, man, device=device) for c, man in zip(ckpts, manifests)]
-    tau = taus[0]
+
     per_well: dict = {}
     n_rows = 0
     for rec in _P.load_split(test_dir, with_targets=False):
         inputs = np.asarray(rec.inputs, dtype="float32")
         depth = np.asarray(rec.depth, dtype="float32")
         missing = (~np.isfinite(inputs)).astype("int8")
-        X = ref.row_scaler.transform(F.build_row_features(inputs, missing, depth))
+        X_raw = F.build_row_features(inputs, missing, depth)
         acc = None
-        for model in models:
+        for model, man in zip(models, manifests):
+            X = man.row_scaler.transform(X_raw)
             out = PR.predict_x(model, X, batch_size=batch_size, device=device)
-            cur = np.column_stack([out["por"], out["perm_z"], out["sw"], out["q_atom"]])
-            acc = cur if acc is None else acc + cur
-        acc = acc / float(len(models))                    # 折平均（连续头 + 门控概率）
-        out_avg = {"por": acc[:, 0], "perm_z": acc[:, 1], "sw": acc[:, 2], "q_atom": acc[:, 3:]}
-        cont = M.decode_continuous(out_avg)
-        pred = M.atom_gate(cont, out_avg["q_atom"], tau) if tau is not None else cont
-        per_well[rec.well_id] = {"depth": depth, "pred": pred}
-        n_rows += int(X.shape[0])
+            cont = M.decode_continuous(out)
+            tau = man.tau_atom
+            pred = M.atom_gate(cont, out["q_atom"], tau) if tau is not None else cont
+            pred = np.asarray(pred, dtype="float64")
+            acc = pred if acc is None else acc + pred
+        acc = acc / float(len(models))                    # 折平均（标签尺度，已各自门控）
+        per_well[rec.well_id] = {"depth": depth, "pred": acc}
+        n_rows += int(X_raw.shape[0])
     payload_data = PR.build_payload(per_well, model_name="v4-PD1")
     return payload_data["resultData"], {"checkpoints": [str(c) for c in ckpts],
                                         "n_folds": len(ckpts), "n_rows": n_rows,
-                                        "n_wells": len(per_well), "tau_atom": tau,
+                                        "n_wells": len(per_well),
+                                        "tau_atom": taus[0], "taus": taus,
+                                        "per_fold_scaler": True,
                                         "device": device,
                                         "aggregate": ("single" if len(ckpts) == 1
                                                       else "fold_mean")}

@@ -226,7 +226,9 @@ def run(args) -> int:
               "manifest": str(manifest_path),
               "reason": (exec_result.get("reason") if not exec_result.get("exists")
                          else diff.get("error")),
-              "checks": {"v1_sources_present": True, "package_built": bool(out_zip.is_file()),
+              "checks": {"v1_sources_present": bool(origin.get("path") and (
+                                 origin.get("sha256") or Path(origin["path"]).exists())),
+                         "package_built": bool(out_zip.is_file()),
                          "clean_dir_reproduce": bool(exec_result.get("returncode") == 0),
                          "point_diff_ok": bool(max_diff is not None
                                                and max_diff <= float(args.point_tol)),

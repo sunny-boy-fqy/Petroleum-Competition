@@ -147,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="要做单组消融的组（逗号分隔）")
     ap.add_argument("--augment", action="store_true",
                     help="额外跑一次 增强开/关 的消融（E2/P2 §7）")
-    ap.add_argument("--candidates", default=str(V4 / "versions" / "candidates.json"))
+    ap.add_argument("--candidates", default=os.environ.get("V4_CANDIDATES") or str(V4 / "versions" / "candidates.json"))
     args = ap.parse_args(argv)
 
     if not HAS_TORCH:

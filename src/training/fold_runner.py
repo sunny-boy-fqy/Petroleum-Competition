@@ -246,32 +246,69 @@ def run_two_phase_fold(fold: int, folds: dict, cache: str | Path, cfg: L.TrainCo
                              weight_decay=float(cfg.weight_decay))
     fold_dir = Path(opt.run_dir) / f"fold{fold}" if opt.run_dir is not None else None
     resume_epoch = -1
+    resume_sched = None
     if fold_dir is not None:
         fold_dir.mkdir(parents=True, exist_ok=True)
+        # M6：把旧 checkpoint 与临时缓存登记给 disk_guard，低磁盘时自动清理。
+        from ..data.disk_guard import register_cache_dirs, register_cleanup_paths
+        register_cleanup_paths([fold_dir / "last_prev.pt"])
+        register_cache_dirs([Path(cache) / "tmp"])
         if opt.resume and (fold_dir / "last.pt").is_file():
             rr = CK.load_for_resume(fold_dir / "last.pt", model2, optimizer=opt2)
-            resume_epoch = rr["epoch"]
+            resume_epoch = int(rr["epoch"])
+            resume_sched = rr.get("scheduler_state")
+    save_last_hook = None
+    capacity_hook = None
+    if fold_dir is not None and opt.save_checkpoints:
+        state = {"epoch": int(resume_epoch)}
+
+        def _meta(ep: int) -> dict[str, Any]:
+            return {"stage": opt.scaler_prefix, "fold": fold, "phase": "final",
+                    "epoch": int(ep), "n_epochs_run": int(ep) + 1,
+                    "best_epoch_from_inner": int(best_epoch),
+                    "inner_oof_total": hist1["best_total"],
+                    "tau_atom": [float(t) for t in tau_info["tau"]],
+                    "model": {"n_features": n_features, "hidden": cfg.hidden,
+                              "layers": cfg.layers, "dropout": cfg.dropout},
+                    "target_scalers": dict(target), "config": cfg.as_dict(), "seed": cfg.seed,
+                    "row_scaler": scaler.to_dict(),
+                    "feature_spec": spec.as_dict() if spec is not None else None,
+                    "physics_params": phys.as_dict() if phys is not None else None}
+
+        def save_last(epoch: int, rec: dict, model, opt_, sched_) -> None:
+            state["epoch"] = int(epoch)
+            if (fold_dir / "last.pt").is_file():
+                CK.rotate(fold_dir)                # 先把上一版 last.pt 轮成 last_prev.pt
+            CK.save_checkpoint(fold_dir / "last.pt", model, meta=_meta(epoch),
+                               optimizer=opt_, scheduler=sched_)
+
+        def save_on_disk_pressure() -> None:
+            ep = int(state["epoch"])
+            if (fold_dir / "last.pt").is_file():
+                CK.rotate(fold_dir)
+            CK.save_checkpoint(fold_dir / "last.pt", model2, meta=_meta(ep), optimizer=opt2)
+
+        save_last_hook = save_last
+        capacity_hook = save_on_disk_pressure
+
     hist2 = L.run_training(model2, tr_t, cfg2, eval_fn=None, optimizer=opt2,
-                           resume_epoch=resume_epoch, scaler_params=target, keep_best=False,
-                           on_epoch=opt.on_final_epoch)
+                           resume_epoch=resume_epoch,
+                           resume_scheduler_state=resume_sched,
+                           scaler_params=target, keep_best=False,
+                           on_epoch=opt.on_final_epoch,
+                           save_hook=save_last_hook, capacity_hook=capacity_hook)
     del tr_t, tr_all
 
     resumable = {"ok": False, "skipped": True}
     if fold_dir is not None and opt.save_checkpoints:
-        meta = {"stage": opt.scaler_prefix, "fold": fold, "phase": "final",
-                "epoch": cfg2.epochs - 1, "best_epoch_from_inner": int(best_epoch),
-                "inner_oof_total": hist1["best_total"],
-                "tau_atom": [float(t) for t in tau_info["tau"]],
-                "model": {"n_features": n_features, "hidden": cfg.hidden,
-                          "layers": cfg.layers, "dropout": cfg.dropout},
-                "target_scalers": dict(target), "config": cfg.as_dict(), "seed": cfg.seed,
-                "row_scaler": scaler.to_dict(),
-                "feature_spec": spec.as_dict() if spec is not None else None,
-                "physics_params": phys.as_dict() if phys is not None else None}
-        CK.rotate(fold_dir)
-        CK.save_checkpoint(fold_dir / "last.pt", model2, meta=meta, optimizer=opt2)
+        actual_epoch = (int(hist2["epochs"][-1]["epoch"]) if hist2["epochs"]
+                        else int(resume_epoch))
+        meta = _meta(actual_epoch)
+        meta["n_epochs_run"] = int(hist2["n_epochs_run"])
+        if not (fold_dir / "last.pt").is_file():
+            CK.save_checkpoint(fold_dir / "last.pt", model2, meta=meta, optimizer=opt2)
         CK.save_checkpoint(fold_dir / "best.pt", model2, meta=meta)
-        CK.rotate(fold_dir)
+        CK.prune_keep_only(fold_dir, ("best.pt", "last.pt", "last_prev.pt"))
         resumable = CK.verify_resumable(
             fold_dir / "best.pt",
             lambda: build_model(n_features=n_features, hidden=cfg.hidden, layers=cfg.layers,

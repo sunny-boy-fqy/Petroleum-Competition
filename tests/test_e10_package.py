@@ -116,6 +116,32 @@ class TestBuildSubmission(unittest.TestCase):
         self.assertFalse((self.root / "sub.zip").is_file())
         self.assertFalse((self.root / "manifest.json").is_file())
 
+    def test_pack_contains_bundled_relative_registry(self):
+        """C1 回归：提交包必须自带 versions/registry.json，且 checkpoint 相对包根。"""
+        self._run("--smoke")
+        with zipfile.ZipFile(self.root / "sub.zip") as zf:
+            names = zf.namelist()
+            self.assertIn("versions/registry.json", names)
+            doc = json.loads(zf.read("versions/registry.json").decode("utf-8"))
+        info = doc["versions"]["PD1"]
+        self.assertTrue(info["available"])
+        ckpts = [info["checkpoint"], *info.get("checkpoints", [])]
+        self.assertTrue(ckpts)
+        for ck in ckpts:
+            self.assertFalse(Path(ck).is_absolute(), ck)
+            self.assertIn(ck, names)
+        self.assertEqual(doc["latest"], "PD1")
+        # 解压后直接跑包内 predict.py 的版本表路径：证明它读的是包内注册表。
+        with tempfile.TemporaryDirectory() as td:
+            with zipfile.ZipFile(self.root / "sub.zip") as zf:
+                zf.extractall(td)
+            out = subprocess.run([sys.executable, str(Path(td) / "predict.py"),
+                                  "--list-versions"], cwd=td, capture_output=True,
+                                 text=True, timeout=120)
+            self.assertEqual(out.returncode, 0, out.stderr[-500:])
+            self.assertIn("PD1", out.stdout)
+            self.assertIn("可用: ['CONST', 'PD1']", out.stdout)
+
     def test_help(self):
         out = subprocess.run([sys.executable, str(BUILD), "--help"], capture_output=True,
                              text=True, timeout=120)

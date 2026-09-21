@@ -103,7 +103,21 @@ def export(args) -> dict:
                      "source": str(ckpt), "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                      "bytes": int(fp32_path.stat().st_size)}
     write_json(fp32_path.with_suffix(".manifest.json"), fp32_manifest)
-    write_json(out_dir / "final_manifest.json", fp32_manifest)
+    # E10/P0 fold_ensemble 会先在 out_dir/final_manifest.json 写入 weights 列表；
+    # 这里不能用一个单权重 manifest 覆盖它，否则 build_submission 无法识别全部折。
+    final_manifest_path = out_dir / "final_manifest.json"
+    existing = None
+    if final_manifest_path.is_file():
+        try:
+            existing = json.loads(final_manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            existing = None
+    if isinstance(existing, dict) and isinstance(existing.get("weights"), list)             and existing["weights"]:
+        existing["fp32_export"] = fp32_manifest
+        existing["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        write_json(final_manifest_path, existing)
+    else:
+        write_json(final_manifest_path, fp32_manifest)
 
     # ---- npz 权重要点清单（键名/形状/dtype/逐键 sha256）
     npz_path = None
@@ -169,6 +183,11 @@ def run(args) -> int:
         return 5
     result = export(args)
     ok = result.get("status") == "ok"
+    try:
+        from src.data.disk_guard import disk_report
+        disk = disk_report(args.out)
+    except Exception as exc:
+        disk = {"level": "unknown", "error": str(exc)}
     checks = {
         "cpu_inference_ok": bool(ok),
         "deterministic_output": bool(ok and result["deterministic"]["ok"]),
@@ -176,12 +195,12 @@ def run(args) -> int:
         "npz_manifest_written": bool(ok and result.get("npz_path")),
         "max_minutes": bool(ok and result["minutes"] <= MAX_MINUTES),
         "max_memory_gb": bool(ok and result["memory_gb"] <= MAX_MEMORY_GB),
-        "disk_budget_ok": True,
+        "disk_budget_ok": bool(disk.get("level") == "ok"),
     }
     report = {"stage": "E10", "p_stage": "P0-export", "ckpt": args.ckpt,
               "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
               "exploratory": bool(args.exploratory),
-              "result": result, "checks": checks,
+              "result": result, "checks": checks, "disk": disk,
               "thresholds": {"max_minutes": MAX_MINUTES, "max_memory_gb": MAX_MEMORY_GB},
               "passed": (None if (args.smoke or args.exploratory) else bool(all(checks.values())))}
     out = Path(args.json) if args.json else reports / "E10_export.json"

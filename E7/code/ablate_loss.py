@@ -112,7 +112,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--pos-weight", type=float, default=1.0)
     ap.add_argument("--alpha-nonjoint", type=float, default=1.0)
     ap.add_argument("--out-config", default=str(V4 / "versions" / "configs" / "loss_v1.json"))
-    ap.add_argument("--candidates", default=str(V4 / "versions" / "candidates.json"))
+    ap.add_argument("--candidates", default=os.environ.get("V4_CANDIDATES") or str(V4 / "versions" / "candidates.json"))
     ap.add_argument("--prereg", default=None)
     ap.add_argument("--gate-threshold", type=float, default=78.0)
     ap.add_argument("--tag", default="")
