@@ -125,7 +125,7 @@ git archive --format=zip --prefix='' -o dist/v4_code_src.zip HEAD
 
 | 阶段 | 启动命令 | 建议时长（软预算） | 产出 |
 |---|---|---|---|
-| **E1→E10 全链路** | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode all [--through N]` | 数十小时（受平台 7×24h 限制，需拆任务） | `/data/v4/{runs,reports,state,logs}`；`--through 1~14` 指定跑到第几个任务；已完成任务自动跳过，`--fresh` 强制重跑；进度见 `/data/v4/state/all_pipeline_progress.json` |
+| **E1→E10 全链路** | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode all [--through N]` | 数十小时（受平台 7×24h 限制，需拆任务） | `$V4_LOCAL_ROOT/v4/{runs,reports,state,logs}` 本地；最终模型 `/data/v4/final`；`--through 1~14` 指定跑到第几个任务；已完成任务自动跳过，`--fresh` 强制重跑；进度见 `/data/v4/state/all_pipeline_progress.json` |
 
 > `--through N` 的 1~14 任务映射：
 > 1 env、2 data、3 e0、4 E1、5 E2、6 E3-main、7 E3-ablation、8 E4、
@@ -155,7 +155,7 @@ bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage
 | 单次任务时长 | ≤ 7×24 h | 需 `--resume` 支持拆分 |
 | 本地上传代码包 | ≤ 500 MB 且禁含权重/大数据集 | v4 用 git 仓库 + 云盘数据 |
 | 云盘持久目录 | `/data` | 所有产物写这里 |
-| 代码目录 | `/code/workspace`（临时） | 不写任何需要保留的东西 |
+| 代码目录 | `/code/workspace` | 训练期 runtime 也放 `$V4_LOCAL_ROOT/v4/*`；最终模型 publish 到 `/data` |
 | 镜像数量上限 | 5 个 | 只建 1 个训练镜像 |
 | 镜像场景 | 开发机 / 训练任务互不通用 | 建「训练任务」场景 |
 | 停止任务后续跑 | 不支持，只能【重新训练】 | 依赖 checkpoint + `--resume` |

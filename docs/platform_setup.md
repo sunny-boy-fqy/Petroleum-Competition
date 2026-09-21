@@ -50,10 +50,10 @@
 ```
 本机（开发机，无 GPU）                     云端（Intern InkStone）
 ├── 写代码、跑口径层单测                    ├── /code/workspace/<仓库名>/  ← git clone（临时！）
-├── tools/pack_dataset.py 生成 31 MB 数据包  ├── /workspace/v4/data/         ← 本地高速盘（训练期）
-└── git push                               ├── /workspace/v4/cache/        ← 本地高速盘（训练期）
-                                           ├── /workspace/v4/runs/         ← 本地 checkpoint/OOF
-                                           ├── /workspace/v4/reports/      ← 本地 Gate 报告
+├── tools/pack_dataset.py 生成 31 MB 数据包  ├── $V4_LOCAL_ROOT/v4/data/    ← 本地高速盘（训练期）
+└── git push                               ├── $V4_LOCAL_ROOT/v4/cache/   ← 本地高速盘（训练期）
+                                           ├── $V4_LOCAL_ROOT/v4/runs/    ← 本地 checkpoint/OOF
+                                           ├── $V4_LOCAL_ROOT/v4/reports/ ← 本地 Gate 报告
                                            └── /data/v4/final/            ← 网络盘：最终模型
 ```
 
@@ -61,7 +61,7 @@
 
 | 变量 | 默认 | 用途 |
 |---|---|---|
-| `V4_LOCAL_ROOT` | 自动：`/workspace` 或 `$HERE/.v4_runtime` | 本地高速盘运行时根 |
+| `V4_LOCAL_ROOT` | 自动：`/code/workspace`，回退 `/workspace` / `$HERE/.v4_runtime` | 本地高速盘运行时根 |
 | `V4_NETWORK_ROOT` | `/data` | 网络盘：只读 tarball + 最终模型回写 |
 | `V4_DATA_ROOT` | `$V4_LOCAL_ROOT` | 训练期数据根；数据位于 `$V4_DATA_ROOT/v4/data/{train,test}` |
 | `V4_RUN_ROOT` | `$V4_DATA_ROOT/v4/runs` | checkpoint / OOF（本地） |
@@ -217,8 +217,7 @@ git log --oneline -1                     # 记下这个 revision —— 平台�
 
 ## 五、云盘 30 GB 的实测纪律（重要）
 
-平台给出的 **30 GB** 是**云盘（`/data`）的持久化配额**，而 `/code/workspace`（临时代码）与 `/data`（云盘）
-是否在同一文件系统**必须实测确认**，不能假设。第一个任务（`--mode env`）就会打印 `df -h` 结果。
+平台给出的 **30 GB** 是**云盘（`/data`）的持久化配额**；训练期大产物现在写本地 `$V4_LOCAL_ROOT/v4/*`，不再写 `/data`。第一个任务（`--mode env`）就会打印 `df -h` 结果。
 
 ```bash
 df -h / /data /code/workspace        # 运行任务时看，确认容量与是否同一挂载点
@@ -287,7 +286,7 @@ with RunLogger(f"E3_unet_fold{fold}") as log:
 | `/data/v4/final/` | 训练结束后 publish 的最终模型（网络盘） |
 | `/data/v4/tb/` | TensorBoard 事件文件 + JSONL |
 
-**禁止**把上述任何内容写到 `/code/workspace`（临时目录，任务结束即丢）。
+**网络盘只保留** `/data/v4_data.tar.gz`、`/data/v4/final/`、`/data/v4/submission/` 和小体积进度 JSON。
 
 ## 六、注意事项与已知坑
 
@@ -328,7 +327,7 @@ with RunLogger(f"E3_unet_fold{fold}") as log:
    **零歧义探针**（不含任何 `$( )`、`|`、引号，长度 <200，排除命令解析因素）：
 
    ```bash
-   pwd; ls -la; ls -la /code/workspace; find /code/workspace -maxdepth 3 -name run_train.sh; ls -la /data; ls -la /data/v4/logs 2>/dev/null; python -V
+   pwd; ls -la; ls -la /code/workspace; find /code/workspace -maxdepth 3 -name run_train.sh; ls -la /data; ls -la "$V4_LOCAL_ROOT/v4/logs" 2>/dev/null; python -V
    ```
 
    **2×2 判定法**（两件事各做一次，5 分钟内出结论）：

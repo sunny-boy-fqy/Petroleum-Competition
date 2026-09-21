@@ -61,5 +61,6 @@ reports/*.csv
 .venv-torch/
 .v4cache/
 
-# ---- 本地运行时回退根（/workspace 不存在时使用）----
+# ---- 本地运行时（/code/workspace 直接作为仓库根时）----
+/v4/
 .v4_runtime/

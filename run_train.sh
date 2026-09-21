@@ -43,7 +43,7 @@
 #   * TensorBoard：导出 TENSORBOARD_LOGDIR=$V4_DATA_ROOT/v4/tb，
 #     训练脚本用 src/training/tb_logger.py::RunLogger 写指标，平台任务详情页可见曲线。
 #   * 本地高速盘：训练期数据/缓存/checkpoint/报告/日志全部写到 `$V4_LOCAL_ROOT/v4/*`
-#     （默认自动选择 /workspace、/code/workspace 或 /tmp/v4_local，**不写网络盘 /data**）。
+#     （默认优先 /code/workspace，再回退 /workspace 或 $HERE/.v4_runtime，**不写网络盘 /data**）。
 #   * 网络盘 `/data` 只用于两件事：读取上传的数据分发包；训练结束后 publish 最终模型。
 # =============================================================================
 set -euo pipefail
@@ -57,7 +57,9 @@ if [[ -z "$LOCAL_ROOT" && -n "${V4_DATA_ROOT:-}" && "${V4_DATA_ROOT}" != "/data"
 fi
 if [[ -z "$LOCAL_ROOT" ]]; then
   # 优先本地大容量目录；不写 /data 网络盘。
-  if [[ -d /workspace && -w /workspace ]]; then
+  if [[ -d /code/workspace && -w /code/workspace ]]; then
+    LOCAL_ROOT="/code/workspace"
+  elif [[ -d /workspace && -w /workspace ]]; then
     LOCAL_ROOT="/workspace"
   else
     LOCAL_ROOT="$HERE/.v4_runtime"

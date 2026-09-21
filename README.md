@@ -32,15 +32,15 @@
 
 ```
 /code/workspace/<仓库名>/    <- 本仓库（git clone；仓库根 = v4 的内容）
-/workspace/v4/data/          <- 本地解压后的训练/测试数据（本地高速盘）
-/workspace/v4/{cache,runs,reports,logs,tb,state}/  <- 本地缓存 / checkpoint / 报告 / 日志
+$V4_LOCAL_ROOT/v4/data/     <- 本地解压后的训练/测试数据（本地高速盘）
+$V4_LOCAL_ROOT/v4/{cache,runs,reports,logs,tb,state}/  <- 本地缓存 / checkpoint / 报告 / 日志
 
 /data/v4_data.tar.gz         <- 网络盘：只放上传的数据分发包
 /data/v4/final/              <- 网络盘：训练结束后 publish 的最终模型
 /data/v4/submission/         <- 网络盘：可选，E10 提交包
 ```
 
-> 若 `/workspace` 不存在，`run_train.sh` 自动回退到 `$HERE/.v4_runtime`；可用
+> 默认本地根是 `/code/workspace`；若不可用再回退 `/workspace` 或 `$HERE/.v4_runtime`。可用
 > `V4_LOCAL_ROOT` 显式指定本地盘，用 `V4_NETWORK_ROOT` 指定网络盘（默认 `/data`）。
 
 平台【启动命令】只填一句：
@@ -90,14 +90,14 @@ cd v4 && git add -A && git commit -m "..." && git push origin HEAD:master HEAD:m
 | 角色 | 写代码、生成数据包、跑口径层单测、组装提交包 | 训练、OOF 推理、集成 |
 | 硬件 | 无 NPU/GPU、`v2/.venv` 有 numpy/pandas、**无 torch** | **1× Ascend 910B 64GB**、4000m vCPU、**16 GiB 系统内存**、**30 GB 云盘（/data）** |
 | 软件 | 系统 Python 3.12（仅用于口径层） | **CANN 8.3rc2 / PyTorch 2.8.0 + torch_npu 2.8.0 / Python 3.11 / arm64**（平台镜像预装，**无 conda**，不得改 torch/torch_npu 版本；额外轻量包可 `pip install --no-cache-dir`） |
-| 目录 | `../data`、`./reports` | 代码 `/code/workspace/<仓库名>`（临时，用 `find` 定位，别硬编码）；数据与产物 `/data/v4/*`（持久） |
+| 目录 | `../data`、`./reports` | 代码 `/code/workspace/<仓库名>`（用 `find` 定位）；训练期数据/产物 `$V4_LOCAL_ROOT/v4/*`（本地高速盘）；最终模型 `/data/v4/final` |
 
 **四条铁律**
 
 1. `v4/src/data/`、`v4/src/score.py`、`v4/src/inference/` **不 import torch** —— 本机也能校验数据与提交契约。
 2. 数据以按井分片 / 打包件传递；**云端不把整井序列常驻内存**（16 GiB 是瓶颈），`num_workers=4`，每 epoch 调 `assert_disk_headroom(8.0)`。
 3. 一切阈值/权重/早停**只在 inner-OOF 上选**；outer 折只推理一次；A 榜只做短名单仲裁。
-4. **只往 `/data` 写需要保留的东西**；`/code/workspace` 是临时的，任务结束即丢。
+4. **训练期只写 `$V4_LOCAL_ROOT/v4/*` 本地盘**；`/data` 只放上传数据包和最终模型。
 
 ## 执行顺序
 

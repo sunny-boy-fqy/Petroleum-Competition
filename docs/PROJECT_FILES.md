@@ -290,8 +290,8 @@ v4/
 
 ```
 /code/workspace/<仓库名>/      git clone（**临时**，任务结束即丢；目录名由平台决定）
-/workspace/v4/data/{train,test}/        本地解压数据（训练期用本地高速盘）
-/workspace/v4/{cache,runs,reports,logs,tb,state}/
+$V4_LOCAL_ROOT/v4/data/{train,test}/   本地解压数据（训练期用本地高速盘）
+$V4_LOCAL_ROOT/v4/{cache,runs,reports,logs,tb,state}/
                               本地缓存 / checkpoint / 报告 / 日志 / 进度
 /data/v4_data.tar.gz          网络盘：上传的数据分发包
 /data/v4/final/               网络盘：训练结束后 publish 的最终模型
