@@ -507,8 +507,42 @@ class TestRunTrainAllModeRunsFullPipeline(unittest.TestCase):
             self.assertIn(token, self.src)
 
     def test_completed_tasks_are_skipped_for_resume(self):
-        for token in ("task_status", "already done", "_force_downstream"):
+        for token in ("task_status", "already done", "task_local_ready"):
             self.assertIn(token, self.src)
+
+
+class TestCrossTaskStateMirror(unittest.TestCase):
+    """本地 runtime 会随任务结束丢失，必须只把小状态文件镜像到 /data 并恢复。"""
+
+    def test_sync_state_only_copies_selected_patterns(self):
+        import subprocess as sp
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "src"
+            dst = Path(td) / "dst"
+            src.mkdir()
+            (src / "last.pt").write_bytes(b"checkpoint")
+            (src / "E1").mkdir()
+            (src / "E1" / "oof.npz").write_bytes(b"oof")
+            (src / "big.cache").write_bytes(b"should-not-copy")
+            r = sp.run(
+                [sys.executable, str(V4 / "tools" / "sync_state.py"),
+                 "--src", str(src), "--dst", str(dst), "--once"],
+                capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertTrue((dst / "last.pt").is_file())
+            self.assertTrue((dst / "E1" / "oof.npz").is_file())
+            self.assertFalse((dst / "big.cache").exists())
+
+    def test_run_train_registers_state_mirror_and_readiness(self):
+        src = _read("run_train.sh")
+        for token in (
+            "tools/sync_state.py",
+            "REMOTE_RUN_MIRROR",
+            "restore_state_from_network",
+            "sync_state_to_network",
+            "task_local_ready",
+        ):
+            self.assertIn(token, src)
 
 
 class TestBootstrapDataTarballResolution(unittest.TestCase):

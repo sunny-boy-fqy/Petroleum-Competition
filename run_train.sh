@@ -44,11 +44,13 @@
 #     训练脚本用 src/training/tb_logger.py::RunLogger 写指标，平台任务详情页可见曲线。
 #   * 本地高速盘：训练期数据/缓存/checkpoint/报告/日志全部写到 `$V4_LOCAL_ROOT/v4/*`
 #     （默认优先 /code/workspace，再回退 /workspace 或 $HERE/.v4_runtime，**不写网络盘 /data**）。
-#   * 网络盘 `/data` 只用于两件事：读取上传的数据分发包；训练结束后 publish 最终模型。
+#   * 网络盘 `/data` 用于：读取上传的数据分发包；每 5 分钟把 checkpoint/OOF/报告
+#     增量 mirror 到 `/data/v4/mirror/`（新任务恢复本地点）；训练结束后 publish 最终模型。
+#   * 大 cache/原始数据不写 /data；新任务从 /data tarball 重新解压，并在缺 cache 时自动重跑 E2。
 # =============================================================================
 set -euo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"     # 自定位：/code/workspace/<仓库名>
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"     # 自定位：仓库根可能直接是 /code/workspace
 NETWORK_ROOT="${V4_NETWORK_ROOT:-/data}"
 LOCAL_ROOT="${V4_LOCAL_ROOT:-}"
 # 兼容旧调用：显式 V4_DATA_ROOT 指向非 /data 时，仍视为本地运行时根。
@@ -170,9 +172,36 @@ print(obj.get("tasks", {}).get(task, {}).get("status", ""))
 PY
 }
 
+task_local_ready() {
+  # 进度说 done 还不够：新任务本地盘可能是空的，关键本地产物存在才允许跳过。
+  local n="$1"
+  case "$n" in
+    1) [[ -f "$REPORTS_DIR/E0_env.json" && -f "$REPORTS_DIR/E0_disk_budget.json" ]] ;;
+    2)
+      [[ -d "$DATA_ROOT/v4/data/train" && -d "$DATA_ROOT/v4/data/test" ]] || return 1
+      local nt ne
+      nt="$(find "$DATA_ROOT/v4/data/train" -maxdepth 1 -name '*.txt' 2>/dev/null | wc -l)"
+      ne="$(find "$DATA_ROOT/v4/data/test"  -maxdepth 1 -name '*.txt' 2>/dev/null | wc -l)"
+      [[ "$nt" -eq 80 && "$ne" -eq 10 ]] ;;
+    3) [[ -f "$REPORTS_DIR/E0_data_card.json" && -d "$CACHE_ROOT/raw/train" ]] ;;
+    4) [[ -f "$RUN_ROOT/E1/oof.npz" ]] ;;
+    5) [[ -d "$CACHE_ROOT/feat" ]] && find "$CACHE_ROOT/feat" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | grep -q . ;;
+    6) [[ -f "$RUN_ROOT/E3/oof_unet.npz" && -f "$REPORTS_DIR/E3_metrics_unet.json" ]] ;;
+    7) [[ -f "$REPORTS_DIR/E3_receptive_field_ablation.json" ]] ;;
+    8) [[ -f "$RUN_ROOT/E4/oof_patchtf.npz" && -f "$REPORTS_DIR/E4_patchtf.json" ]] ;;
+    9) [[ -f "$REPORTS_DIR/E5_per_target.json" ]] ;;
+    10) [[ -f "$REPORTS_DIR/E6_tau_search.json" ]] ;;
+    11) [[ -f "$REPORTS_DIR/E7_loss_ablation.json" ]] ;;
+    12) [[ -f "$REPORTS_DIR/E8_ensemble_report.json" ]] ;;
+    13) [[ -f "$REPORTS_DIR/E9_submission_decision.json" ]] ;;
+    14) [[ -f "$REPORTS_DIR/E10_final_train.json" && -f "$RUN_ROOT/v4/final/final_manifest.json" ]] ;;
+    *) return 0 ;;
+  esac
+}
+
 log "=============================================================="
 log "v4 training task  mode=$MODE stage=$STAGE"
-log "repo(HERE)   = $HERE            <- /code/workspace/<仓库名> (临时，实测值即本行)"
+log "repo(HERE)   = $HERE            <- 平台 zip/git 解压后的仓库根（本场景直接是 /code/workspace）"
 log "LOCAL_ROOT   = $LOCAL_ROOT       <- 训练期本地高速盘（数据/cache/runs/reports/logs/state）"
 log "NETWORK_ROOT = $NETWORK_ROOT     <- 网络盘：只读 tarball + 收最终模型"
 log "DATA_ROOT    = $DATA_ROOT       <- 本地运行时数据根（$V4_DATA_ROOT）"
@@ -330,6 +359,47 @@ publish_final_to_network() {
     log "[publish] 无模型可发布（可能还没跑到 E10）"
   fi
 }
+
+MIRROR_ROOT="$NETWORK_ROOT/v4/mirror"
+REMOTE_RUN_MIRROR="$MIRROR_ROOT/run_root"
+REMOTE_SCALER_MIRROR="$MIRROR_ROOT/scalers"
+REMOTE_REPORTS_MIRROR="$MIRROR_ROOT/reports"
+LOCAL_SCALER_ROOT="$DATA_ROOT/v4/scalers"
+MIRROR_PIDS=()
+
+restore_state_from_network() {
+  # 新任务本地盘为空时，从 /data/v4/mirror 恢复 checkpoint / OOF / scaler / 报告。
+  python3 "$HERE/tools/sync_state.py" --src "$REMOTE_RUN_MIRROR" --dst "$RUN_ROOT" --once >/dev/null 2>&1 || true
+  python3 "$HERE/tools/sync_state.py" --src "$REMOTE_SCALER_MIRROR" --dst "$LOCAL_SCALER_ROOT" --once >/dev/null 2>&1 || true
+  python3 "$HERE/tools/sync_state.py" --src "$REMOTE_REPORTS_MIRROR" --dst "$REPORTS_DIR" --once >/dev/null 2>&1 || true
+}
+
+sync_state_to_network() {
+  python3 "$HERE/tools/sync_state.py" --src "$RUN_ROOT" --dst "$REMOTE_RUN_MIRROR" --once >/dev/null 2>&1 || true
+  python3 "$HERE/tools/sync_state.py" --src "$LOCAL_SCALER_ROOT" --dst "$REMOTE_SCALER_MIRROR" --once >/dev/null 2>&1 || true
+  python3 "$HERE/tools/sync_state.py" --src "$REPORTS_DIR" --dst "$REMOTE_REPORTS_MIRROR" --once >/dev/null 2>&1 || true
+}
+
+start_state_mirror() {
+  [[ "${V4_DISABLE_STATE_MIRROR:-0}" == "1" ]] && return 0
+  mkdir -p "$REMOTE_RUN_MIRROR" "$REMOTE_SCALER_MIRROR" "$REMOTE_REPORTS_MIRROR" "$LOCAL_SCALER_ROOT" 2>/dev/null || true
+  # 每 5 分钟把本地小状态文件增量同步到 /data；大 cache/原始数据不同步。
+  python3 "$HERE/tools/sync_state.py" --src "$RUN_ROOT" --dst "$REMOTE_RUN_MIRROR" --interval 300 >/dev/null 2>&1 &
+  MIRROR_PIDS+=($!)
+  python3 "$HERE/tools/sync_state.py" --src "$LOCAL_SCALER_ROOT" --dst "$REMOTE_SCALER_MIRROR" --interval 300 >/dev/null 2>&1 &
+  MIRROR_PIDS+=($!)
+  python3 "$HERE/tools/sync_state.py" --src "$REPORTS_DIR" --dst "$REMOTE_REPORTS_MIRROR" --interval 300 >/dev/null 2>&1 &
+  MIRROR_PIDS+=($!)
+}
+
+cleanup_state_mirror() {
+  if [[ ${#MIRROR_PIDS[@]} -gt 0 ]]; then
+    kill "${MIRROR_PIDS[@]}" 2>/dev/null || true
+  fi
+  sync_state_to_network || true
+}
+
+trap cleanup_state_mirror EXIT
 
 run_smoke() {
   log "--- [smoke] 极小规模冒烟（1 折 / 2 epoch / 前 8 井）"
@@ -684,6 +754,8 @@ run_all_task() {
   esac
 }
 
+start_state_mirror
+
 case "$MODE" in
   env)   run_env ;;
   data)  run_data ;;
@@ -711,22 +783,20 @@ case "$MODE" in
     if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
       log "!! [all] 全链路模式忽略额外参数，请用 --through N 控制范围：${EXTRA_ARGS[*]}"
     fi
-    log "--- [all] 运行任务 1..$ALL_THROUGH（共 14 个）；已完成任务自动跳过"
-    _force_downstream=0
+    restore_state_from_network || log "[all] 从 /data 恢复 checkpoint/OOF/report 失败（将按本地现有文件继续）"
+    log "--- [all] 运行任务 1..$ALL_THROUGH（共 14 个）；进度 done 且本地产物齐备才跳过"
     for ((_n=1; _n<=ALL_THROUGH; _n++)); do
       _name="${ALL_TASK_NAMES[$_n]}"
       _status=""
       if [[ "$ALL_FRESH" != "1" ]]; then
         _status="$(task_status "$_n")"
       fi
-      if [[ "$ALL_FRESH" != "1" && "$_force_downstream" == "0" ]]; then
-        if [[ "$_status" == "done" ]]; then
-          log "[all] task $_n/$_name already done，跳过"
-          continue
-        fi
-        # 从这里开始有任务未完成：后续任务全部重跑，避免用旧的上游结果跳过下游。
-        _force_downstream=1
-        log "[all] task $_n/$_name 未完成 -> 从本任务起不再跳过后续任务"
+      if [[ "$ALL_FRESH" != "1" && "$_status" == "done" ]] && task_local_ready "$_n"; then
+        log "[all] task $_n/$_name already done 且本地产物齐备，跳过"
+        continue
+      fi
+      if [[ "$ALL_FRESH" != "1" && "$_status" == "done" ]]; then
+        log "[all] task $_n/$_name 进度 done 但本地产物缺失，需重跑"
       fi
       mark_progress "$_n" "$_name" running
       log "=== [all] task $_n/$_name 开始 ==="

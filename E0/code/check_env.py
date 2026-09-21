@@ -613,7 +613,7 @@ def check_disk(rep: Report, path: Path, min_free_gb: float) -> dict:
 def check_repo(rep: Report, root: Path, profile: str = "full") -> dict:
     """数据与折引用是否就位。
 
-    H4 修正：支持云端布局（代码在 /code/workspace/<仓库名>、数据在 /data/v4/data）。
+    H4 修正：支持云端布局（代码根直接是 /code/workspace；数据在 $V4_LOCAL_ROOT/v4/data）。
     解析顺序：$V4_DATA_ROOT/v4/data -> <v4>/../data；折文件用 src/validation/folds.py 的解析器。
     本机（无 V4_DATA_ROOT）仍走 <v4>/../data。
     """

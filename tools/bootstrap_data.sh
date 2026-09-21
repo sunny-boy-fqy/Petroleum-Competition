@@ -4,7 +4,7 @@
 # 为什么必须放在 /data：
 #   平台把 Git 仓库代码解压到**临时**目录 /code/workspace，任务结束即丢失；
 #   只有 /data（云盘）的内容会保留。因此：
-#     代码   -> /code/workspace/<仓库名>/...  （每次任务重新 clone，可丢；目录名由平台决定）
+#     代码   -> /code/workspace/...           （zip 上传时仓库根直接是 /code/workspace）
 #     数据   -> /data/v4/data/...             （只部署一次，永久保留）
 #     缓存   -> /data/v4/cache/...
 #     运行产物 -> /data/v4/runs/...

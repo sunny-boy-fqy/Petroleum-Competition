@@ -289,7 +289,7 @@ v4/
 ## 三、云端的四处目录（平台约定）
 
 ```
-/code/workspace/<仓库名>/      git clone（**临时**，任务结束即丢；目录名由平台决定）
+/code/workspace/               仓库根（zip 上传时无外层目录；任务结束即丢）
 $V4_LOCAL_ROOT/v4/data/{train,test}/   本地解压数据（训练期用本地高速盘）
 $V4_LOCAL_ROOT/v4/{cache,runs,reports,logs,tb,state}/
                               本地缓存 / checkpoint / 报告 / 日志 / 进度

@@ -14,7 +14,7 @@
 | 平台约定 | 出处 | 对 v4 的影响 |
 |---|---|---|
 | 训练任务代码来源三选一：**Git 仓库 / 本地上传 / 我的云盘** | 训练任务文档 §选择代码来源 | v4 用 **Git 仓库**（本仓库，**HTTPS** 地址） |
-| Git 仓库代码被复制到**临时**目录 `/code/workspace`，任务结束即丢；官方示例 `LlamaFactory/platform/run_train.sh` → `/code/workspace/LlamaFactory/platform/run_train.sh`，即**保留仓库目录名** | 训练任务文档 §Git 仓库 | 克隆目录名**仍不要硬编码**（用 `$(find /code/workspace -name run_train.sh | head -1)` 定位）；**代码里不得写入需要保留的东西** |
+| Git 仓库代码被复制到**临时**目录 `/code/workspace`，任务结束即丢；本仓库 zip 上传后，`run_train.sh` 直接位于 `/code/workspace/`，没有外层仓库目录 | 训练任务文档 §Git 仓库 | 仍用 `$(find /code/workspace -name run_train.sh | head -1)` 定位；训练期 runtime 写 `$V4_LOCAL_ROOT/v4/*`，最终模型 publish 到 `/data` |
 | **云盘挂载在 `/data`**，任务结束/资源释放后仍保留 | 同上 + §云盘持久化 | 数据、缓存、checkpoint、日志、报告**全部写 `/data/v4/...`** |
 | 启动命令最长 **500 字符** | 训练任务文档 §填写启动命令 | 所有编排逻辑封装进 `run_train.sh`，启动命令只有一句 |
 | 单次任务运行时长最长 **7×24 h** | 训练任务文档 §设置运行时长 | 与 D1（用户放宽 100h）兼容；但仍要求 checkpoint 可续训 |
@@ -26,7 +26,7 @@
 
 > **克隆目录名不要猜（重要）**：本 git 仓库的**根就是 `v4/` 的内容**（`run_train.sh`、
 > `src/`、`E0/`… 直接位于仓库根），所以平台解压出来的目录**不叫 `v4`** ——
-> 可能是 `/code/workspace/Petroleum-Competition/`，也可能直接是 `/code/workspace/`。
+> 本场景：仓库根直接是 `/code/workspace/`，没有 `v4/` 或仓库名外层目录。
 > 因此**所有启动命令一律写成位置无关形式**：
 >
 > ```bash
@@ -49,7 +49,7 @@
 
 ```
 本机（开发机，无 GPU）                     云端（Intern InkStone）
-├── 写代码、跑口径层单测                    ├── /code/workspace/<仓库名>/  ← git clone（临时！）
+├── 写代码、跑口径层单测                    ├── /code/workspace/           ← zip 仓库根（临时！）
 ├── tools/pack_dataset.py 生成 31 MB 数据包  ├── $V4_LOCAL_ROOT/v4/data/    ← 本地高速盘（训练期）
 └── git push                               ├── $V4_LOCAL_ROOT/v4/cache/   ← 本地高速盘（训练期）
                                            ├── $V4_LOCAL_ROOT/v4/runs/    ← 本地 checkpoint/OOF
@@ -283,6 +283,7 @@ with RunLogger(f"E3_unet_fold{fold}") as log:
 | `$V4_LOCAL_ROOT/v4/reports/` | Gate 报告、数据卡、`cloud_frozen.txt`（本地） |
 | `$V4_LOCAL_ROOT/v4/logs/` | `run_train.sh` 的 stdout 日志（本地） |
 | `/data/v4_data.tar.gz` | 上传的数据分发包（网络盘，只读） |
+| `/data/v4/mirror/` | 每 5 分钟增量同步 checkpoint/OOF/报告（网络盘） |
 | `/data/v4/final/` | 训练结束后 publish 的最终模型（网络盘） |
 | `/data/v4/tb/` | TensorBoard 事件文件 + JSONL |
 

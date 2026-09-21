@@ -31,13 +31,14 @@
 训练期的大数据/缓存/checkpoint 不写网络盘，而是写本地高速盘：
 
 ```
-/code/workspace/<仓库名>/    <- 本仓库（git clone；仓库根 = v4 的内容）
+/code/workspace/             <- 本仓库根（zip 上传时没有外层文件夹）
 $V4_LOCAL_ROOT/v4/data/     <- 本地解压后的训练/测试数据（本地高速盘）
 $V4_LOCAL_ROOT/v4/{cache,runs,reports,logs,tb,state}/  <- 本地缓存 / checkpoint / 报告 / 日志
 
 /data/v4_data.tar.gz         <- 网络盘：只放上传的数据分发包
 /data/v4/final/              <- 网络盘：训练结束后 publish 的最终模型
 /data/v4/submission/         <- 网络盘：可选，E10 提交包
+/data/v4/mirror/             <- 网络盘：每 5 分钟增量同步 checkpoint/OOF/报告
 ```
 
 > 默认本地根是 `/code/workspace`；若不可用再回退 `/workspace` 或 `$HERE/.v4_runtime`。可用
@@ -90,7 +91,7 @@ cd v4 && git add -A && git commit -m "..." && git push origin HEAD:master HEAD:m
 | 角色 | 写代码、生成数据包、跑口径层单测、组装提交包 | 训练、OOF 推理、集成 |
 | 硬件 | 无 NPU/GPU、`v2/.venv` 有 numpy/pandas、**无 torch** | **1× Ascend 910B 64GB**、4000m vCPU、**16 GiB 系统内存**、**30 GB 云盘（/data）** |
 | 软件 | 系统 Python 3.12（仅用于口径层） | **CANN 8.3rc2 / PyTorch 2.8.0 + torch_npu 2.8.0 / Python 3.11 / arm64**（平台镜像预装，**无 conda**，不得改 torch/torch_npu 版本；额外轻量包可 `pip install --no-cache-dir`） |
-| 目录 | `../data`、`./reports` | 代码 `/code/workspace/<仓库名>`（用 `find` 定位）；训练期数据/产物 `$V4_LOCAL_ROOT/v4/*`（本地高速盘）；最终模型 `/data/v4/final` |
+| 目录 | `../data`、`./reports` | 代码根 `/code/workspace`（用 `find` 定位 run_train.sh）；训练期数据/产物 `$V4_LOCAL_ROOT/v4/*`（本地高速盘）；最终模型 `/data/v4/final` |
 
 **四条铁律**
 
