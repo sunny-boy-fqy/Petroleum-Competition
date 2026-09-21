@@ -205,7 +205,9 @@ git log --oneline -1                     # 记下这个 revision —— 平台�
 | 4 | `v4-smoke` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode smoke` | 1 折 / 2 epoch / 8 井，验证训练链路（需 E1 代码实现后） |
 | 5+ | `v4-E1`…`v4-E8` | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage E1` | 按 PLAN §七 推进 |
 
-> `--mode all` 会串行执行 env → data → e0 → 首个可用训练阶段，适合单次跑完前置检查。
+> `--mode all` 会串行执行 env → data → e0 → **E1→E10 全链路**，每个阶段自动带 all 子路由；
+> 任一步失败立即退出，进度写 `/data/v4/state/all_pipeline_progress.json`。
+> 全链路可能运行数十小时，建议先按任务 1–3 单独确认 env/data/e0，再开 `--mode all`。
 
 ---
 

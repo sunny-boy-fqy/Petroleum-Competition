@@ -76,7 +76,7 @@ def normalize_cann(text) -> str:
     """把 CANN 版本串规范成小写无分隔形式：`8.3.RC2`/`8.3rc2`/`8.3.rc2` → `8.3rc2`。
 
     纯函数（可单测）：CANN 在不同来源里的写法不一致
-    （`version.cfg`、`npu-smi`、`torch_npu.version.cann`），必须先归一化再比较。
+    （`torch_npu.utils.get_cann_version("CANN")`、`npu-smi`、`ascend_*_install.info`），必须先归一化再比较。
     """
     s = str(text or "").strip().lower()
     for junk in (" ", "\t", "-", "_"):

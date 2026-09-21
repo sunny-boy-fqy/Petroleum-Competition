@@ -43,9 +43,10 @@ bash "$(find /code/workspace -name run_train.sh | head -1)" --mode all
 ```
 
 `run_train.sh` 的模式：`env`（环境+磁盘自检+装轻量依赖）、`data`（部署数据集到 `/data`）、
-`e0`（口径复算）、`smoke`（极小规模冒烟）、`stage --stage E1`（训练）、
-`all`（env + data + e0，然后跑**单个** `STAGE`，缺省 E1；它不是全阶段串行）。
-要产出 PD1，请显式跑 `--mode stage --stage E6 --phase all`（P0→P1→P2），再按需跑 E9/E10。
+`e0`（口径复算）、`smoke`（极小规模冒烟）、`stage --stage E1`（训练单个阶段）、
+`all`（env → data → e0 → **E1→E10 全链路串行**；每个阶段自动带 all 子路由：
+E3 主模型+感受野消融+行级对照、E4 三消融、E5 三目标、E6 P0/P1/P2、E8 四路、
+E9/E10 全部子阶段。任一步失败立即退出；进度写 `/data/v4/state/all_pipeline_progress.json`）。
 
 首次上手顺序见 [`docs/platform_setup.md`](docs/platform_setup.md) §四。
 

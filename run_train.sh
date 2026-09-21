@@ -30,8 +30,10 @@
 #   --mode data-health  数据健康硬校验（profile=full）
 #   --mode smoke    5 分钟极小规模冒烟（1 折 / 少量 epoch），验证全链路可跑
 #   --mode stage --stage E1   训练指定阶段
-#   --mode all      env -> data -> e0，然后跑单个 STAGE（缺省 E1）；
-#                   不是全阶段串行。E6 全阶段：--mode stage --stage E6 --phase all
+#   --mode all      env -> data -> e0 -> E1 -> E2 -> ... -> E10 **全链路串行**；
+#                   每个阶段自动带 all 子路由（E3 main+ablation+compare、
+#                   E4 三个消融、E5 三目标、E6 P0/P1/P2、E8 四路、E9/E10 全子阶段）；
+#                   任一步失败立即退出；进度写入 $STATE_DIR/all_pipeline_progress.json。
 #
 # 平台集成（已按官方提示落实）：
 #   * TensorBoard：导出 TENSORBOARD_LOGDIR=$V4_DATA_ROOT/v4/tb，
@@ -82,6 +84,7 @@ export V4_REPO_ROOT="$HERE"
 export V4_STATE_DIR="$STATE_DIR"
 export V4_CANDIDATES="$CANDIDATES"
 export V4_REGISTRY="$REGISTRY"
+ALL_PROGRESS="$STATE_DIR/all_pipeline_progress.json"
 # 让 bootstrap_data.sh 也能看到 tarball 位置（同一份事实，不重复解析参数）
 if [[ -n "$DATA_TARBALL" ]]; then export V4_DATA_TARBALL="$DATA_TARBALL"; fi
 if [[ -n "$DATA_MANIFEST" ]]; then export V4_DATA_MANIFEST="$DATA_MANIFEST"; fi
@@ -93,6 +96,33 @@ export TORCH_HOME="${TORCH_HOME:-$CACHE_ROOT/torch}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$CACHE_ROOT/xdg}"
 
 log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
+
+# all 模式的持久进度台账（$STATE_DIR=/data/v4/state，任务结束不丢）
+mark_progress() {
+  python3 - "$ALL_PROGRESS" "$1" "${2:-running}" <<'PY'
+import json, os, sys, time
+path, stage, status = sys.argv[1], sys.argv[2], sys.argv[3]
+obj = {}
+if os.path.exists(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            obj = json.load(f)
+    except Exception:
+        obj = {}
+obj.setdefault("pipeline", "all")
+obj.setdefault("stages", {})
+now = time.strftime("%Y-%m-%dT%H:%M:%S")
+obj["updated_at"] = now
+obj["current"] = stage
+obj["status"] = status
+obj["stages"][stage] = {"status": status, "updated_at": now}
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(obj, f, ensure_ascii=False, indent=2)
+os.replace(tmp, path)
+print(f"[progress] {stage}: {status} -> {path}")
+PY
+}
 
 log "=============================================================="
 log "v4 training task  mode=$MODE stage=$STAGE"
@@ -127,7 +157,7 @@ run_env() {
   # R2-B1 修复：先装依赖，再做硬校验（此前顺序相反导致首次必失败）
   log "--- [env] 1/3 额外轻量依赖（--no-cache-dir，绝不触碰 torch）"
   bash "$HERE/E0/code/setup_deps.sh" 2>&1 | tee -a "$LOG" \
-    || log "!! setup_deps 失败（可选依赖缺失时管线有降级路径）"
+    || { log "!! setup_deps 失败：依赖/磁盘预检未通过，停止"; return 1; }
 
   log "--- [env] 2/3 基础环境自检（profile=base：数据未就绪只告警）"
   if check_env_profile base; then
@@ -155,7 +185,9 @@ run_env() {
   # 数据若已部署，顺带做一次 full 校验（失败不阻塞 env 模式）
   if [[ -d "$DATA_ROOT/v4/data/train" ]]; then
     log "--- [env] 附加：数据已部署，做 profile=full 校验"
-    check_env_profile full || log "!! [env] full 校验未通过（数据健康有问题）"
+    # 首次 all 流程中 env 先于 data，空数据目录/旧目录可能导致 full 校验未过；
+    # 这是预期状态，只告警不阻塞，后续 run_data 会重新部署并以 full 硬校验为准。
+    check_env_profile full || log "!! [env] full 校验未通过（数据健康有问题，稍后 run_data 会重部署并硬校验）"
   else
     log "--- [env] 数据尚未部署：请随后执行 --mode data（届时会做 full 校验）"
   fi
@@ -189,10 +221,10 @@ run_e0() {
   # R4-H2：计划行数证据 JSON 也在云端重生成（纯标准库，不需要 torch），
   # 使 $REPORTS_DIR 的 E0_*.json 集合自洽，而不是只在开发机上存在。
   python3 "$HERE/tools/plan_stats.py" --json "$REPORTS_DIR/E0_plan_stats.json" \
-    2>&1 | tee -a "$LOG" || log "!! [e0] plan_stats 生成失败（不阻塞口径复算）"
-  # 流水线完整性：阶段脚本/入口/接线/报告命名一次性核对（失败不阻塞 E0，但会留下证据）
+    2>&1 | tee -a "$LOG" || return 1
+  # 流水线完整性：阶段脚本/入口/接线/报告命名一次性核对（失败即停）
   python3 "$HERE/tools/check_pipeline.py" --json "$REPORTS_DIR/E0_pipeline_check.json" \
-    2>&1 | tee -a "$LOG" || log "!! [e0] 流水线完整性检查未通过（见 E0_pipeline_check.json）"
+    2>&1 | tee -a "$LOG" || return 1
   # 证据权威性：$REPORTS_DIR（云端 /data/v4/reports，云盘持久）= 权威来源，供 Gate / 复算引用；
   # repo 内 reports/ = 仅供 review / git diff 的快照，必须整体同步以免 data card 与
   # score-check / prereg 等互相矛盾（R3 修复：此前只 copy 3 个文件）。
@@ -240,16 +272,82 @@ run_stage() {
         if [[ "$e2_phase" == "all" || "$e2_phase" == "build" ]]; then
           log "--- [E2] 构建 F2 特征缓存 + 溯源/审计"
           python3 "$HERE/E2/code/build_features.py" --cache-root "$CACHE_ROOT" \
-            --reports-dir "$REPORTS_DIR" 2>&1 | tee -a "$LOG"
+            --reports-dir "$REPORTS_DIR" 2>&1 | tee -a "$LOG" || return 1
         fi
         if [[ "$e2_phase" == "all" || "$e2_phase" == "ablate" ]]; then
           log "--- [E2] 单组消融 + 吞吐画像"
           python3 "$HERE/E2/code/ablate_groups.py" --cache-root "$CACHE_ROOT" \
-            --reports-dir "$REPORTS_DIR" --run-root "$RUN_ROOT" 2>&1 | tee -a "$LOG"
+            --reports-dir "$REPORTS_DIR" --run-root "$RUN_ROOT" 2>&1 | tee -a "$LOG" || return 1
         fi ;;
-    E3) python3 "$HERE/E3/code/train_seq.py" \
-          --train-dir "$DATA_ROOT/v4/data/train" --cache-root "$CACHE_ROOT" \
-          --out-dir "$RUN_ROOT/E3" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1 | tee -a "$LOG" ;;
+    E3)
+        # `--phase main|ablation|compare|all`；缺省 main 保持旧行为。
+        # all = TCN 主配置 + U-Net 主配置 + 感受野消融 + 行级/序列受控对照。
+        e3_phase="main"
+        e3_args=()
+        e3_expect=""
+        for a in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
+          if [[ "$e3_expect" == "phase" ]]; then
+            case "${a,,}" in
+              main|ablation|compare|all) e3_phase="${a,,}" ;;
+              *) log "!! E3 --phase 只支持 main/ablation/compare/all，got $a"; return 1 ;;
+            esac
+            e3_expect=""; continue
+          fi
+          if [[ "$a" == "--phase" ]]; then e3_expect="phase"; continue; fi
+          e3_args+=("$a")
+        done
+        if [[ "$e3_expect" == "phase" ]]; then log "!! E3 --phase 缺少取值"; return 1; fi
+        e3_common=(--cache-root "$CACHE_ROOT" --run-root "$RUN_ROOT" \
+                   --reports-dir "$REPORTS_DIR")
+        if [[ "$e3_phase" == "main" || "$e3_phase" == "all" ]]; then
+          if [[ "$e3_phase" == "all" ]]; then
+            # 最后跑 U-Net，使 E3_gate.json 对应默认主干。
+            log "--- [E3] train_seq arch=tcn"
+            python3 "$HERE/E3/code/train_seq.py" "${e3_common[@]}" --arch tcn --tag tcn \
+              "${e3_args[@]+"${e3_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
+          fi
+          log "--- [E3] train_seq arch=unet"
+          python3 "$HERE/E3/code/train_seq.py" "${e3_common[@]}" --arch unet \
+            "${e3_args[@]+"${e3_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
+        fi
+        if [[ "$e3_phase" == "ablation" || "$e3_phase" == "all" ]]; then
+          log "--- [E3] receptive-field ablation"
+          python3 "$HERE/E3/code/rf_ablation.py" "${e3_common[@]}" \
+            "${e3_args[@]+"${e3_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
+        fi
+        if [[ "$e3_phase" == "compare" || "$e3_phase" == "all" ]]; then
+          log "--- [E3] row vs seq controlled comparison"
+          e3_seq_oof="$(python3 - "$REPORTS_DIR" "$RUN_ROOT/E3" <<'PY'
+import json, sys
+from pathlib import Path
+reports, run_dir = Path(sys.argv[1]), Path(sys.argv[2])
+best = None
+for tag in ("unet", "tcn"):
+    m = reports / f"E3_metrics_{tag}.json"
+    if not m.is_file():
+        continue
+    try:
+        total = json.loads(m.read_text(encoding="utf-8")).get("oof_total")
+    except Exception:
+        total = None
+    if total is not None and (best is None or float(total) > best[0]):
+        best = (float(total), tag)
+print(run_dir / f"oof_{best[1]}.npz" if best else "")
+PY
+)"
+          e3_row_oof="$RUN_ROOT/E1/oof.npz"
+          if [[ -z "$e3_seq_oof" || ! -f "$e3_seq_oof" ]]; then
+            log "!! [E3] 找不到序列 OOF（$e3_seq_oof）；先跑 --phase main"
+            return 1
+          fi
+          if [[ ! -f "$e3_row_oof" ]]; then
+            log "!! [E3] 找不到行级 OOF（$e3_row_oof）；先跑 E1"
+            return 1
+          fi
+          python3 "$HERE/E3/code/compare_row_vs_seq.py" \
+            --seq-oof "$e3_seq_oof" --row-oof "$e3_row_oof" \
+            --reports-dir "$REPORTS_DIR" 2>&1 | tee -a "$LOG" || return 1
+        fi ;;
     E4) python3 "$HERE/E4/code/train_patchtf.py" \
           --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
           --run-root "$RUN_ROOT" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1 | tee -a "$LOG" ;;
@@ -289,7 +387,7 @@ run_stage() {
               || { log "!! [E5] $e5_name 失败"; return 1; }
           done
           python3 "$HERE/E5/code/evaluate_targets.py" \
-            --reports-dir "$REPORTS_DIR" --run-root "$RUN_ROOT" 2>&1 | tee -a "$LOG"
+            --reports-dir "$REPORTS_DIR" --run-root "$RUN_ROOT" 2>&1 | tee -a "$LOG" || return 1
         else
           if [[ ! -f "$e5_script" ]]; then
             log "!! $e5_script 尚未实现（见 E5/*/PLAN.md）"; return 1
@@ -320,12 +418,12 @@ run_stage() {
           log "--- [E6] P0 原子状态头两阶段训练"
           python3 "$HERE/E6/code/train_state.py" \
             --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
-            --run-root "$RUN_ROOT" "${e6_args[@]+"${e6_args[@]}"}" 2>&1 | tee -a "$LOG"
+            --run-root "$RUN_ROOT" "${e6_args[@]+"${e6_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
         fi
         if [[ "$e6_phase" == "p1" || "$e6_phase" == "all" ]]; then
           log "--- [E6] P1 τ 搜索（内折 OOF）"
           python3 "$HERE/E6/code/search_tau.py" \
-            --run-root "$RUN_ROOT" --reports-dir "$REPORTS_DIR" 2>&1 | tee -a "$LOG"
+            --run-root "$RUN_ROOT" --reports-dir "$REPORTS_DIR" 2>&1 | tee -a "$LOG" || return 1
         fi
         if [[ "$e6_phase" == "p2" || "$e6_phase" == "all" ]]; then
           log "--- [E6] P2 折平均 PD1（OOF + 注册 + CPU 冒烟）"
@@ -335,7 +433,7 @@ run_stage() {
             --test-dir "$DATA_ROOT/v4/data/test" \
             --out-dir "$RUN_ROOT/E6/P2/pd1" \
             --models-dir "$DATA_ROOT/v4/models/E6" \
-            "${e6_args[@]+"${e6_args[@]}"}" 2>&1 | tee -a "$LOG"
+            "${e6_args[@]+"${e6_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
         fi ;;
     E7)
         # `--phase loss|decode|all`（loss=七组损失消融；decode=解码搜索）
@@ -355,12 +453,12 @@ run_stage() {
         if [[ "$e7_phase" == "loss" || "$e7_phase" == "all" ]]; then
           log "--- [E7] P0 损失消融"
           python3 "$HERE/E7/code/ablate_loss.py" --reports-dir "$REPORTS_DIR" \
-            --cache-root "$CACHE_ROOT" "${e7_args[@]+"${e7_args[@]}"}" 2>&1 | tee -a "$LOG"
+            --cache-root "$CACHE_ROOT" "${e7_args[@]+"${e7_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
         fi
         if [[ "$e7_phase" == "decode" || "$e7_phase" == "all" ]]; then
           log "--- [E7] P1 解码搜索"
           python3 "$HERE/E7/code/decode_search.py" --reports-dir "$REPORTS_DIR" \
-            --run-root "$RUN_ROOT" "${e7_args[@]+"${e7_args[@]}"}" 2>&1 | tee -a "$LOG"
+            --run-root "$RUN_ROOT" "${e7_args[@]+"${e7_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
         fi ;;
     E8)
         # `--target mmoe|well|transductive|ensemble|all`
@@ -438,23 +536,23 @@ run_stage() {
           if [[ -z "$e10_ckpt" ]]; then e10_ckpt="$(ls -1 "$RUN_ROOT/v4/final"/*.pt 2>/dev/null | head -1)"; fi
           if [[ -z "$e10_ckpt" ]]; then log "!! [E10] 找不到可用权重（先跑 --phase final）"; return 1; fi
           python3 "$HERE/E10/code/export_cpu.py" --ckpt "$e10_ckpt" \
-            --out "$RUN_ROOT/v4/final" --reports-dir "$REPORTS_DIR" "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG"
+            --out "$RUN_ROOT/v4/final" --reports-dir "$REPORTS_DIR" "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
         fi
         if [[ "$e10_phase" == "all" || "$e10_phase" == "build" ]]; then
           python3 "$HERE/E10/code/build_submission.py" --weights "$RUN_ROOT/v4/final" \
-            --reports-dir "$REPORTS_DIR" "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG"
+            --reports-dir "$REPORTS_DIR" "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
         fi
         if [[ "$e10_phase" == "all" || "$e10_phase" == "b0" ]]; then
           python3 "$HERE/E10/code/build_b0_fallback.py" --reports-dir "$REPORTS_DIR" \
-            "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG"
+            "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
         fi
         if [[ "$e10_phase" == "all" || "$e10_phase" == "verify" ]]; then
           python3 "$HERE/E10/code/verify_inference.py" --reports-dir "$REPORTS_DIR" \
-            --data-dir "$DATA_ROOT/v4/data" "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG"
+            --data-dir "$DATA_ROOT/v4/data" "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
         fi
         if [[ "$e10_phase" == "all" || "$e10_phase" == "submit" ]]; then
           python3 "$HERE/E10/code/submit.py" --reports-dir "$REPORTS_DIR" \
-            "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG"
+            "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
         fi ;;
     *)  log "!! 阶段 $STAGE 尚未实现（见 v4/PLAN.md §七 与各 E*/PLAN.md）"; return 1 ;;
   esac
@@ -468,16 +566,42 @@ case "$MODE" in
   data-health) check_env_profile full ;;
   stage) run_stage ;;
   all)
+    mark_progress "ENV" running
     run_env
+    mark_progress "ENV" done
+    mark_progress "DATA" running
     run_data
+    mark_progress "DATA" done
+    mark_progress "E0" running
     run_e0
-    log "--- [all] env + data + e0 完成"
-    if [[ -f "$HERE/E1/code/train_row.py" ]]; then
-      log "--- [all] 检测到 E1 训练脚本，继续执行 stage"
-      run_stage || { log "!! [all] stage $STAGE 失败（退出码 $?）"; exit 21; }
-    else
-      log "--- [all] E1 训练脚本尚未实现，前置检查已完成（不算失败）"
+    mark_progress "E0" done
+    log "--- [all] 前置 env + data + e0 完成；开始全链路 E1→E10"
+    if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+      log "!! [all] 全链路模式使用各阶段默认/全子路由参数，忽略附加参数：${EXTRA_ARGS[*]}"
     fi
+    all_stages=(E1 E2 E3 E4 E5 E6 E7 E8 E9 E10)
+    for _stage in "${all_stages[@]}"; do
+      STAGE="$_stage"
+      case "$STAGE" in
+        E1|E2|E7|E9|E10) EXTRA_ARGS=() ;;
+        E3) EXTRA_ARGS=(--phase all) ;;
+        E4) EXTRA_ARGS=(--channel-independence-ablation --rel-pos-ablation --capacity-ablation) ;;
+        E5) EXTRA_ARGS=(--target all) ;;
+        E6) EXTRA_ARGS=(--phase all) ;;
+        E8) EXTRA_ARGS=(--target all) ;;
+      esac
+      mark_progress "$STAGE" running
+      log "=== [all] stage $STAGE 开始 ==="
+      run_stage || {
+        mark_progress "$STAGE" failed
+        log "!! [all] stage $STAGE 失败，链路停止（exit 21）"
+        exit 21
+      }
+      mark_progress "$STAGE" done
+      log "=== [all] stage $STAGE 完成 ==="
+    done
+    mark_progress "DONE" done
+    log "--- [all] E1→E10 全链路完成"
     ;;
   *) log "unknown mode: $MODE"; exit 2 ;;
 esac

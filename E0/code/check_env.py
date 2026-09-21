@@ -214,66 +214,181 @@ def parse_cann_version_from_text(text: str) -> str | None:
     """从 CANN 的版本文本里解析版本号（纯函数，可单测）。
 
     支持三类来源的写法：
-      - `version.cfg` / `ascend_toolkit_install.info`：`version=8.3.RC2` / `Version=8.3.rc2`
+      - `version.cfg` / `ascend_*_install.info`：`version=8.3.RC2` / `Version=8.3.rc2`
       - `npu-smi info`：`CANN Version: 8.3.RC2`
-      - `torch_npu.version.cann`：`8.3.rc2`
+      - `torch_npu` 的版本 API：`8.3.rc2`
     没有匹配时返回 None（调用方判失败，不静默放过）。
+
+    注意：很多安装目录里会同时存在无关的 `version=1.0`，所以这里优先匹配带
+    `CANN` / `TOOLKIT` / `RUNTIME` 等上下文或带 `RC` 的 CANN 版本串；纯 `version=`
+    行仍保留为最后手段，由 `_cann_from_files` 做 plausibility 过滤。
     """
     t = text or ""
-    m = re.search(r"(?:cann[_\s]*version|version)\s*[:=]\s*([0-9]+\.[0-9][0-9A-Za-z.\-]*)", t, re.I)
-    if m:
-        return HW.normalize_cann(m.group(1))
+    patterns = (
+        r"CANN[\s_-]*(?:VERSION)?\s*[:=]\s*([0-9]+\.[0-9][0-9A-Za-z.\-]*)",
+        r"(?:TOOLKIT|RUNTIME|COMPILER|HCCL|OPP|OPP_KERNEL)[\s_-]*(?:VERSION)?"
+        r"\s*[:=]\s*([0-9]+\.[0-9][0-9A-Za-z.\-]*)",
+        r"(?im)^\s*version\s*[:=]\s*([0-9]+\.[0-9][0-9A-Za-z.\-]*)",
+    )
+    for pat in patterns:
+        m = re.search(pat, t)
+        if m:
+            return HW.normalize_cann(m.group(1))
     m = re.search(r"\b(\d+\.\d+(?:\.\s*rc\d+)?)\b", t, re.I)
     return HW.normalize_cann(m.group(1)) if m else None
 
 
-def _cann_from_files() -> str | None:
-    """从 CANN 安装目录里的 version 文件读取（不依赖 torch_npu）。"""
+def _cann_candidate_files() -> list[Path]:
+    """返回可能的 CANN 版本文件（去重保序）。"""
     cands: list[Path] = []
+    roots: list[Path] = []
     for env in ("ASCEND_HOME_PATH", "ASCEND_TOOLKIT_HOME", "ASCEND_OPP_PATH"):
-        v = os.environ.get(env)
-        if v:
-            cands += [Path(v) / "version.cfg", Path(v) / "ascend_toolkit_install.info",
-                      Path(v).parent / "version.cfg"]
-    cands += [Path("/usr/local/Ascend/ascend-toolkit/latest/version.cfg"),
-              Path("/usr/local/Ascend/ascend-toolkit/latest/ascend_toolkit_install.info")]
+        value = os.environ.get(env)
+        if value:
+            roots.append(Path(value))
+    for root in roots:
+        # 官方安装信息文件名形如 ascend_<pkg>_install.info；优先它，version.cfg 兜底。
+        cands.append(root / "ascend_toolkit_install.info")
+        cands.append(root / "version.cfg")
+        try:
+            cands += sorted(root.glob("ascend_*_install.info"))
+            cands += sorted(root.glob("*/ascend_*_install.info"))
+        except Exception:                      # pragma: no cover - 路径异常
+            pass
+        cands.append(root.parent / "version.cfg")
+    cands += [
+        Path("/usr/local/Ascend/ascend-toolkit/latest/ascend_toolkit_install.info"),
+        Path("/usr/local/Ascend/ascend-toolkit/latest/version.cfg"),
+    ]
+    seen: set[str] = set()
+    out: list[Path] = []
     for c in cands:
+        key = str(c)
+        if key not in seen:
+            seen.add(key)
+            out.append(c)
+    return out
+
+
+def _cann_plausible(v: str | None) -> bool:
+    """过滤 `version=1.0` 这类与 CANN 无关的版本串。"""
+    if not v:
+        return False
+    major, _minor = HW.cann_major_minor(v)
+    return major >= 5
+
+
+def _cann_from_files() -> str | None:
+    """从 CANN 安装目录里的 version/install 文件读取（不依赖 torch_npu）。"""
+    values: list[str] = []
+    for c in _cann_candidate_files():
         try:
             if c.is_file():
-                got = parse_cann_version_from_text(c.read_text(encoding="utf-8", errors="ignore"))
+                got = parse_cann_version_from_text(
+                    c.read_text(encoding="utf-8", errors="ignore"))
                 if got:
-                    return got
+                    values.append(got)
         except Exception:                      # pragma: no cover - 环境相关
             continue
+    # 优先 rc 串（CANN 8.3rc2），其次 plausible 的 8.x/9.x 版本；避免版本文件里
+    # 无关的 `version=1.0` 抢先返回。
+    for got in values:
+        if "rc" in got:
+            return got
+    for got in values:
+        if _cann_plausible(got):
+            return got
+    # 所有候选都像 version=1.0 这类无关串：宁可返回 None，也不要拿假值去卡/骗 Gate。
     return None
+
+
+def _clean_cann_probe(raw) -> str | None:
+    """把 torch_npu 返回的各种 CANN 串规范到 `8.3rc2` 形式。"""
+    s = str(raw).strip() if raw is not None else ""
+    if not s or s.lower() in ("not known", "unknown", "none", "n/a", "na"):
+        return None
+    parsed = parse_cann_version_from_text(s)
+    return parsed if parsed else HW.normalize_cann(s)
+
+
+def _cann_from_torch_npu() -> tuple[str | None, str]:
+    """优先使用 torch_npu 官方 API 探测 CANN 版本。
+
+    torch_npu 2.8 的 `torch_npu.version` 只有 `__version__`，没有 `cann` 属性；
+    真正的 API 是 `torch_npu.utils.get_cann_version(module="CANN")`（C++ 扩展提供，
+    不依赖 `ASCEND_HOME_PATH` 里可能混入的无关 version.cfg）。
+    """
+    try:
+        import torch_npu                        # noqa: PLC0415
+    except Exception as exc:
+        return None, f"torch_npu unavailable: {exc!r}"
+    # 不同 torch_npu 构建的公开路径不同：
+    #   2.8 官方 __all__ 在 torch_npu/utils/__init__.py 暴露 get_cann_version，
+    #   实际函数定义在 torch_npu.npu.utils；少数构建会在 torch_npu.npu 重导出。
+    api_paths = (
+        ("utils", "get_cann_version"),
+        ("npu", "utils", "get_cann_version"),
+        ("npu", "get_cann_version"),
+    )
+    apis: list[tuple[object, str]] = []
+    for path in api_paths:
+        obj = torch_npu
+        for part in path:
+            obj = getattr(obj, part, None)
+            if obj is None:
+                break
+        if callable(obj):
+            qual = "torch_npu." + ".".join(path)
+            apis.append((obj, qual))
+    for fn, qual in apis:
+        for module in ("CANN", "TOOLKIT", "RUNTIME", "COMPILER"):
+            try:
+                raw = fn(module)
+            except Exception:
+                continue
+            cleaned = _clean_cann_probe(raw)
+            if cleaned and _cann_plausible(cleaned):
+                return cleaned, f'{qual}("{module}")'
+    # 兼容旧/厂商版本：少数构建把 cann 挂在 torch_npu.version 下。
+    for attr in ("cann", "cann_version"):
+        cleaned = _clean_cann_probe(getattr(getattr(torch_npu, "version", None), attr, None))
+        if cleaned and _cann_plausible(cleaned):
+            return cleaned, f"torch_npu.version.{attr}"
+    return None, "torch_npu API unavailable"
 
 
 def query_cann_version() -> tuple[str | None, str]:
     """尽力探测 CANN 版本，返回 `(version, source)`。
 
-    顺序：`torch_npu.version.cann` → CANN 安装目录 version 文件 → `npu-smi info`。
-    全部失败返回 `(None, "unavailable")`。
+    顺序：`torch_npu.utils.get_cann_version` → `torch.version.cann` → `npu-smi info`
+    → 安装目录 version/install 文件。全部失败返回 `(None, "unavailable")`。
     """
+    v, source = _cann_from_torch_npu()
+    if v:
+        return v, source
+
     try:
-        import torch_npu                        # noqa: PLC0415
-        v = getattr(getattr(torch_npu, "version", None), "cann", None)
-        if v:
-            return HW.normalize_cann(v), "torch_npu.version.cann"
+        import torch                            # noqa: PLC0415
+        cleaned = _clean_cann_probe(getattr(getattr(torch, "version", None), "cann", None))
+        if cleaned and _cann_plausible(cleaned):
+            return cleaned, "torch.version.cann"
     except Exception:
         pass
-    v = _cann_from_files()
-    if v:
-        return v, "ascend_toolkit/version.cfg"
+
     exe = shutil.which("npu-smi")
     if exe:
         try:
             proc = subprocess.run([exe, "info"], capture_output=True,
                                   text=True, timeout=10, check=False)  # noqa: S603
             v = parse_cann_version_from_text(proc.stdout or "")
-            if v:
+            if v and _cann_plausible(v):
                 return v, "npu-smi info"
         except Exception:                      # pragma: no cover
             pass
+
+    v = _cann_from_files()
+    if v:
+        return v, "ascend_*_install.info/version.cfg"
     return None, "unavailable"
 
 
@@ -289,13 +404,21 @@ def check_arch(rep: Report, allow_non_target: bool) -> dict:
 
 
 def _bf16_probe(torch_mod, accel: str) -> bool:
-    """真实跑一次 bf16 小算子（910B 支持 bf16；报告必须来自实测而不是假定）。"""
+    """真实跑一次 bf16 小算子（910B 支持 bf16；报告必须来自实测而不是假定）。
+
+    注意：8x8 全 1 矩阵乘法的每个元素 = 8，总和 = 8*8*8 = 512。此前误写成 64，
+    导致真实 NPU 上 bf16 明明可用也返回 False（review R8-B1）。
+    """
     try:
         dev = torch_mod.device(HW.device_string(accel))
         a = torch_mod.ones((8, 8), dtype=torch_mod.bfloat16, device=dev)
         b = torch_mod.ones((8, 8), dtype=torch_mod.bfloat16, device=dev)
         c = a @ b
-        return float(c.float().sum().item()) == 64.0 * 1.0 and str(c.dtype).endswith("bfloat16")
+        if not str(c.dtype).endswith("bfloat16"):
+            return False
+        expected = float(a.shape[0] * a.shape[1] * b.shape[1])  # 8*8*8 = 512
+        got = float(c.float().sum().item())
+        return abs(got - expected) <= max(1e-3, abs(expected) * 1e-6)
     except Exception:
         return False
 

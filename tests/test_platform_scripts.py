@@ -241,6 +241,61 @@ class TestCheckEnvTargetProfile(unittest.TestCase):
         # 依赖分档只看 profile
         self.assertIn('required_level = "warn" if profile == "base" else "hard"', src)
 
+    def test_cann_parser_prefers_real_version_over_unrelated_version_cfg(self):
+        """Review R8：`version.cfg` 里的 `version=1.0` 不能抢在 CANN 8.3rc2 前面。"""
+        import types
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "ascend-toolkit" / "latest"
+            root.mkdir(parents=True)
+            (root / "version.cfg").write_text("version=1.0\n", encoding="utf-8")
+            (root / "ascend_toolkit_install.info").write_text(
+                "version=8.3.RC2\n", encoding="utf-8")
+            with mock.patch.dict(os.environ, {"ASCEND_HOME_PATH": str(root)}):
+                self.assertEqual(self.mod._cann_from_files(), "8.3rc2")
+
+    def test_cann_from_files_ignores_implausible_version_only(self):
+        """只有无关的 version=1.0 时不能把它当 CANN 版本交给 Gate。"""
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as td:
+            bad = Path(td) / "version.cfg"
+            bad.write_text("version=1.0\n", encoding="utf-8")
+            with mock.patch.object(self.mod, "_cann_candidate_files", return_value=[bad]):
+                self.assertIsNone(self.mod._cann_from_files())
+
+    def test_query_cann_version_prefers_torch_npu_official_api(self):
+        """torch_npu 2.8 的 CANN API 是 `torch_npu.utils.get_cann_version()`，
+        不是不存在的 `torch_npu.version.cann`。"""
+        import types
+        from unittest import mock
+        fake = types.ModuleType("torch_npu")
+        fake.utils = types.SimpleNamespace(
+            get_cann_version=lambda module="CANN": "8.3.RC2")
+        fake.npu = types.SimpleNamespace(
+            get_cann_version=lambda module="CANN": "8.3.RC2")
+        fake.version = types.SimpleNamespace(__version__="2.8.0")
+        with mock.patch.dict(sys.modules, {"torch_npu": fake}):
+            version, source = self.mod.query_cann_version()
+        self.assertEqual(version, "8.3rc2")
+        self.assertIn("torch_npu.utils.get_cann_version", source)
+
+    def test_parse_cann_version_variants(self):
+        f = self.mod.parse_cann_version_from_text
+        self.assertEqual(f("version=8.3.RC2"), "8.3rc2")
+        self.assertEqual(f("CANN Version: 8.3.RC2"), "8.3rc2")
+        self.assertEqual(f("Version=8.3.rc2"), "8.3rc2")
+        self.assertIsNone(f("no version here"))
+
+    def test_bf16_probe_math_is_correct(self):
+        """Review R8-B1：8x8 全 1 matmul 的和是 512（不是 64），不能把真实 bf16 判 False。"""
+        try:
+            import torch
+        except Exception:
+            self.skipTest("torch not available")
+        if not hasattr(torch, "bfloat16"):
+            self.skipTest("torch without bfloat16")
+        self.assertTrue(self.mod._bf16_probe(torch, "cpu"))
+
     def test_parse_cuda_driver_from_smi(self):
         f = self.mod.parse_cuda_driver_from_smi
         self.assertEqual(
@@ -388,6 +443,45 @@ class TestCommittedE0GateRecompute(unittest.TestCase):
                          "f7c2c58bd035294f0e0d80a9103c366877836249fcd6db42269269c85d94b87e")
         # 读取方必须能解析相对路径
         self.assertIn("V4 / path", _read("tools/verify_reference.py"))
+
+
+class TestRunTrainAllModeRunsFullPipeline(unittest.TestCase):
+    """`--mode all` 必须是 E1→E10 全链路，而不是只跑首个阶段。"""
+
+    def setUp(self):
+        self.src = _read("run_train.sh")
+
+    def test_all_mode_has_full_stage_sequence(self):
+        for token in (
+            "all_stages=(E1 E2 E3 E4 E5 E6 E7 E8 E9 E10)",
+            "run_stage ||",
+            "exit 21",
+            "all_pipeline_progress.json",
+        ):
+            self.assertIn(token, self.src)
+
+    def test_all_mode_uses_all_subroutes(self):
+        for token in (
+            "--channel-independence-ablation",
+            "--rel-pos-ablation",
+            "--capacity-ablation",
+            "--target all",
+            "--phase all",
+        ):
+            self.assertIn(token, self.src)
+
+    def test_e3_pipeline_uses_run_root_and_all_scripts(self):
+        block = self.src[self.src.index("    E3)"): self.src.index("    E4)")]
+        self.assertIn('--run-root "$RUN_ROOT"', block)
+        self.assertNotIn('--out-dir "$RUN_ROOT/E3"', block)
+        for script in ("E3/code/train_seq.py", "E3/code/rf_ablation.py",
+                       "E3/code/compare_row_vs_seq.py"):
+            self.assertIn(script, block)
+
+    def test_progress_file_is_written_to_persistent_data_root(self):
+        self.assertIn('ALL_PROGRESS="$STATE_DIR/all_pipeline_progress.json"', self.src)
+        self.assertIn('mark_progress "$STAGE" running', self.src)
+        self.assertIn('mark_progress "$STAGE" done', self.src)
 
 
 class TestBootstrapDataTarballResolution(unittest.TestCase):

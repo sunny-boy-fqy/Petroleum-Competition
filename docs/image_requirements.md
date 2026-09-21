@@ -143,7 +143,7 @@ bash "$(find /code/workspace -name run_train.sh | head -1)" --mode env
 [OK  ] torch_version           torch 2.8.0 (hard: major.minor==2.8)
 [OK  ] torch_version_declared  torch 2.8.0 vs 声明 2.8.0（patch/构建串漂移不阻塞）
 [OK  ] torch_npu_version       torch_npu 2.8.0 (hard: major.minor==2.8，必须与 torch 同小版本)
-[OK  ] cann_version            CANN 8.3rc2 (from torch_npu.version.cann; hard: major.minor==8.3)
+[OK  ] cann_version            CANN 8.3rc2 (from torch_npu.utils.get_cann_version("CANN"); hard: major.minor==8.3)
 [OK  ] cann_version_declared   CANN 8.3rc2 vs 声明 8.3rc2（rc/补丁漂移不阻塞）
 [OK  ] accelerator_available   detect_accelerator=npu（目标 npu；torch.npu.is_available 决定 NPU 路径）
 [OK  ] device_is_910b          Ascend910B... 64.0 GiB HBM；count=1
@@ -160,7 +160,7 @@ hard failures: 0
 > （`hard failures: 0` 仍然是唯一判据）。
 
 > **CANN 语义（沿用 R4-B1 的教训，务必分清）**：
-> - `torch_npu.version.cann` / `ascend-toolkit/version.cfg` / `npu-smi info` 报的是**工具包/运行时版本**；
+> - `torch_npu.utils.get_cann_version("CANN")` / `ascend-*_install.info` / `npu-smi info` 报的是**工具包/运行时版本**；
 > - `check_env.py` 三层口径：**hard** = 能探测到且 major.minor == **8.3**；
 >   **warn** = 归一化后是否等于声明值 **8.3rc2**（`8.3.RC2` / `8.3.rc2` 等价）；
 > - 四审的历史教训：硬断言某个具体 runtime（12.4 / 12.6）会让云端 `--mode env` 必然

@@ -138,7 +138,7 @@ if python3 -m pip install --no-cache-dir --dry-run "${PKGS[@]}" 2>/dev/null \
 fi
 
 python3 -m pip install --no-cache-dir "${PKGS[@]}"
-python3 -m pip cache purge || true
+python3 -m pip cache purge 2>/dev/null || true
 
 # 3) 冻结事实（写**持久**目录，任务结束不丢）
 python3 -m pip freeze > "$REPORTS_DIR/cloud_frozen.txt"

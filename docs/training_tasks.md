@@ -125,6 +125,7 @@ git archive --format=zip --prefix='' -o dist/v4_code_src.zip HEAD
 
 | 阶段 | 启动命令 | 建议时长（软预算） | 产出 |
 |---|---|---|---|
+| **E1→E10 全链路** | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode all` | 数十小时（受平台 7×24h 限制，需拆任务） | `/data/v4/{runs,reports,state,logs}` 全链路产物；进度见 `/data/v4/state/all_pipeline_progress.json` |
 | E1 行级基线 | `bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage E1` | 2h | `$RUN_ROOT/E1/*`、OOF |
 | E3 序列主干 | `... --stage E3` | 20h | `$RUN_ROOT/E3/*` |
 | E8 集成 | `... --stage E8` | 40h | `$RUN_ROOT/E8/*` |
