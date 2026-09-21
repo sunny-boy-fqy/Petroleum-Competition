@@ -123,6 +123,15 @@ class TestRunTraining(unittest.TestCase):
             self.assertTrue(np.isfinite(rec["total"]))
             self.assertGreaterEqual(rec["disk_free_gb"], 0.0)
 
+    def test_device_placement_guards_are_present(self):
+        """NPU 回归：E1/row fold 的 model 与 data 必须在同一 device 上。"""
+        import inspect
+        from src.training import fold_runner as FR
+        self.assertIn("model.to(device)", inspect.getsource(L.run_training))
+        fsrc = Path(FR.__file__).read_text(encoding="utf-8")
+        self.assertIn("build_model(n_features=n_features", fsrc)
+        self.assertIn(".to(dev)", fsrc)
+
     def test_pause_flag_stops_before_next_epoch(self):
         """V4_PAUSE_FLAG 存在时，run_training 必须在 epoch 边界返回 paused。"""
         t, data = self._data(n_rows=256, n_wells=2)

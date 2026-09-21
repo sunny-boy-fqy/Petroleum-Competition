@@ -196,7 +196,7 @@ def run_two_phase_fold(fold: int, folds: dict, cache: str | Path, cfg: L.TrainCo
     a_in = y_atom_of(va_in)
 
     model = build_model(n_features=n_features, hidden=cfg.hidden, layers=cfg.layers,
-                        dropout=cfg.dropout, seed=cfg.seed, init_stats=target)
+                        dropout=cfg.dropout, seed=cfg.seed, init_stats=target).to(dev)
     fold_dir = Path(opt.run_dir) / f"fold{fold}" if opt.run_dir is not None else None
     select_dir = fold_dir / "select" if fold_dir is not None else None
     if select_dir is not None:
@@ -317,7 +317,7 @@ def run_two_phase_fold(fold: int, folds: dict, cache: str | Path, cfg: L.TrainCo
                             "patience": 10 ** 9})
     tr_t = L.TorchFold(tr_all, dev)
     model2 = build_model(n_features=n_features, hidden=cfg.hidden, layers=cfg.layers,
-                         dropout=cfg.dropout, seed=cfg.seed, init_stats=target)
+                         dropout=cfg.dropout, seed=cfg.seed, init_stats=target).to(dev)
     opt2 = torch.optim.AdamW(model2.parameters(), lr=float(cfg.lr),
                              weight_decay=float(cfg.weight_decay))
     fold_dir = Path(opt.run_dir) / f"fold{fold}" if opt.run_dir is not None else None

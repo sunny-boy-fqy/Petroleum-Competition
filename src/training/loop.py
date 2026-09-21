@@ -298,6 +298,11 @@ def run_training(model, data: TorchFold, cfg: TrainConfig,
     require("torch")
     install_pause_handlers()
     device = data.device
+    # 防御：调用方若忘记 model.to(device)，这里补上，避免 NPU 上 mat1 与权重设备不一致。
+    try:
+        model.to(device)
+    except Exception:
+        pass
     sp = dict(scaler_params or {})
 
     opt = optimizer or torch.optim.AdamW(model.parameters(), lr=float(cfg.lr),

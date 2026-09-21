@@ -442,6 +442,10 @@ def _train_loop(model, ds, cfg: L.TrainConfig, eval_fn, opt: SeqOptions, dev,
     import torch
 
     L.install_pause_handlers()
+    try:
+        model.to(dev)
+    except Exception:
+        pass
     opt_ = opt
     o = optimizer or torch.optim.AdamW(model.parameters(), lr=float(cfg.lr),
                                        weight_decay=float(cfg.weight_decay))
