@@ -67,7 +67,7 @@ def write_json(path, payload) -> Path:
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="E8/P2 集成驱动（纯 numpy）")
-    ap.add_argument("--members", required=True,
+    ap.add_argument("--members", default=None,
                     help="逗号分隔的 name=path（外层 OOF；用于最终评分）")
     ap.add_argument("--inner-members", default=None,
                     help="逗号分隔的 name=path（**inner-OOF**，仅用于选权重/decay）")
@@ -195,9 +195,27 @@ def fused_decode(fused: dict, tau=None) -> np.ndarray:
     return cont
 
 
+
+def default_member_paths(run_root: Path) -> dict[str, Path]:
+    """未显式提供 --members 时，自动发现常见阶段 OOF 作为集成成员。"""
+    candidates = {
+        "E1": run_root / "E1" / "oof.npz",
+        "E3_unet": run_root / "E3" / "oof_unet.npz",
+        "E3_tcn": run_root / "E3" / "oof_tcn.npz",
+        "E4_patchtf": run_root / "E4" / "oof_patchtf.npz",
+        "E6": run_root / "E6" / "state" / "oof.npz",
+    }
+    out = {k: v for k, v in candidates.items() if v.is_file()}
+    if not out:
+        raise SystemExit("[E8] 未提供 --members，且自动发现不到任何可用 OOF；"
+                         "先跑 E1/E3/E4/E6 生成 OOF，或显式传 name=path。")
+    return out
+
+
 def run(args) -> int:
     # 先校验成员路径（缺文件/格式错要**先**报错，而不是先尝试建 out-dir 再抛权限错）
-    member_paths = parse_members(args.members)
+    member_paths = (parse_members(args.members) if args.members
+                    else default_member_paths(Path(args.run_root)))
     inner_paths = parse_members(args.inner_members) if args.inner_members else None
     if inner_paths is not None:
         unknown = sorted(set(inner_paths) - set(member_paths))

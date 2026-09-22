@@ -1,17 +1,20 @@
 {
   "total_plan_files": 46,
-  "total_lines": 6875,
+  "total_lines": 6876,
   "e0_reports": {
-    "files": 10,
+    "files": 13,
     "names": [
       "E0_cloud_gate.json",
       "E0_contract_tests.json",
       "E0_data_card.json",
+      "E0_final_acceptance.json",
       "E0_folds.json",
       "E0_gate.json",
       "E0_gate_prereg.json",
       "E0_gate_result.json",
+      "E0_goal_audit.json",
       "E0_local_contract_gate.json",
+      "E0_pipeline_check.json",
       "E0_plan_stats.json",
       "E0_score_check.json"
     ]
@@ -28,7 +31,7 @@
   },
   "p_level": {
     "files": 33,
-    "lines": 5224,
+    "lines": 5225,
     "avg": 158
   },
   "per_file": {
@@ -50,7 +53,7 @@
     "E0/P2/PLAN.md": 157,
     "E0/P3/PLAN.md": 160,
     "E1/P0/PLAN.md": 162,
-    "E1/P1/PLAN.md": 195,
+    "E1/P1/PLAN.md": 196,
     "E10/P0/PLAN.md": 158,
     "E10/P1/PLAN.md": 156,
     "E10/P2/PLAN.md": 143,

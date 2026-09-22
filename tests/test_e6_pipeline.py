@@ -146,6 +146,17 @@ class TestE6ScriptContract(unittest.TestCase):
                      "--shuffle-control"):
             self.assertIn(flag, out.stdout, flag)
 
+    def test_tau_inner_oof_before_full_retrain(self):
+        """回归：τ 必须来自只见过 inner_tr 的模型，不能再用外层全量重训后的模型预测 inner_val。"""
+        src = (V4 / "E6" / "code" / "train_state.py").read_text(encoding="utf-8")
+        i_inner_stage2 = src.index("run_stage(model, f_in_tr, cfg, 2")
+        i_pred_in = src.index("pred_in = predict_fold(model, f_in_va)")
+        i_full_retrain = src.index("model_final = build_model")
+        self.assertLess(i_inner_stage2, i_pred_in,
+                        "inner stage2 必须先于 inner-OOF 预测")
+        self.assertLess(i_pred_in, i_full_retrain,
+                        "τ 必须在任何使用 f_tr 的最终重训之前选完")
+
 
 if __name__ == "__main__":
     unittest.main()

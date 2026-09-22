@@ -57,6 +57,7 @@ from src.score import score_arrays  # noqa: E402
 from src.training import checkpoint as CK  # noqa: E402
 from src.training import loop as L  # noqa: E402
 from src.training import metrics as M  # noqa: E402
+from src.training import recipe as R  # noqa: E402
 from src.validation import folds as FOLDS  # noqa: E402
 from src.validation import gates as G  # noqa: E402
 
@@ -281,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
                         time_budget_h=args.time_budget_h, device=args.device,
                         amp_dtype=args.amp_dtype, min_free_gb=args.min_free_gb,
                         disk_path=args.disk_path)
+    R.apply_loss_recipe(cfg)
     t_start = time.time()
     cache_info = {"skipped": True} if args.skip_cache else ensure_cache(args)
     cache = Path(args.cache_root)
@@ -308,7 +310,8 @@ def main(argv: list[str] | None = None) -> int:
             "primary_threshold_key": "min_delta",
             "baseline_version": "CONST", "baseline_artifact": str(const_baseline_path),
             "baseline_manifest_sha256": sha256_file(const_baseline_path),
-            "thresholds": {"min_delta": 7.5, "min_effect_floor": 0.0, "oof_total_min": 78.0},
+            "thresholds": {"min_delta": 7.5, "min_effect_floor": 0.0,
+                           "oof_total_min": 78.0, "min_same_direction_folds": 5},
             "alpha": 0.05, "multiplicity": "none", "candidate_budget": 1,
             "bootstrap_iters": 1000, "bootstrap_unit": "well_row_weighted_cluster",
             "pilot_std": None, "mde_units": C.EXPECTED_N_TRAIN_WELLS,
@@ -320,6 +323,12 @@ def main(argv: list[str] | None = None) -> int:
     errs = G.validate_prereg(prereg)
     if errs:
         print("[E1] PREREG INVALID:", errs, file=sys.stderr)
+        return 6
+    # 审查 M2：预注册必须显式包含“5 折同向”阈值。若读到旧版预注册（没有该键），
+    # 不得静默按旧口径判 Gate；必须新建修订号（或删除旧文件）后重跑。
+    if "min_same_direction_folds" not in (prereg.get("thresholds") or {}):
+        print("[E1] PREREG 缺少 thresholds.min_same_direction_folds；"
+              "请新建修订号或删除旧预注册后重跑（不得静默沿用旧口径）", file=sys.stderr)
         return 6
 
     # ---- 逐折
@@ -382,8 +391,9 @@ def main(argv: list[str] | None = None) -> int:
     for t, name in enumerate(C.TARGETS):
         ps, rs, f1s = [], [], []
         for r in results:
-            pr = M.atomic_precision_recall(y_atom_of(r["va"]) >= 0.5, r["pred"]["q_atom"],
-                                           r["tau"]["tau"])[name]
+            pr = M.atomic_precision_recall(
+                y_atom_of(r["va"]) >= 0.5, r["pred"]["q_atom"],
+                r["tau"]["tau"], mask=mask_of(r["va"]) >= 0.5)[name]
             ps.append(pr["precision"]); rs.append(pr["recall"]); f1s.append(pr["f1"])
         head[name] = {"precision": float(np.nanmean(ps)), "recall": float(np.nanmean(rs)),
                       "f1": float(np.nanmean(f1s)),
@@ -420,7 +430,8 @@ def main(argv: list[str] | None = None) -> int:
     delta_well = well_tot - well_tot_const
     boot = FOLDS.bootstrap_ci(delta_well, iters=int(prereg["bootstrap_iters"]),
                               weights=well_rows, seed=cfg.seed)
-    folds_all_same_direction = all(f["delta_vs_const"] > 0 for f in fold_rows)
+    same_direction_folds = int(sum(f["delta_vs_const"] > 0 for f in fold_rows))
+    folds_all_same_direction = bool(same_direction_folds == len(fold_rows))
 
     metrics = {
         "stage": "E1", "candidate_id": "E1_PD0",
@@ -484,7 +495,7 @@ def main(argv: list[str] | None = None) -> int:
             for v in head.values()),
         "disk_budget_ok": bool((disk or {}).get("level") == "ok"),
         "training_time_log_valid": bool(json.loads(time_log.read_text(encoding="utf-8"))["valid"]),
-        "checkpoint_resumable": bool(results and results[0]["resumable"]["ok"]),
+        "checkpoint_resumable": bool(results and all(r["resumable"]["ok"] for r in results)),
         "no_label_leak": bool(all(set(r["tr_wells"]).isdisjoint(set(r["va_wells"]))
                                   and set(r["fit_wells"]).issubset(set(r["tr_wells"]))
                                   and set(r["inner_val_wells"]).issubset(set(r["tr_wells"]))
@@ -494,6 +505,7 @@ def main(argv: list[str] | None = None) -> int:
               "oof_total": float(gated_score["total"]),
               "delta": float(gated_score["total"] - C.CONSTANT_BASELINE_OOF),
               "paired_ci_low": float(boot["ci_low"]),
+              "same_direction_folds": int(same_direction_folds),
               "por_acc": float(gated_score["acc_por"]),
               "perm_acc": float(gated_score["acc_perm"]),
               "sw_acc": float(gated_score["acc_sw"]),
@@ -507,6 +519,7 @@ def main(argv: list[str] | None = None) -> int:
             "oof_total": result["oof_total"], "delta_vs_const": result["delta"],
             "paired_ci_low": result["paired_ci_low"],
             "folds_all_same_direction": bool(folds_all_same_direction),
+            "same_direction_folds": int(same_direction_folds),
             "thresholds": prereg["thresholds"], "checks": checks,
             "placeholder_min_acc": min_ph, "placeholder_min_acc_required": 0.98,
             "placeholder_ok": bool(min_ph == min_ph and min_ph >= 0.98),

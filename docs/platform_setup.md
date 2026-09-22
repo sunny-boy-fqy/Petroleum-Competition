@@ -7,6 +7,12 @@
 > [为开发机准备数据](http://discovery-staging.intern-ai.org.cn/docs/workbench/data-prepare)。
 > 本文把这些约定落到 v4 的具体配置上。**平台文档若与本文件冲突，以平台文档为准。**
 
+> **交付纪律（每次任务完成后必须执行，缺一不可）**：先更新文档（README/PLAN/status/
+> 阶段报告等）→ `git add -A` → `git commit` → `git push origin HEAD:master HEAD:main`
+> → 运行 `python3 tools/pack_code_zip.py` 把**整个项目代码**打包到
+> `/mnt/d/tmp/Petroleum-Competition/`（WSL 路径，对应 Windows `D:\tmp\Petroleum-Competition\`）。
+> **没有完成“更新文档 + add + commit + push + 打包”这五步，任务不算完成。**
+
 ---
 
 ## 一、平台关键约定（决定了 v4 的目录设计）

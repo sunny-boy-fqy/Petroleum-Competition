@@ -46,6 +46,7 @@ from src.score import score_arrays  # noqa: E402
 from src.training import fold_runner as FR  # noqa: E402
 from src.training import loop as L  # noqa: E402
 from src.training import metrics as M  # noqa: E402
+from src.training import recipe as R  # noqa: E402
 from src.validation import folds as FOLDS  # noqa: E402
 from src.validation import gates as GATES  # noqa: E402
 
@@ -177,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
                         seed=args.seed, device=args.device, amp_dtype=args.amp_dtype,
                         time_budget_h=args.time_budget_h, min_free_gb=args.min_free_gb,
                         disk_path=args.disk_path)
+    R.apply_loss_recipe(cfg)
     t_start = time.time()
     print(f"[E2] folds={fold_list} epochs={cfg.epochs} device={cfg.device} "
           f"wells(train/test)={len(train_wells)}/{len(test_wells)}", flush=True)

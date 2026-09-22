@@ -76,23 +76,38 @@ def atomic_rows_report(y_true: "np.ndarray", y_pred: "np.ndarray", y_atom: "np.n
     return out
 
 
-def atomic_precision_recall(y_atom: "np.ndarray", q_atom: "np.ndarray", tau) -> dict[str, Any]:
-    """原子头在阈值 τ 下的逐目标 precision/recall/f1（τ 为标量或 (3,)）。"""
+def atomic_precision_recall(y_atom: "np.ndarray", q_atom: "np.ndarray", tau,
+                           mask: Any | None = None) -> dict[str, Any]:
+    """原子头在阈值 τ 下的逐目标 precision/recall/f1（τ 为标量或 (3,)）。
+
+    `mask` 给出时，只统计对应目标被观测到的行；缺测行既不是正例也不是负例。
+    """
     y = np.asarray(y_atom, dtype=bool)
     q = np.asarray(q_atom, dtype="float64")
+    if q.shape != y.shape:
+        raise ValueError(f"y_atom/q_atom 形状不一致：{y.shape} vs {q.shape}")
     taus = np.asarray(tau, dtype="float64").reshape(-1)
     if taus.size == 1:
         taus = np.repeat(taus, 3)
+    mm = None if mask is None else np.asarray(mask, dtype=bool)
     out: dict[str, Any] = {}
     for t, name in enumerate(C.TARGETS):
-        pred = q[:, t] >= taus[t]
-        tp = float(np.sum(pred & y[:, t]))
-        fp = float(np.sum(pred & ~y[:, t]))
-        fn = float(np.sum(~pred & y[:, t]))
+        if mm is None:
+            valid = np.ones(y.shape[0], dtype=bool)
+        elif mm.ndim == 1:
+            valid = mm
+        else:
+            valid = mm[:, t]
+        yv, qv = y[valid, t], q[valid, t]
+        pred = qv >= taus[t]
+        tp = float(np.sum(pred & yv))
+        fp = float(np.sum(pred & ~yv))
+        fn = float(np.sum(~pred & yv))
         prec = tp / (tp + fp) if (tp + fp) > 0 else float("nan")
         rec = tp / (tp + fn) if (tp + fn) > 0 else float("nan")
         f1 = (2 * prec * rec / (prec + rec)) if (prec + rec) > 0 else float("nan")
-        out[name] = {"precision": prec, "recall": rec, "f1": f1, "tau": float(taus[t])}
+        out[name] = {"precision": prec, "recall": rec, "f1": f1, "tau": float(taus[t]),
+                     "n_observed": int(valid.sum())}
     return out
 
 
@@ -126,7 +141,8 @@ def evaluate_predictions(y_true_label: "np.ndarray", mask: "np.ndarray", pred: d
         res["atomic_rows"] = atomic_rows_report(y_true_label, gated, y_atom,
                                                np.asarray(mask, dtype=bool))
         if tau is not None:
-            res["atomic_head"] = atomic_precision_recall(y_atom, pred["q_atom"], tau)
+            res["atomic_head"] = atomic_precision_recall(
+                y_atom, pred["q_atom"], tau, mask=np.asarray(mask, dtype=bool))
     return res
 
 
@@ -190,24 +206,43 @@ def average_precision(y_true: Any, score: Any) -> float | None:
     return float((precision * ys).sum() / ys.sum())
 
 
-def auc_report(y_atom: Any, q_atom: Any, targets: tuple[str, ...] = C.TARGETS) -> dict[str, Any]:
-    """逐目标 AUC/AP + 联合原子指标（E6/P0 §7 要求**逐目标**上报，不是只报总分）。"""
+def auc_report(y_atom: Any, q_atom: Any, targets: tuple[str, ...] = C.TARGETS,
+               mask: Any | None = None) -> dict[str, Any]:
+    """逐目标 AUC/AP + 联合原子指标（E6/P0 §7 要求**逐目标**上报，不是只报总分）。
+
+    `mask` 给出时，逐目标 AUC 只用该目标被观测到的行；联合原子 AUC 只用三目标
+    均被观测到的行。缺测行不得作为负例参与。
+    """
     y = np.asarray(y_atom, dtype=bool)
     q = np.asarray(q_atom, dtype="float64")
     if y.ndim != 2 or q.shape != y.shape:
         raise ValueError(f"y_atom/q_atom 必须同形状 (N,3)，got {y.shape}/{q.shape}")
+    mm = None if mask is None else np.asarray(mask, dtype=bool)
     per: dict[str, Any] = {}
     for t, name in enumerate(targets):
-        per[name] = {"auc": binary_auc(y[:, t], q[:, t]),
-                     "average_precision": average_precision(y[:, t], q[:, t]),
-                     "n_pos": int(y[:, t].sum()), "n": int(y.shape[0])}
-    joint = y.all(axis=1)
-    per["joint"] = {"auc": binary_auc(joint, q.min(axis=1)),
-                    "average_precision": average_precision(joint, q.min(axis=1)),
-                    "n_pos": int(joint.sum()), "n": int(y.shape[0])}
+        if mm is None:
+            valid = np.ones(y.shape[0], dtype=bool)
+        elif mm.ndim == 1:
+            valid = mm
+        else:
+            valid = mm[:, t]
+        per[name] = {"auc": binary_auc(y[valid, t], q[valid, t]),
+                     "average_precision": average_precision(y[valid, t], q[valid, t]),
+                     "n_pos": int(y[valid, t].sum()), "n": int(valid.sum())}
+    if mm is None:
+        joint_valid = np.ones(y.shape[0], dtype=bool)
+    elif mm.ndim == 1:
+        joint_valid = mm
+    else:
+        joint_valid = mm.all(axis=1)
+    joint = y[joint_valid].all(axis=1)
+    per["joint"] = {"auc": binary_auc(joint, q[joint_valid].min(axis=1)),
+                    "average_precision": average_precision(joint, q[joint_valid].min(axis=1)),
+                    "n_pos": int(joint.sum()), "n": int(joint_valid.sum())}
     vals = [v["auc"] for k, v in per.items() if k != "joint" and v["auc"] is not None]
     return {"per_target": per, "min_auc": (min(vals) if vals else None),
-            "note": "AUC 用平均秩（并列取均值）；单类标签返回 None 而不是 0.5"}
+            "note": "AUC 用平均秩（并列取均值）；单类标签返回 None 而不是 0.5；"
+                    "mask 给出时缺测行不参与"}
 
 
 def jsonable(obj: Any) -> Any:

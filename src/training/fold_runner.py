@@ -286,8 +286,10 @@ def run_two_phase_fold(fold: int, folds: dict, cache: str | Path, cfg: L.TrainCo
                                    meta=_select_meta(epoch, total), optimizer=opt_,
                                    scheduler=sched_)
 
+    _sp = {**target, "_row_scaler": scaler,
+           "_feature_names": list(scaler.names) if scaler.names else None}
     hist1 = L.run_training(model, tr_in_t, cfg, eval_fn=inner_eval, on_epoch=on_select,
-                           scaler_params=target, keep_best=True,
+                           scaler_params=_sp, keep_best=True,
                            optimizer=opt1, resume_epoch=resume1_epoch,
                            resume_scheduler_state=resume1_sched,
                            save_hook=save_select)
@@ -377,7 +379,10 @@ def run_two_phase_fold(fold: int, folds: dict, cache: str | Path, cfg: L.TrainCo
     hist2 = L.run_training(model2, tr_t, cfg2, eval_fn=None, optimizer=opt2,
                            resume_epoch=resume_epoch,
                            resume_scheduler_state=resume_sched,
-                           scaler_params=target, keep_best=False,
+                           scaler_params={**target, "_row_scaler": scaler,
+                                          "_feature_names": list(scaler.names)
+                                          if scaler.names else None},
+                           keep_best=False,
                            on_epoch=opt.on_final_epoch,
                            save_hook=save_last_hook, capacity_hook=capacity_hook)
     del tr_t, tr_all

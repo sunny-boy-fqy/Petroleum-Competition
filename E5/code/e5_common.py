@@ -135,17 +135,28 @@ def fold_wells(args, folds, k) -> tuple[list[str], list[str]]:
     return list(tr), list(va)
 
 
-def load_backbone(args, n_features: int, device):
-    """加载冻结骨干；无 checkpoint 时（仅 smoke/exploratory）随机初始化并**显式标记**。"""
+def load_backbone(args, n_features: int, device, fold: int | None = None):
+    """加载指定折的冻结骨干。
+
+    优先 ``--backbone-ckpt``；若它是目录或带 ``{fold}`` 的模板，则自动取该折权重。
+    未显式给出时，从 ``$V4_RUN_ROOT/E4/{arch}/fold{k}/best.pt`` 等位置自动发现。
+    只有 smoke/exploratory 下找不到时才退回随机初始化并显式标记。
+    """
     from src.training import frozen as FZ
+
     kw = dict(ARCH_KW[args.arch])
     if args.arch_kwargs:
         kw.update(json.loads(args.arch_kwargs))
-    if args.backbone_ckpt:
-        return FZ.load_frozen_model(args.backbone_ckpt, args.arch, n_features,
+    ckpt = FZ.resolve_backbone_checkpoint(
+        getattr(args, "backbone_ckpt", None), args.arch,
+        int(fold if fold is not None else getattr(args, "fold", 0)))
+    if ckpt is not None:
+        return FZ.load_frozen_model(str(ckpt), args.arch, n_features,
                                     arch_kwargs=kw, device=device), kw, False
-    if not (args.smoke or args.exploratory):
-        raise SystemExit("[E5] 需要 --backbone-ckpt（或用 --smoke/--exploratory 做链路预检）")
+    if not (getattr(args, "smoke", False) or getattr(args, "exploratory", False)):
+        raise SystemExit(
+            "[E5] 找不到该折的 --backbone-ckpt；可用目录/模板（如 "
+            "$V4_RUN_ROOT/E4/patchtf/fold{fold}/best.pt）或 --smoke/--exploratory 做链路预检")
     from src.training.seq_loop import build_seq_model
     L.set_seed(args.seed)
     model = build_seq_model(args.arch, int(n_features), **kw)
@@ -154,6 +165,7 @@ def load_backbone(args, n_features: int, device):
         p.requires_grad_(False)
     model.to(device)
     return model, kw, True
+
 
 
 def scaled_well(cache, well, spec, scaler, phys):
@@ -197,7 +209,7 @@ def collect_fold(args, cache, folds, k, spec, scalers, device) -> dict[str, Any]
                              "val_wells": va_wells, "n_train_rows": fit["n_train_rows"],
                              "feature_spec": spec.as_dict() if spec else None,
                              "note": "E5：尺度参数只由训练折拟合"})
-    model, arch_kw, random_init = load_backbone(args, n_features, device)
+    model, arch_kw, random_init = load_backbone(args, n_features, device, fold=k)
     inner_tr, inner_val = FR.inner_split(tr_wells, args.seed)
     if len(inner_val) < 1 or len(inner_tr) < 2:
         inner_tr, inner_val = list(tr_wells), list(va_wells)

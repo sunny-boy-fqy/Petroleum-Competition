@@ -44,9 +44,11 @@ from src.portability import HAS_TORCH  # noqa: E402
 from src.training import fold_runner as FR  # noqa: E402
 from src.training import loop as L  # noqa: E402
 from src.training import metrics as M  # noqa: E402
+from src.training import recipe as R  # noqa: E402
 from src.training import seq_loop as SL  # noqa: E402
 from src.validation import folds as FOLDS  # noqa: E402
 from src.validation import gates as GATES  # noqa: E402
+from src.versioning import registry as REG  # noqa: E402
 
 REQUIRED_CHECKS = ("contract_ok", "atomic_precision_reported", "disk_budget_ok",
                    "training_time_log_valid", "checkpoint_resumable", "no_label_leak")
@@ -150,6 +152,7 @@ def run_arch(args) -> int:
                         device=args.device, amp_dtype=args.amp_dtype, batch_size=1024,
                         time_budget_h=args.time_budget_h, min_free_gb=args.min_free_gb,
                         disk_path=args.disk_path)
+    R.apply_loss_recipe(cfg)
     if args.smoke:
         args.max_wells = args.max_wells or 8
         args.epochs = min(args.epochs, 2)
@@ -333,6 +336,35 @@ def run_arch(args) -> int:
                       "n_params": budget[tag]["n_params"], "exploratory": gate["exploratory"],
                       "rss_growth_mb": mem["growth_mb"]},
                      ensure_ascii=False, indent=2))
+    if not (args.exploratory or args.smoke) and gate["passed"]:
+        try:
+            ckpts = []
+            for r in results:
+                p = run_dir / args.arch / f"fold{int(r.fold)}" / "best.pt"
+                if p.is_file():
+                    ckpts.append(str(p))
+            if ckpts:
+                entry = {
+                    "candidate_id": f"E3_{tag}", "stage": "E3", "arch": args.arch,
+                    "feature_version": spec.key, "checkpoint": ckpts[0],
+                    "checkpoints": ckpts, "oof_path": str(oof_path),
+                    "oof_total": float(metrics["oof_total"]),
+                    "cv": {"total": float(metrics["oof_total"]),
+                           "por": float(metrics["acc_por"]),
+                           "perm": float(metrics["acc_perm"]),
+                           "sw": float(metrics["acc_sw"]),
+                           "missing_mode": C.SCORE_MISSING_MODE,
+                           "selection_score_only": True},
+                    "atomic": {"tau": None, "tau_selected_on": "inner_oof_official_total",
+                               "no_interpolation": True},
+                    "scalers": {"fitted_on": "train_fold_only"},
+                    "status": "local_only",
+                    "notes": "E3 序列主干；CPU 推理由 predictor 通用路径支持",
+                }
+                REG.upsert_candidate(entry, path=os.environ.get("V4_CANDIDATES") or None)
+        except Exception as exc:
+            print(f"[E3] 候选登记失败（{type(exc).__name__}: {exc}），不影响训练",
+                  file=sys.stderr, flush=True)
     if args.exploratory or args.smoke:
         return 0
     return 0 if gate["passed"] else 3

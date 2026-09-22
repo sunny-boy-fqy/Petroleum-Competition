@@ -270,10 +270,13 @@ def _well_feature_matrix(cache_root: str | Path, well: str, split: str, spec,
     from ..features import groups as GRP   # 延迟导入：避免 data<->features 循环
     if spec is None or spec.is_f1_only:
         return read_row_shard(cache_root, well, split)["X_raw"], list(F.FEATURE_NAMES)
-    # H2 审查修复：只要调用方提供了训练折拟合的 phys_params，就必须现场构造，
-    # 不得优先读 `cache/feat/<spec>/` —— 否则缓存的全局分位数会静默覆盖折内参数，
-    # 造成验证折分布进入训练特征（distribution leakage）。
-    if phys_params is not None and "phys" in tuple(spec.groups):
+    # H2 审查修复：只要 spec 含 phys，就必须使用调用方传入的**折内** phys_params，
+    # 不得回退到 `cache/feat/<spec>/` —— 否则缓存的全局分位数会静默造成分布泄漏。
+    if "phys" in tuple(spec.groups):
+        if phys_params is None:
+            raise ValueError(
+                "_well_feature_matrix: spec 含 phys 组但未提供 folded PhysicsParams；"
+                "禁止读取全局 feat 缓存（会造成训练/验证分布泄漏）。")
         shard = D.read_well_shard(cache_root, well, split)
         X, names = GRP.build_matrix(shard, spec, phys_params)
         return X, names

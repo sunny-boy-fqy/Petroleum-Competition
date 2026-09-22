@@ -62,16 +62,21 @@ class TestArmDefinitions(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.mod.build_arms("exp1", "nope")
 
-    def test_exp7_recorded_as_not_implemented(self):
-        self.assertTrue(any("exp7" in s for s in self.mod.NOT_IMPLEMENTED))
+    def test_exp7_is_implemented_and_opt_in(self):
+        self.assertFalse(any("exp7" in s for s in self.mod.NOT_IMPLEMENTED))
+        arms = self.mod.build_arms("exp7", None)
+        self.assertEqual(len(arms), 2)
+        self.assertTrue(all(a["group"] == "exp7" for a in arms))
+        self.assertTrue(all("lam3" in a["overrides"] for a in arms))
 
     def test_help_lists_knobs(self):
         out = subprocess.run([sys.executable, str(V4 / "E7" / "code" / "ablate_loss.py"),
                               "--help"], capture_output=True, text=True, timeout=120)
         self.assertEqual(out.returncode, 0, out.stderr[-600:])
         for flag in ("--arm-set", "--arms", "--inner-only", "--eval-outer", "--lam1",
-                     "--lam1-schedule", "--lam2", "--aux-normalize", "--boundary-kappa",
-                     "--boundary-sigma", "--perm-clamp", "--out-config"):
+                     "--lam1-schedule", "--lam2", "--lam3", "--aux-normalize",
+                     "--boundary-kappa", "--boundary-sigma", "--perm-clamp",
+                     "--out-config"):
             self.assertIn(flag, out.stdout, flag)
 
 
@@ -115,7 +120,7 @@ class TestAblateLossPipeline(unittest.TestCase):
                         "joint_atom_auc", "perm_low_tail", "eval_mode"):
                 self.assertIn(key, a)
             self.assertEqual(a["eval_mode"], "inner_only")
-        self.assertTrue(rep["not_implemented"])
+        self.assertEqual(rep["not_implemented"], [])
         self.assertIsNotNone(rep["recommended"])
         self.assertTrue((self.reports / "loss_v1_smoke.json").is_file())
         after = REPO_LOSS_CFG.read_text(encoding="utf-8") if REPO_LOSS_CFG.is_file() else None
@@ -141,6 +146,27 @@ class TestAblateLossPipeline(unittest.TestCase):
             self.assertIsNotNone(arm["final_loss"])
             self.assertIn("frac_abs_dz_lt_1", arm["perm_low_tail"])
             self.assertIn("tail_low_rate", arm["perm_low_tail"])
+
+    def test_custom_out_config_is_mirrored_to_reports(self):
+        """审查 H4 回归：E7 写自定义配置路径时，也必须镜像到 --reports-dir。"""
+        out_cfg = self.root / "custom_cfg" / "loss_v1.json"
+        self._run("--arm-set", "exp1", "--out-config", str(out_cfg))
+        self.assertTrue(out_cfg.is_file())
+        self.assertTrue((self.reports / "loss_v1.json").is_file(),
+                        "E7 配置必须镜像到 reports（随 mirror 持久化）")
+
+    def test_exp7_lam3_arms_actually_apply_physics(self):
+        """审查 H2 回归：exp7 的 lam3>0 必须真的产生非零 L_phys，而不是空操作。"""
+        rep = self._run("--arm-set", "exp7")
+        arms = {a["arm_id"]: a for a in rep["arms"]}
+        self.assertEqual(set(arms), {"exp7_lam3_0.02", "exp7_lam3_0.05"})
+        for arm in arms.values():
+            self.assertGreater(arm["phys_loss"], 0.0,
+                               f"{arm['arm_id']} 的 L_phys 不应为 0（空消融回归）")
+        # 基线没有物理项 -> parts 里不应出现 phys
+        base = self._run("--arm-set", "exp1")
+        for arm in base["arms"]:
+            self.assertEqual(arm["phys_loss"], 0.0)
 
     def test_arms_filter_and_unknown(self):
         rep = self._run("--arms", "exp1_align,exp1_aux")

@@ -32,8 +32,11 @@ from .. import constants as C
 from ..data import dataset as D
 from ..data import row_dataset as RD
 from ..features import basic as F
+from ..features import groups as GRP
+from ..features import physics as PH
 from ..portability import HAS_TORCH, require
 from ..training import checkpoint as CK
+from ..training import loop as L
 from ..training import metrics as M
 
 
@@ -52,12 +55,58 @@ class Manifest:
         return dict(self.raw.get("target_scalers", {}))
 
     @property
+    def arch(self) -> str:
+        m = dict(self.raw.get("model", {}))
+        return str(self.raw.get("arch") or m.get("arch") or "RowMLP")
+
+    @property
     def model_kwargs(self) -> dict[str, Any]:
         m = dict(self.raw.get("model", {}))
-        return {"n_features": int(m.get("n_features", F.N_FEATURES)),
+        return {"n_features": int(self.n_features),
                 "hidden": int(m.get("hidden", 256)),
                 "layers": int(m.get("layers", 2)),
                 "dropout": float(m.get("dropout", 0.0))}
+
+    @property
+    def arch_kwargs(self) -> dict[str, Any]:
+        """序列/MoE 结构参数；从 `arch_kwargs` 与 `model` 两个来源合并。"""
+        kw = dict(self.raw.get("arch_kwargs") or {})
+        m = dict(self.raw.get("model") or {})
+        for k, v in m.items():
+            if k in ("arch", "n_features"):
+                continue
+            kw.setdefault(k, v)
+        return kw
+
+    @property
+    def feature_names(self) -> list[str]:
+        names = self.raw.get("feature_names")
+        if names is None:
+            try:
+                names = self.row_scaler.names
+            except Exception:
+                names = None
+        return [str(x) for x in (names or [])]
+
+    @property
+    def feature_spec(self):
+        d = self.raw.get("feature_spec") or self.raw.get("spec")
+        if not isinstance(d, dict):
+            return None
+        try:
+            return GRP.FeatureSpec.from_dict(d)
+        except Exception:
+            return None
+
+    @property
+    def physics_params(self):
+        d = self.raw.get("physics_params") or self.raw.get("phys_params")
+        if not isinstance(d, dict):
+            return None
+        try:
+            return PH.PhysicsParams.from_dict(d)
+        except Exception:
+            return None
 
     @property
     def tau_atom(self):
@@ -65,7 +114,14 @@ class Manifest:
 
     @property
     def n_features(self) -> int:
-        return int(self.raw.get("model", {}).get("n_features", F.N_FEATURES))
+        m = dict(self.raw.get("model", {}))
+        n = m.get("n_features") or self.raw.get("n_features")
+        if n is not None:
+            return int(n)
+        try:
+            return int(len(self.row_scaler.names))
+        except Exception:
+            return int(F.N_FEATURES)
 
 
 def load_manifest(ckpt: str | Path) -> Manifest:
@@ -73,29 +129,94 @@ def load_manifest(ckpt: str | Path) -> Manifest:
     return Manifest(path=p, raw=CK.read_manifest(p))
 
 
+def _target_scaler_attrs(model):
+    """返回模型上需要按 manifest 覆盖的连续头标尺 tensor。"""
+    out = []
+    for attr in ("por_max", "sw_mu", "sw_sigma"):
+        v = getattr(model, attr, None)
+        if v is not None and hasattr(v, "fill_"):
+            out.append((attr, v))
+    head = getattr(model, "head", None)
+    if head is not None:
+        for attr in ("por_max", "sw_mu", "sw_sigma"):
+            v = getattr(head, attr, None)
+            if v is not None and hasattr(v, "fill_"):
+                out.append((attr, v))
+    return out
+
+
+def _apply_target_scalers(model, scalers: dict) -> None:
+    if not scalers:
+        return
+    import torch
+    with torch.no_grad():
+        for attr, buf in _target_scaler_attrs(model):
+            if attr not in scalers:
+                continue
+            val = float(scalers[attr])
+            if attr == "sw_sigma":
+                val = max(val, 1e-6)
+            buf.fill_(val)
+
+
+def _build_model_from_manifest(man: Manifest):
+    """按 manifest 的 arch/arch_kwargs 构建推理模型（RowMLP / 序列 / MMoE / 独立三模型）。"""
+    require("torch")
+    arch = str(man.arch).lower()
+    n_features = int(man.n_features)
+    if arch in ("rowmlp", "row_mlp", "row-mlp", "mlp"):
+        from ..models.row_mlp import build_model
+        return build_model(init_stats=None, **man.model_kwargs)
+    if arch in ("unet", "tcn", "patchtf"):
+        from ..training.seq_loop import build_seq_model
+        kw = {k: v for k, v in man.arch_kwargs.items() if k != "n_features"}
+        return build_seq_model(arch, n_features, **kw)
+    if arch in ("mmoe", "moe"):
+        from ..models.mmoe import MMoE
+        kw = man.arch_kwargs
+        return MMoE(
+            n_features,
+            hidden=int(kw.get("hidden", 128)),
+            n_experts=int(kw.get("n_experts", 4)),
+            dropout=float(kw.get("dropout", 0.1)),
+            gate_temp=float(kw.get("gate_temp", 1.0)),
+            expert_width=(None if kw.get("expert_width") is None
+                          else int(kw.get("expert_width"))),
+            perm_log_abs=float(kw.get("perm_log_abs", 6.0)),
+        )
+    if arch in ("independent", "independentheads", "independent_heads"):
+        from ..models.mmoe import IndependentHeads
+        kw = man.arch_kwargs
+        return IndependentHeads(
+            n_features,
+            hidden=int(kw.get("hidden", 256)),
+            dropout=float(kw.get("dropout", 0.1)),
+            perm_log_abs=float(kw.get("perm_log_abs", 6.0)),
+        )
+    raise ValueError(f"[predictor] 不支持的模型 arch={man.arch!r}")
+
+
 def load_model(ckpt: str | Path, manifest: Manifest | None = None, device: str = "cpu"):
-    """按 manifest 里的结构重建模型并载入权重（bf16 → float32）。"""
+    """按 manifest 重建任意已支持结构并载入权重（bf16 → float32）。"""
     require("torch")
     man = manifest or load_manifest(ckpt)
-    from ..models.row_mlp import build_model
-
-    scalers = man.target_scalers
-    model = build_model(init_stats=None, **man.model_kwargs)
-    # 连续头标尺必须与训练折一致（否则 SW/POR 反变换会整体偏移）
-    import torch
-    if scalers:
-        with torch.no_grad():
-            if "por_max" in scalers:
-                model.por_max.fill_(float(scalers["por_max"]))
-            if "sw_mu" in scalers:
-                model.sw_mu.fill_(float(scalers["sw_mu"]))
-            if "sw_sigma" in scalers:
-                model.sw_sigma.fill_(max(float(scalers["sw_sigma"]), 1e-6))
+    model = _build_model_from_manifest(man)
     CK.load_checkpoint(ckpt, model=model, map_location=device)
+    _apply_target_scalers(model, man.target_scalers)
     model.eval()
-    if device != "cpu":
+    if str(device) != "cpu":
         model.to(device)
     return model
+
+
+def cpu_inference_supported(manifest: Manifest) -> bool:
+    """当前 CPU 提交入口是否支持该 manifest 的结构。"""
+    arch = str(manifest.arch).lower()
+    return arch in ("rowmlp", "row_mlp", "row-mlp", "mlp",
+                    "unet", "tcn", "patchtf",
+                    "mmoe", "moe",
+                    "independent", "independentheads", "independent_heads")
+
 
 
 def predict_x(model, X, batch_size: int = 65536, device: str = "cpu") -> dict[str, Any]:
@@ -114,27 +235,101 @@ def predict_x(model, X, batch_size: int = 65536, device: str = "cpu") -> dict[st
     return {k: np.concatenate(v, axis=0) for k, v in out_chunks.items()}
 
 
+def build_inference_features(inputs, missing, depth, manifest: Manifest):
+    """按 manifest 的 FeatureSpec 构建原始特征矩阵（未标准化）。"""
+    spec = manifest.feature_spec
+    if spec is not None and tuple(spec.groups) != ("F1",):
+        if "phys" in tuple(spec.groups):
+            phys = manifest.physics_params
+            if phys is None:
+                raise ValueError("[predictor] manifest 的 feature_spec 含 phys，"
+                                 "但缺少 physics_params，无法安全重建 F2 输入。")
+        else:
+            phys = None
+        shard = {"inputs": inputs, "missing": missing, "depth": depth}
+        X, _names = GRP.build_matrix(shard, spec, phys_params=phys)
+        return X
+    return F.build_row_features(inputs, missing, depth)
+
+
+def predict_manifest(model, manifest: Manifest, X,
+                     batch_size: int = 65536, device: str = "cpu",
+                     chunk: int | None = None, overlap: int | None = None
+                     ) -> dict[str, Any]:
+    """统一推理入口：RowMLP/MMoE 走行级 batch；UNet/TCN/PatchTF 走分块 seq2seq。"""
+    require("torch")
+    import torch
+    device = device if isinstance(device, torch.device) else torch.device(device)
+    arch = str(manifest.arch).lower()
+    if arch in ("unet", "tcn", "patchtf"):
+        require("torch")
+        import numpy as np
+        from ..training import seq_loop as SL
+        n = int(np.asarray(X).shape[0])
+        # PatchTF 至少需要覆盖一个 patch；其余默认沿用 E3/E4 的 chunk/overlap。
+        patch_len = int(manifest.arch_kwargs.get("patch_len", 1) or 1)
+        c = int(chunk if chunk is not None else max(1024, patch_len))
+        c = min(c, max(n, 1))
+        ov = int(overlap if overlap is not None else min(128, max(c // 8, 0)))
+        if ov >= c:
+            ov = max(c // 8, 0)
+        cfg = L.TrainConfig(device=device, amp_dtype="fp32")
+        opt = SL.SeqOptions(spec=manifest.feature_spec, chunk=c, overlap=ov,
+                           batch_chunks=1, weight_kind="triangular", arch=arch)
+        return SL.predict_well_chunked(model, np.asarray(X, dtype="float32"),
+                                       cfg, opt, device)
+    return predict_x(model, X, batch_size=batch_size, device=device)
+
+
+def predict_well_components(model, manifest: Manifest, shard: dict,
+                            device: str = "cpu", decode_cfg=None,
+                            batch_size: int = 65536) -> tuple:
+    """单口井推理的**组件输出**：`(depth, cont, q_atom)`。
+
+    供折集成使用：调用方先融合多折的 `cont`/`q_atom`，再做一次原子硬切换。
+    这与项目“原子切换必须在融合之后”的纪律一致（审查 H3）。
+    """
+    import numpy as np
+    X_raw = build_inference_features(shard["inputs"], shard["missing"], shard["depth"],
+                                     manifest)
+    X = manifest.row_scaler.transform(X_raw)
+    out = predict_manifest(model, manifest, X, batch_size=batch_size, device=device)
+    cont = M.decode_continuous(out)
+    if decode_cfg is not None:
+        from . import decode as DEC
+        cont = DEC.apply_decode_config(cont, decode_cfg, q_atom=out["q_atom"])
+    return (np.asarray(shard["depth"], dtype="float64"),
+            np.asarray(cont, dtype="float64"),
+            np.asarray(out["q_atom"], dtype="float64"))
+
+
+def predict_well(model, manifest: Manifest, shard: dict,
+                 device: str = "cpu", decode_cfg=None,
+                 batch_size: int = 65536) -> tuple:
+    """对单口井的 raw shard 做推理并解码为标签尺度 `(depth, pred)`。"""
+    import numpy as np
+    depth, cont, q_atom = predict_well_components(
+        model, manifest, shard, device=device, decode_cfg=decode_cfg,
+        batch_size=batch_size)
+    tau = manifest.tau_atom
+    pred = M.atom_gate(cont, q_atom, tau) if tau is not None else cont
+    return depth, np.asarray(pred, dtype="float64")
+
+
 def predict_wells(model, manifest: Manifest, cache_root: str | Path,
                   wells: Sequence[str], split: str = "test",
-                  batch_size: int = 65536, device: str = "cpu") -> dict[str, Any]:
+                  batch_size: int = 65536, device: str = "cpu",
+                  decode_cfg=None) -> dict[str, Any]:
     """逐井推理并解码成标签尺度。
 
     返回 `{well_id: {"depth": (n,), "pred": (n,3)}}`（按井保存，避免全测试集常驻内存）。
     """
-    require("torch")
-    import numpy as np
-
-    scaler = manifest.row_scaler
-    tau = manifest.tau_atom
     per_well: dict[str, Any] = {}
     for w in wells:
         sh = D.read_well_shard(cache_root, w, split)
-        X_raw = F.build_row_features(sh["inputs"], sh["missing"], sh["depth"])
-        X = scaler.transform(X_raw)
-        out = predict_x(model, X, batch_size=batch_size, device=device)
-        cont = M.decode_continuous(out)
-        pred = M.atom_gate(cont, out["q_atom"], tau) if tau is not None else cont
-        per_well[w] = {"depth": np.asarray(sh["depth"], dtype="float64"), "pred": pred}
+        depth, pred = predict_well(model, manifest, sh, device=device,
+                                   decode_cfg=decode_cfg, batch_size=batch_size)
+        per_well[w] = {"depth": depth, "pred": pred}
     return per_well
 
 

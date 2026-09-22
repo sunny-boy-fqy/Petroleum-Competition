@@ -247,8 +247,11 @@ def run(args) -> int:
     write_json(reports / "E7_decode_search.json", report)
 
     # ---- 冻结配置（smoke 不写仓库）
+    shrink_ref = DEC.apply_bias(cont, selected["bias"])
     cfg = DEC.DecodeConfig(
         bias=selected["bias"], shrink=selected["shrink"],
+        shrink_centers={t: float(np.median(shrink_ref[:, i]))
+                        for i, t in enumerate(C.TARGETS)},
         quantile_shrink={t: 0.0 for t in C.TARGETS},
         expected_value=selected["expected_value"], tau=selected["tau"],
         sw_clip=(0.0, 100.0), inner_only=True, selected_on=str(oof_path),
@@ -257,6 +260,10 @@ def run(args) -> int:
     if args.smoke and out_cfg == V4 / "versions" / "configs" / "decode_v1.json":
         out_cfg = reports / "decode_v1_smoke.json"
     DEC.save_decode_config(cfg, out_cfg)
+    # 审查 H4：同上，镜像一份到 $REPORTS_DIR，供跨任务读取/打包。
+    mirror_cfg = reports / Path(out_cfg).name
+    if mirror_cfg.resolve() != Path(out_cfg).resolve():
+        DEC.save_decode_config(cfg, mirror_cfg)
 
     # ---- Gate（inner_only_selection 等）
     prereg_path = Path(args.prereg) if args.prereg else reports / "E7_P1_gate_prereg.json"

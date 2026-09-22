@@ -636,9 +636,16 @@ PY
         if [[ "$e8_expect" == "target" ]]; then log "!! --target 缺少取值"; return 1; fi
         run_e8_one() {
           local name="$1"; shift
+          local -a extra=()
+          # pseudo_label / ensemble 只读 OOF，不直接读 cache；传 --cache-root 会触发 argparse 错误。
+          case "$name" in
+            train_mmoe) extra+=(--cache-root "$CACHE_ROOT"
+                                --save-dir "$RUN_ROOT/E8/weights") ;;
+            well_branch) extra+=(--cache-root "$CACHE_ROOT") ;;
+          esac
           log "--- [E8] $name"
           python3 "$HERE/E8/code/$name.py" --reports-dir "$REPORTS_DIR" \
-            --run-root "$RUN_ROOT" --cache-root "$CACHE_ROOT" \
+            --run-root "$RUN_ROOT" "${extra[@]+"${extra[@]}"}" \
             "${e8_args[@]+"${e8_args[@]}"}" 2>&1 | tee -a "$LOG"
         }
         if [[ "$e8_target" == "all" ]]; then

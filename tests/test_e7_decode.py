@@ -131,6 +131,20 @@ def _make_oof(path: Path, *, biased: bool = True, seed: int = 0) -> None:
                                             dtype=object))
 
 
+
+    def test_apply_frozen_decode_config(self):
+        from src.inference import decode as DEC
+        pred = np.tile(np.array([[10.0, 1.0, 50.0]]), (4, 1))
+        cfg = DEC.DecodeConfig(
+            bias={"POR": 0.5, "PERM": 0.0, "SW": -1.0},
+            shrink={"POR": 1.0, "PERM": 1.0, "SW": 1.0},
+            shrink_centers={"POR": 10.0, "PERM": 1.0, "SW": 50.0})
+        out = DEC.apply_decode_config(pred, cfg)
+        np.testing.assert_allclose(out[0, 0], 10.5)
+        np.testing.assert_allclose(out[0, 1], 1.0)
+        np.testing.assert_allclose(out[0, 2], 49.0)
+
+
 class TestDecodeSearch(unittest.TestCase):
     def setUp(self):
         self._td = tempfile.TemporaryDirectory()

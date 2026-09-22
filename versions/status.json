@@ -5,7 +5,7 @@
   "project": {
     "version": "v4",
     "phase": "E0",
-    "summary": "E0 本地契约 Gate 13/13 PASS（云端 Gate 待 P0 实机）；计划全部完成（46 份 / 6,875 行，由 tools/plan_stats.py 实测）；三审 R3-C1..C3/H1..H5/M1..M5、四审 R4-B1..B3/H1..H3/M1..M6、五审 R5-B1/H1/H2/M1/M2/L1..L3 与六审 R6-M1/M2/L1..L3 已修复并回归验证；改进 proposal 已落进 PLAN.md / E6 与 src/",
+    "summary": "E0 本地契约 Gate 13/13 PASS（云端 Gate 待 P0 实机）；计划全部完成（46 份 / 6,876 行，由 tools/plan_stats.py 实测）；三审 R3-C1..C3/H1..H5/M1..M5、四审 R4-B1..B3/H1..H3/M1..M6、五审 R5-B1/H1/H2/M1/M2/L1..L3 与六审 R6-M1/M2/L1..L3 已修复并回归验证；改进 proposal 已落进 PLAN.md / E6 与 src/",
     "last_updated": "2026-09-19T21:10:00+00:00"
   },
   "stages": [
@@ -186,53 +186,63 @@
     {
       "stage": "E4",
       "title": "Patch Transformer 与多尺度",
-      "status": "pending",
+      "status": "in_progress",
       "p": [
         {
           "id": "P0",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         },
         {
           "id": "P1",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         }
-      ]
+      ],
+      "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
     },
     {
       "stage": "E5",
       "title": "逐目标精修",
-      "status": "pending",
+      "status": "in_progress",
       "p": [
         {
           "id": "P0",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         },
         {
           "id": "P1",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         },
         {
           "id": "P2",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         }
-      ]
+      ],
+      "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
     },
     {
       "stage": "E6",
       "title": "联合常量状态与原子门",
-      "status": "pending",
+      "status": "in_progress",
       "p": [
         {
           "id": "P0",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         },
         {
           "id": "P1",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         },
         {
           "id": "P2",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         }
       ],
       "gate": {
@@ -240,79 +250,95 @@
         "threshold": {
           "oof_total_min": 82.0
         }
-      }
+      },
+      "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
     },
     {
       "stage": "E7",
       "title": "评分对齐损失与解码",
-      "status": "pending",
+      "status": "in_progress",
       "p": [
         {
           "id": "P0",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         },
         {
           "id": "P1",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         }
-      ]
+      ],
+      "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
     },
     {
       "stage": "E8",
       "title": "多任务、井级分支与集成",
-      "status": "pending",
+      "status": "in_progress",
       "p": [
         {
           "id": "P0",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         },
         {
           "id": "P1",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         },
         {
           "id": "P2",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         }
-      ]
+      ],
+      "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
     },
     {
       "stage": "E9",
       "title": "诚实验证与提交护栏",
-      "status": "pending",
+      "status": "in_progress",
       "p": [
         {
           "id": "P0",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         },
         {
           "id": "P1",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         },
         {
           "id": "P2",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         }
-      ]
+      ],
+      "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
     },
     {
       "stage": "E10",
       "title": "全量重训、打包与提交",
-      "status": "pending",
+      "status": "in_progress",
       "p": [
         {
           "id": "P0",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         },
         {
           "id": "P1",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         },
         {
           "id": "P2",
-          "status": "pending"
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
         }
-      ]
+      ],
+      "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
     },
     {
       "stage": "E11",
@@ -453,5 +479,6 @@
         "L3_platform_setup_stale_path": "fixed（docs/platform_setup.md 的示例改为 /data/v4_data.tar.gz，并注明放别处必须 --tarball）"
       }
     }
-  }
+  },
+  "status_semantics": "stage.status / P.status 是**执行状态**：代码已实现且本地链路/契约验证通过记为 in_progress；只有对应云端正式 Gate 跑完并落盘证据才记为 done。"
 }

@@ -89,22 +89,38 @@ def apply_overrides(cfg: dict[str, str], sets: list[str]) -> dict[str, str]:
     return cfg
 
 
-def to_cli_args(cfg: dict[str, str]) -> list[str]:
-    """把配置里**阶段脚本认识**的键翻成 CLI（只翻确定存在的映射，避免拼错静默忽略）。"""
-    mapping = {
-        "features.version": "--spec",
-        "model.hidden": "--hidden",
-        "model.layers": "--layers",
-        "model.dropout": "--dropout",
-        "training.epochs": "--epochs",
-        "training.lr": "--lr",
-        "training.weight_decay": "--weight-decay",
-        "training.seed": "--seed",
-        "training.batch_size": "--batch-size",
-        "training.amp_dtype": "--amp-dtype",
-        "atomic.two_stage": None,              # 布尔开关由脚本自身默认（两阶段恒开）
-        "decode.missing_mode": None,           # 只读常量（constants.SCORE_MISSING_MODE）
-    }
+_BASE_MAPPING = {
+    "features.version": "--spec",
+    "model.hidden": "--hidden",
+    "model.layers": "--layers",
+    "model.dropout": "--dropout",
+    "training.epochs": "--epochs",
+    "training.lr": "--lr",
+    "training.weight_decay": "--weight-decay",
+    "training.seed": "--seed",
+    "training.batch_size": "--batch-size",
+    "training.amp_dtype": "--amp-dtype",
+}
+
+# 各阶段 argparse 实际接受的键；不做过滤会把 --hidden/--layers 传给 E3/E4/E5 等。
+_STAGE_MAPPING: dict[str, dict[str, str | None]] = {
+    "E1": dict(_BASE_MAPPING),
+    "E3": {k: v for k, v in _BASE_MAPPING.items()
+           if k not in ("model.hidden", "model.layers", "training.batch_size")},
+    "E4": {k: v for k, v in _BASE_MAPPING.items()
+           if k not in ("model.hidden", "model.layers", "training.batch_size")},
+    "E5": {k: v for k, v in _BASE_MAPPING.items()
+           if k not in ("model.layers", "training.batch_size")},
+    "E6": dict(_BASE_MAPPING),
+    "E7": dict(_BASE_MAPPING),
+    "E8": {k: v for k, v in _BASE_MAPPING.items() if k != "model.layers"},
+    "E10": dict(_BASE_MAPPING),
+}
+
+
+def to_cli_args(cfg: dict[str, str], stage: str = "E6") -> list[str]:
+    """把配置里**阶段脚本认识**的键翻成 CLI（按 stage 过滤，避免未知参数报错）。"""
+    mapping = _STAGE_MAPPING.get(stage, _BASE_MAPPING)
     args: list[str] = []
     for key, flag in mapping.items():
         if flag is None or key not in cfg:
@@ -126,7 +142,7 @@ def run(argv: list[str] | None = None) -> int:
         print(f"[train] FATAL: 阶段脚本不存在 {script}", file=sys.stderr)
         return 4
     passthrough = [a for a in args.rest if a != "--"]
-    cmd = [sys.executable, str(script), *to_cli_args(cfg), *passthrough]
+    cmd = [sys.executable, str(script), *to_cli_args(cfg, stage), *passthrough]
     if args.dry_run:
         print(" ".join(cmd))
         return 0

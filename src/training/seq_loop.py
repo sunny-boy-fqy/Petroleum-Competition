@@ -257,7 +257,12 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
                                    else float(select_state["best_total"])),
                     "tau_atom": None, "target_scalers": dict(target),
                     "config": cfg.as_dict(), "row_scaler": scaler.to_dict(),
+                    "feature_names": list(scaler.names),
+                    "arch": opt.arch,
+                    "model": {"arch": opt.arch, "n_features": int(scaler.median.shape[0]),
+                              **dict(arch_kwargs)},
                     "arch_kwargs": arch_kwargs,
+                    "physics_params": phys.as_dict() if phys else None,
                     "feature_spec": opt.spec.as_dict() if opt.spec else None}
 
         def save_select(epoch: int, rec: dict, model_, opt_, sched_) -> None:
@@ -275,8 +280,9 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
     else:
         save_select = None
 
+    _sp = {**target, "_row_scaler": scaler, "_feature_names": list(scaler.names)}
     hist1 = _train_loop(model, ds_in, cfg, eval_fn=eval_inner, opt=opt, dev=dev,
-                        scaler_params=target, logger=logger,
+                        scaler_params=_sp, logger=logger,
                         on_epoch=opt.on_select_epoch, keep_best=True,
                         optimizer=opt1, resume_epoch=resume1_epoch,
                         resume_scheduler_state=resume1_sched,
@@ -351,7 +357,11 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
                     "best_epoch_from_inner": int(best_epoch),
                     "inner_oof_total": hist1["best_total"], "tau_atom": tau_info["tau"],
                     "target_scalers": dict(target), "config": cfg.as_dict(),
-                    "row_scaler": scaler.to_dict(), "arch_kwargs": arch_kwargs,
+                    "row_scaler": scaler.to_dict(), "feature_names": list(scaler.names),
+                    "model": {"arch": opt.arch, "n_features": int(scaler.median.shape[0]),
+                              **dict(arch_kwargs)},
+                    "arch_kwargs": arch_kwargs,
+                    "physics_params": phys.as_dict() if phys else None,
                     "feature_spec": opt.spec.as_dict() if opt.spec else None}
 
         def save_last(epoch: int, rec: dict, model, opt_, sched_) -> None:
@@ -373,7 +383,9 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
         capacity_hook = save_on_disk_pressure
 
     hist2 = _train_loop(model2, ds_all, cfg2, eval_fn=None, opt=opt, dev=dev,
-                        scaler_params=target, logger=None, on_epoch=opt.on_final_epoch,
+                        scaler_params={**target, "_row_scaler": scaler,
+                                        "_feature_names": list(scaler.names)},
+                        logger=None, on_epoch=opt.on_final_epoch,
                         optimizer=opt2, keep_best=False, resume_epoch=resume_epoch,
                         resume_scheduler_state=resume_sched,
                         save_hook=save_last_hook, capacity_hook=capacity_hook)
@@ -534,13 +546,27 @@ def _train_epoch_with_opt(model, optimizer, ds, cfg: L.TrainConfig, epoch: int,
         batch = {k: torch.stack([it[k] for it in items]).to(dev)
                  for k in ("por", "perm_z", "sw", "mask", "y_atom", "y_joint")
                  if k in items[0]}
+        batch["x"] = xb
         optimizer.zero_grad(set_to_none=True)
         with L.amp_context(cfg, dev):
             out = model(xb)
-            loss, parts = total_loss(out, batch, lam1=lam1, lam_atom=cfg.lam_atom,
-                                     lam_joint=cfg.lam_joint,
-                                     s_por=float(scaler_params.get("s_por", 11.34)),
-                                     s_sw=float(scaler_params.get("s_sw", 20.0)))
+            _row_scaler = getattr(ds, "scaler", None)
+            _feature_names = (list(_row_scaler.names)
+                              if _row_scaler is not None and _row_scaler.names else None)
+            loss, parts = total_loss(
+                out, batch, lam1=lam1, lam_atom=cfg.lam_atom,
+                lam_joint=cfg.lam_joint,
+                s_por=float(scaler_params.get("s_por", 11.34)),
+                s_sw=float(scaler_params.get("s_sw", 20.0)),
+                use_align=cfg.use_align, use_aux=cfg.use_aux,
+                aux_normalize=cfg.aux_normalize, perm_clamp=cfg.perm_clamp,
+                boundary_kappa=cfg.boundary_kappa, boundary_sigma=cfg.boundary_sigma,
+                huber_beta=cfg.huber_beta, pos_weight=cfg.pos_weight,
+                alpha_nonjoint=cfg.alpha_nonjoint,
+                lam_phys=cfg.lam_phys, row_scaler=_row_scaler,
+                feature_names=_feature_names,
+                phys_huber_beta=cfg.phys_huber_beta,
+                phys_por_scale=cfg.phys_por_scale)
         if not torch.isfinite(loss):
             raise FloatingPointError(f"seq: non-finite loss at epoch {epoch}")
         loss.backward()

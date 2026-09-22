@@ -91,6 +91,18 @@ class TrainConfig:
     lam1_frac: float = 0.6
     lam_atom: float = 0.5
     lam_joint: float = 0.2
+    use_align: bool = True
+    use_aux: bool = True
+    aux_normalize: bool = True
+    perm_clamp: bool = True
+    boundary_kappa: float = 0.0
+    boundary_sigma: float = 0.25
+    huber_beta: float = 1.0
+    lam_phys: float = 0.0
+    phys_huber_beta: float = 1.0
+    phys_por_scale: float = 100.0
+    pos_weight: float | None = None
+    alpha_nonjoint: float = 1.0
     joint_cont_weight: float = 0.2      # 联合占位行在连续头损失中的权重（硬切换后主要靠 q_atom）
     grad_clip: float = 1.0
     amp_dtype: str = "bf16"          # "bf16" | "fp32"
@@ -228,6 +240,7 @@ def train_epoch(model, opt, data: TorchFold, cfg: TrainConfig, epoch: int,
             continue
         xb = data.X[idx]
         batch = data.batch(idx)
+        batch["x"] = xb
         opt.zero_grad(set_to_none=True)
         # 联合占位行由 q_atom/q_joint + 硬切换负责；连续头不应被 66% 的占位尖峰支配。
         slice_weight = None
@@ -241,9 +254,19 @@ def train_epoch(model, opt, data: TorchFold, cfg: TrainConfig, epoch: int,
             slice_weight = w
         with amp_context(cfg, data.device):
             out = model(xb)
-            loss, parts = total_loss(out, batch, lam1=lam1, lam_atom=cfg.lam_atom,
-                                     lam_joint=cfg.lam_joint, s_por=s_por, s_sw=s_sw,
-                                     slice_weight=slice_weight)
+            loss, parts = total_loss(
+                out, batch, lam1=lam1, lam_atom=cfg.lam_atom,
+                lam_joint=cfg.lam_joint, s_por=s_por, s_sw=s_sw,
+                slice_weight=slice_weight,
+                use_align=cfg.use_align, use_aux=cfg.use_aux,
+                aux_normalize=cfg.aux_normalize, perm_clamp=cfg.perm_clamp,
+                boundary_kappa=cfg.boundary_kappa, boundary_sigma=cfg.boundary_sigma,
+                huber_beta=cfg.huber_beta, pos_weight=cfg.pos_weight,
+                alpha_nonjoint=cfg.alpha_nonjoint,
+                lam_phys=cfg.lam_phys, row_scaler=scaler_params.get("_row_scaler"),
+                feature_names=scaler_params.get("_feature_names"),
+                phys_huber_beta=cfg.phys_huber_beta,
+                phys_por_scale=cfg.phys_por_scale)
         if not torch.isfinite(loss):
             raise FloatingPointError(f"non-finite loss at epoch {epoch} (batch {nb})")
         loss.backward()

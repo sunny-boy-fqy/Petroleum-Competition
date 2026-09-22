@@ -157,18 +157,24 @@ def _fold_wells(args, folds, k):
     return list(tr), list(va)
 
 
-def load_backbone(args, n_features, device):
-    """加载冻结骨干；无 checkpoint 时（仅 smoke/exploratory）用随机初始化并**显式标记**。"""
+def load_backbone(args, n_features, device, fold: int | None = None):
+    """加载指定折的冻结骨干；支持文件、带 ``{fold}`` 的模板、run 目录与自动发现。"""
     from src.training import frozen as FZ
+
     kw = dict(ARCH_KW[args.arch])
     if args.arch_kwargs:
         kw.update(json.loads(args.arch_kwargs))
-    if args.backbone_ckpt:
-        model = FZ.load_frozen_model(args.backbone_ckpt, args.arch, n_features,
+    ckpt = FZ.resolve_backbone_checkpoint(
+        getattr(args, "backbone_ckpt", None), args.arch,
+        int(fold if fold is not None else getattr(args, "fold", 0)))
+    if ckpt is not None:
+        model = FZ.load_frozen_model(str(ckpt), args.arch, n_features,
                                      arch_kwargs=kw, device=device)
         return model, kw, False
     if not (args.smoke or args.exploratory):
-        raise SystemExit("[E5] 需要 --backbone-ckpt（或用 --smoke/--exploratory 做链路预检）")
+        raise SystemExit(
+            "[E5] 找不到该折的 --backbone-ckpt；可用目录/模板（如 "
+            "$V4_RUN_ROOT/E4/patchtf/fold{fold}/best.pt）或 --smoke/--exploratory 做链路预检")
     from src.training.seq_loop import build_seq_model
     L.set_seed(args.seed)
     model = build_seq_model(args.arch, int(n_features), **kw)
@@ -177,6 +183,7 @@ def load_backbone(args, n_features, device):
         p.requires_grad_(False)
     model.to(device)
     return model, kw, True
+
 
 
 def _scaled(cache, well, spec, scaler, phys):
@@ -219,7 +226,7 @@ def collect_fold(args, cache, folds, k, spec, scalers, device):
                              "val_wells": va_wells, "n_train_rows": fit["n_train_rows"],
                              "feature_spec": spec.as_dict() if spec else None,
                              "note": "E5：尺度参数只由训练折拟合"})
-    model, arch_kw, random_init = load_backbone(args, n_features, device)
+    model, arch_kw, random_init = load_backbone(args, n_features, device, fold=k)
     inner_tr, inner_val = FR.inner_split(tr_wells, args.seed)
     if len(inner_val) < 1 or len(inner_tr) < 2:
         inner_tr, inner_val = list(tr_wells), list(va_wells)

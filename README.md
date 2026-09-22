@@ -2,6 +2,12 @@
 
 > **一句话**：用 1× Ascend 910B 64GB 训练一条**纯深度学习**管线（深度序列主干 + **逐目标原子头 `q_por/q_perm/q_sw`** + 联合占位辅助头 `q_joint` + 逐目标连续头），以**与官方评分同构的可微损失**优化，解码用**逐目标硬切换 `τ_t`**（阈值只在 inner-OOF 上按官方总分选），提交**自包含、CPU 可推理**的模型包。
 
+> **交付纪律（每次任务完成后必须执行，缺一不可）**：先更新文档（README/PLAN/status/
+> 阶段报告等）→ `git add -A` → `git commit` → `git push origin HEAD:master HEAD:main`
+> → 运行 `python3 tools/pack_code_zip.py` 把**整个项目代码**打包到
+> `/mnt/d/tmp/Petroleum-Competition/`（WSL 路径，对应 Windows `D:\tmp\Petroleum-Competition\`）。
+> **没有完成“更新文档 + add + commit + push + 打包”这五步，任务不算完成。**
+
 ## 快速导航
 
 | 文档 | 内容 |
@@ -152,13 +158,15 @@ python3 v4/predict.py --use-version CONST --data_dir ../data --output /tmp/r.jso
 
 ## 当前状态
 
-- [x] **计划全部完成**：总计划 892 行 + 12 个阶段计划（759 行）+ 33 个 P 级详细计划（5,224 行），**合计 6,875 行**（由 `tools/plan_stats.py` 实测）
+- [x] **计划全部完成**：总计划 892 行 + 12 个阶段计划（759 行）+ 33 个 P 级详细计划（5,225 行），**合计 6,876 行**（由 `tools/plan_stats.py` 实测）
 - [x] 状态台账 `versions/status.json`、候选注册表 `versions/candidates.json`、目录总览 `docs/PROJECT_FILES.md`
 - [x] 环境/磁盘自检脚本（`E0/code/check_env.py`、`src/data/disk_guard.py`、`E0/code/setup_deps.sh`）
 - [x] 锁文件与 Gate/引用模板
 - [x] **E0 口径层已实现并通过本地契约 Gate 13/13**（`reports/E0_local_contract_gate.json`）：按表头名对齐解析器（13 曲线输入 + 无泄漏回归）、三状态标签判据与目标分布统计、官方评分器（drop 口径 70.490735 + 恒等式校验）、按井 5 折导出与指纹、分片缓存（32.4 MB）、提交契约校验、`predict.py` 端到端冒烟（10 井 / 95,948 行 / 1.4 s CPU）
 - [ ] E0 云端 Gate（`env_hard_checks_passed` + `disk_budget_ok`）—— 需在平台 Ascend 任务运行 `run_train.sh --mode env`
-- [ ] E1–E10 模型与训练代码（E1/P0 行级管线与 E1/P1 训练器待写）
+- [x] **E1–E10 模型与训练代码已全部实现**（`E1/code` … `E10/code` + `src/`；本地链路/契约测试通过）。
+      **正式 5 折 OOF 与各阶段数值 Gate 仍待云端运行**（`versions/status.json` 中标注为
+      “代码已实现、云端 Gate 待跑”，不要把它误读为性能已达标）。
 - [x] **改进 proposal 已落进计划与代码**：`PLAN.md` §5.1/§5.2.1/§5.3/§5.4/§6.4/§8.2/§10 与 E1/E3–E8 的 P 级计划；
       `src/models/row_mlp.py`（`q_joint` + `q_por/q_perm/q_sw` + `por_max·sigmoid(g)` + SW 折内仿射归一化）、
       `src/losses/score_aligned.py`（尺度归一化 `L_aux` / 边界聚焦 / 逐目标原子 BCE）、

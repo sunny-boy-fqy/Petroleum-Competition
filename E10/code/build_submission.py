@@ -76,6 +76,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--requirements", default=str(V4 / "requirements.txt"))
     ap.add_argument("--readme", default=str(V4 / "README.md"))
     ap.add_argument("--configs", default=str(V4 / "configs"))
+    ap.add_argument("--version-configs", default=str(V4 / "versions" / "configs"),
+                    help="E7 冻结的 loss_v1.json / decode_v1.json（若存在则一并打包）")
     ap.add_argument("--stage-code-root", default=str(V4),
                     help="E*/code 训练脚本所在仓库根；打包后 train.py 才可用（M4）")
     ap.add_argument("--result-json", default=None, help="已生成的 result.json（打成 result.zip）")
@@ -228,6 +230,18 @@ def stage_tree(args, staging: Path) -> tuple[list[dict], list[str]]:
     put(Path(args.train), "train.py")
     put(Path(args.requirements), "requirements.txt")
     put(Path(args.configs), "configs")
+    version_cfg = Path(args.version_configs)
+    if version_cfg.is_dir():
+        put(version_cfg, "versions/configs")
+    # 审查 H4：多任务拆分时 repo 内 versions/configs 可能不存在（临时 clone），
+    # 但 E7 已把配置镜像到 $V4_REPORTS_DIR；这里补进提交包，保证 predict.py 可读回。
+    reports_cfg = Path(args.reports_dir)
+    for cfg_name in ("loss_v1.json", "decode_v1.json"):
+        rel_cfg = Path("versions/configs") / cfg_name
+        if not (staging / rel_cfg).is_file():
+            src_cfg = reports_cfg / cfg_name
+            if src_cfg.is_file():
+                put(src_cfg, str(rel_cfg))
     put(Path(args.src), "src")
     # M4：train.py 的 STAGE_SCRIPTS 指向 E*/code/*.py；把它们打进包，
     # 训练入口才不是"有脚本却找不到阶段实现"的空壳（数据/权重仍不打包）。

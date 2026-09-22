@@ -67,7 +67,7 @@ def write_json(path, payload) -> Path:
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="E8/P1 transductive 适配（不用测试标签）")
-    ap.add_argument("--oof", required=True,
+    ap.add_argument("--oof", default=None,
                     help="训练折 OOF npz（cont/y_true/mask/well_index），用于参考分布与评估")
     ap.add_argument("--test-preds", default=None,
                     help="测试井预测 npz（cont/well_index/well_ids，**不得含标签键**）")
@@ -188,10 +188,32 @@ def eval_wells(cont_by_well, y_by_well, mask_by_well, wells) -> float:
     return float(M.score_of(y, p, m)["total"])
 
 
+
+def _default_oof_candidates(run_root: Path) -> list[Path]:
+    """未显式提供 --oof 时，按 E6→E1→E3→E4 的优先级自动寻找可用 OOF。"""
+    names = ("E6/state/oof.npz", "E6/state/oof_pd1.npz", "E1/oof.npz",
+             "E3/oof_unet.npz", "E3/oof_tcn.npz", "E4/oof_patchtf.npz",
+             "E4/oof_unet.npz", "E4/oof_tcn.npz")
+    out = []
+    for name in names:
+        p = Path(run_root) / name
+        if p.is_file():
+            out.append(p)
+    return out
+
+
 def run(args) -> int:
     reports = Path(args.reports_dir)
     reports.mkdir(parents=True, exist_ok=True)
-    oof_path = Path(args.oof)
+    if args.oof:
+        oof_path = Path(args.oof)
+    else:
+        cands = _default_oof_candidates(Path(args.run_root))
+        if not cands:
+            print("[E8] FATAL: 未提供 --oof，且自动发现不到可用 OOF；"
+                  "先跑 E1/E3/E4/E6 生成 OOF。", file=sys.stderr)
+            return 4
+        oof_path = cands[0]
     if not oof_path.is_file():
         print(f"[E8] FATAL: 缺少 OOF {oof_path}", file=sys.stderr)
         return 4

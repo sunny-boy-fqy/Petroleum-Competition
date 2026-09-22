@@ -34,6 +34,7 @@ import numpy as np  # noqa: E402
 
 from src import constants as C  # noqa: E402
 from src.features import basic as FB  # noqa: E402
+from src.features import groups as G  # noqa: E402
 from src.inference import atomic_gate as AG  # noqa: E402
 from src.training import metrics as M  # noqa: E402
 from src.training import state_train as ST  # noqa: E402
@@ -139,8 +140,8 @@ def run(args) -> int:
     sel = AG.select_tau_per_target(cont=cont, q_atom=q_atom, y=y, mask=mask,
                                    tol=float(args.tol))
     tau = np.asarray(sel["tau"], dtype="float64")
-    pr_star = M.atomic_precision_recall(y_atom, q_atom, tau)
-    pr_half = M.atomic_precision_recall(y_atom, q_atom, np.full(3, 0.5))
+    pr_star = M.atomic_precision_recall(y_atom, q_atom, tau, mask=mask)
+    pr_half = M.atomic_precision_recall(y_atom, q_atom, np.full(3, 0.5), mask=mask)
     acc_star, acc_half = {}, {}
     for i, t in enumerate(C.TARGETS):
         obs = mask[:, i] > 0
@@ -231,11 +232,19 @@ def run(args) -> int:
         else:
             delta_ci = {"ok": False, "reason": "没有可用的逐井配对差分"}
 
-    audit = ST.input_no_label_leak_full(FB.FEATURE_NAMES)
     atomic_report_path = Path(args.atomic_report) if args.atomic_report else \
         reports / "E6_atomic_report.json"
     atomic = (json.loads(atomic_report_path.read_text(encoding="utf-8"))
               if atomic_report_path.is_file() else None)
+    audit = ST.input_no_label_leak_full(FB.FEATURE_NAMES)
+    if atomic and isinstance(atomic.get("spec"), dict):
+        try:
+            _spec = G.FeatureSpec.from_dict(atomic["spec"])
+            _spec_audit = G.audit_no_target_derivation(_spec)
+            audit = {**audit, "spec_audit": _spec_audit,
+                     "ok": bool(audit.get("ok") and _spec_audit.get("ok"))}
+        except Exception as exc:
+            audit = {**audit, "spec_audit_error": f"{type(exc).__name__}: {exc}"}
 
     payload = {
         "stage": "E6", "p_stage": "P1", "tag": args.tag,

@@ -4,6 +4,12 @@
 > 自动核对：`python3 v4/tools/verify_reference.py` 校验冻结引用件；
 > 文件数可用 `git ls-files | wc -l` 与 `find v4 -type f | wc -l` 对照本文档。
 
+> **交付纪律（每次任务完成后必须执行，缺一不可）**：先更新文档（README/PLAN/status/
+> 阶段报告等）→ `git add -A` → `git commit` → `git push origin HEAD:master HEAD:main`
+> → 运行 `python3 tools/pack_code_zip.py` 把**整个项目代码**打包到
+> `/mnt/d/tmp/Petroleum-Competition/`（WSL 路径，对应 Windows `D:\tmp\Petroleum-Competition\`）。
+> **没有完成“更新文档 + add + commit + push + 打包”这五步，任务不算完成。**
+
 ---
 
 ## 一、顶层结构（`v4/` = git 仓库根 = 提交根）
@@ -116,7 +122,7 @@ v4/
 │   │                            E7_P1_gate.json）、
 │   │                            ablate_loss.py（七组损失消融臂：exp1 三项/exp2 λ₁×退火/exp3 λ₂/
 │   │                            exp4 归一化/exp5 边界聚焦（默认关）/exp6 PERM 截断；exp7 L_phys
-│   │                            显式记为 not_implemented → 内折选择 → loss_v1.json + Gate）
+│   │                            exp7 L_phys 已接入 → 内折选择 → loss_v1.json + Gate）
 │   ├── E10/code/                final_train.py（折集成（不重训，导出 fp32 副本）/ 全量重训
 │   │                            （固定 epoch、不早停、每 epoch 磁盘守卫、可 resume）→ models/v4/final）、
 │   │                            export_cpu.py（fp32 重存 + .npz 权重要点清单（逐键 sha256）+
@@ -308,7 +314,7 @@ $V4_LOCAL_ROOT/v4/{cache,runs,reports,logs,tb,state}/
 
 | 类别 | 已实现 | 说明 |
 |---|---|---|
-| `src/` | constants, portability, score, data/{parse,labels,dataset,disk_guard,row_dataset,seq_dataset,augment}, features/{basic,physics,window,well,groups}, losses/score_aligned, models/{row_mlp,unet1d,tcn,patchtf,heads,mmoe,well_head,target_heads}, training/{loop,metrics,fold_runner,seq_loop,checkpoint,tb_logger,state_train,frozen,ema}, inference/{contract,atomic_gate,predictor,decode}, ensemble/blend, validation/{folds,gates}, versioning/registry | 唯一未实现：**`L_phys` 物理一致性项**（E7/P0 的 exp7，已在 `E7_loss_ablation.json::not_implemented` 与报告中显式标注） |
+| `src/` | constants, portability, score, data/{parse,labels,dataset,disk_guard,row_dataset,seq_dataset,augment}, features/{basic,physics,window,well,groups}, losses/{score_aligned,physics}, models/{row_mlp,unet1d,tcn,patchtf,heads,mmoe,well_head,target_heads}, training/{loop,metrics,fold_runner,seq_loop,checkpoint,tb_logger,state_train,frozen,ema,recipe}, inference/{contract,atomic_gate,predictor,decode}, ensemble/blend, validation/{folds,gates}, versioning/registry | 本地代码层无“未实现”项；exp7 L_phys 已实现，正式消融结论待云端 |
 | 根目录 | predict.py（含 PD1 折集成）、train.py（阶段转发/配置默认值）、run_train.sh（E0–E10 全部阶段）、requirements.txt、configs/v4.yaml、configs/paths.yaml | — |
 | 产物 | reports/E0_*.json（13 份）——其中 E0_goal_audit.json / E0_pipeline_check.json / E0_final_acceptance.json 是自检证据；另有 `versions/{registry,candidates,status,folds_sha256}.json`、`versions/prereg_templates/`（33 份） | 各阶段 Gate/报告在**云端**产出（`$V4_REPORTS_DIR`），本仓库只保留 E0 口径证据快照 |
 | `run_train.sh` | `env` / `data` / `e0` / `smoke` / `data-health`；`--stage E1..E10`（E2/E3/E5/E6/E7/E8/E9/E10 带 `--phase`/`--target` 子路由） | `--mode all [--through 1..14] [--fresh]` = env→data→e0→E1…E10 共 14 个任务；已完成任务自动跳过，失败即停，进度写 `/data/v4/state/all_pipeline_progress.json` |
@@ -325,8 +331,8 @@ $V4_LOCAL_ROOT/v4/{cache,runs,reports,logs,tb,state}/
 | 项 | 数量 |
 |---|---:|
 | git 跟踪文件 | 见 `git ls-files \| wc -l` |
-| 计划文件（`PLAN.md`） | 1（总，892 行）+ 12（阶段，759 行）+ 33（P，5,224 行）= **46 份 / 6,875 行** |
-| P 级计划平均篇幅 | **158 行**（合计 5,224；由 `tools/plan_stats.py` 统计） |
+| 计划文件（`PLAN.md`） | 1（总，892 行）+ 12（阶段，759 行）+ 33（P，5,225 行）= **46 份 / 6,876 行** |
+| P 级计划平均篇幅 | **158 行**（合计 5,225；由 `tools/plan_stats.py` 统计） |
 | 代码模块（`v4/src/**/*.py`） | 见 `find v4/src -name '*.py' \| wc -l` |
 | E 层脚本（`v4/E*/code/*.py`） | 见 `find v4/E* -name '*.py' \| wc -l` |
 

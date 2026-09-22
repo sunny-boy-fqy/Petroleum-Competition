@@ -166,7 +166,8 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
   "thresholds": {
     "min_delta": 7.5,
     "min_effect_floor": 0.0,
-    "oof_total_min": 78.0
+    "oof_total_min": 78.0,
+    "min_same_direction_folds": 5
   },
   "alpha": 0.05,
   "multiplicity": "none",

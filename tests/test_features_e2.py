@@ -331,7 +331,8 @@ class TestFeatureCacheRoundTrip(unittest.TestCase):
         fit = RD.fit_scalers_from_wells(self.wells, self.cache, spec=spec)
         self.assertIn("phys_params", fit)
         self.assertEqual(set(fit["phys_params"].as_dict()) >= {"gr_min", "gr_max"}, True)
-        t = RD.assemble(self.wells, self.cache, scaler=fit["scaler"], spec=spec)
+        t = RD.assemble(self.wells, self.cache, scaler=fit["scaler"], spec=spec,
+                        phys_params=fit["phys_params"])
         RD.assert_alignment(t)
         self.assertEqual(t.X.shape[1], spec.n_features())
         self.assertEqual(list(fit["scaler"].names), spec.names())

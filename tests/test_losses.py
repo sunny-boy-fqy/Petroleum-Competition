@@ -19,6 +19,8 @@ from src.portability import HAS_TORCH  # noqa: E402
 if HAS_TORCH:
     import torch
 
+    from src.losses.physics import (ACF_US_M, ACMA_US_M,  # noqa: E402
+                                    physics_porosity_loss)
     from src.losses.score_aligned import (  # noqa: E402
         align_score_log,
         atom_bce,
@@ -228,6 +230,84 @@ class TestTotalLoss(unittest.TestCase):
         total, parts = total_loss(out, self._batch(), boundary_kappa=1.0)
         self.assertTrue(torch.isfinite(total))
         self.assertIn("align", parts)
+
+    def test_default_mask_supports_sequence_shapes(self):
+        """mask 缺省时，total_loss 必须兼容 (B,L,3) 输出，而不是只支持行级 (B,3)。"""
+        B, L = 2, 3
+        out = {
+            "por": torch.rand(B, L),
+            "perm_z": torch.rand(B, L),
+            "sw": torch.rand(B, L),
+            "q_atom_logit": torch.rand(B, L, 3),
+            "q_joint_logit": torch.rand(B, L),
+        }
+        batch = {
+            "por": torch.rand(B, L),
+            "perm_z": torch.rand(B, L),
+            "sw": torch.rand(B, L),
+            "y_atom": (torch.rand(B, L, 3) > 0.5).float(),
+            "y_joint": (torch.rand(B, L) > 0.5).float(),
+        }
+        total, parts = total_loss(out, batch, use_align=True, use_aux=True,
+                                  use_atom=False, use_joint=False)
+        self.assertTrue(torch.isfinite(total))
+        self.assertIn("align", parts)
+
+
+class TestPhysicsLoss(unittest.TestCase):
+    class _Scaler:
+        def __init__(self):
+            self.names = ["GR", "PE", "SP", "CAL", "AC", "DEN", "CNL",
+                          "RXO", "RT", "DEVI", "AZIM", "BIT", "CASE"]
+            self.mean = [0.0] * len(self.names)
+            self.std = [1.0] * len(self.names)
+
+    def test_porosity_prior_zero_on_exact_match(self):
+        s = self._Scaler()
+        ac = ACMA_US_M + 0.2 * (ACF_US_M - ACMA_US_M)
+        den = 2.65 - 0.2 * (2.65 - 1.0)
+        x = torch.zeros(2, len(s.names))
+        x[:, 4] = ac
+        x[:, 5] = den
+        x[:, 6] = 20.0
+        batch = {"x": x, "mask": torch.ones(2, 3), "y_atom": torch.zeros(2, 3)}
+        loss = physics_porosity_loss(torch.full((2,), 20.0), batch,
+                                     row_scaler=s, feature_names=s.names)
+        self.assertLess(float(loss), 1e-6)
+
+    def test_physics_loss_requires_context(self):
+        """审查 H2/M4：lam_phys>0 时缺 x/row_scaler 必须显式报错，不得静默返回 0。"""
+        out = {"por": torch.full((4,), 20.0), "perm_z": torch.zeros(4),
+               "sw": torch.full((4,), 80.0),
+               "q_atom_logit": torch.zeros(4, 3), "q_joint_logit": torch.zeros(4)}
+        batch = {"por": torch.full((4,), 20.0), "perm_z": torch.zeros(4),
+                 "sw": torch.full((4,), 80.0),
+                 "mask": torch.ones(4, 3), "y_atom": torch.zeros(4, 3),
+                 "y_joint": torch.zeros(4)}
+        with self.assertRaises(ValueError):
+            total_loss(out, batch, use_align=False, use_aux=False,
+                       use_atom=False, use_joint=False, lam_phys=0.05)
+
+    def test_total_loss_reports_phys_part(self):
+        s = self._Scaler()
+        out = {"por": torch.full((4,), 20.0), "perm_z": torch.zeros(4),
+               "sw": torch.full((4,), 80.0),
+               "q_atom_logit": torch.zeros(4, 3), "q_joint_logit": torch.zeros(4)}
+        batch = {"por": torch.full((4,), 20.0), "perm_z": torch.zeros(4),
+                 "sw": torch.full((4,), 80.0),
+                 "mask": torch.ones(4, 3), "y_atom": torch.zeros(4, 3),
+                 "y_joint": torch.zeros(4)}
+        x = torch.zeros(4, len(s.names))
+        x[:, 4] = ACMA_US_M + 0.2 * (ACF_US_M - ACMA_US_M)
+        x[:, 5] = 2.65 - 0.2 * (2.65 - 1.0)
+        x[:, 6] = 20.0
+        batch["x"] = x
+        total, parts = total_loss(out, batch, use_align=False, use_aux=False,
+                                  use_atom=False, use_joint=False,
+                                  lam_phys=0.05, row_scaler=s,
+                                  feature_names=s.names)
+        self.assertTrue(torch.isfinite(total))
+        self.assertIn("phys", parts)
 
 
 if __name__ == "__main__":

@@ -33,8 +33,10 @@ from src.features import groups as G  # noqa: E402
 from src.losses import score_aligned as SAL  # noqa: E402
 from src.portability import HAS_TORCH  # noqa: E402
 from src.training import fold_runner as FR  # noqa: E402
+from src.training import checkpoint as CK  # noqa: E402
 from src.training import loop as L  # noqa: E402
 from src.training import metrics as M  # noqa: E402
+from src.training import recipe as R  # noqa: E402
 from src.validation import folds as FOLDS  # noqa: E402
 from src.validation import gates as GATES  # noqa: E402
 
@@ -92,6 +94,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--exploratory", action="store_true")
     ap.add_argument("--device", default="auto")
     ap.add_argument("--amp-dtype", default="bf16", choices=("bf16", "fp32"))
+    ap.add_argument("--save-dir", default=None,
+                    help="可选：把各臂权重保存到 <save-dir>/<arm>/fold{k}.pt，"
+                         "供通用 CPU predictor 直接加载/注册")
     return ap
 
 
@@ -226,6 +231,7 @@ def train_arm(args, cache, folds, spec, scalers, device, arm: str) -> dict:
     cfg = L.TrainConfig(lr=args.lr, weight_decay=args.weight_decay, dropout=args.dropout,
                         epochs=args.epochs, seed=args.seed, device=args.device,
                         amp_dtype=args.amp_dtype, batch_size=args.batch_size)
+    R.apply_loss_recipe(cfg)
     torch.manual_seed(args.seed)
     model = make_arm(arm, n_features, args).to(device)
     n_params = int(sum(p.numel() for p in model.parameters()))
@@ -240,10 +246,21 @@ def train_arm(args, cache, folds, spec, scalers, device, arm: str) -> dict:
         lam1 = L.lam1_at(ep, args.epochs, cfg)
         for i in range(0, n, int(args.batch_size)):
             idx = perm[i:i + int(args.batch_size)]
-            out = model(tr_t.X[idx])
+            bb = tr_t.batch(idx)
+            bb["x"] = tr_t.X[idx]
             with L.amp_context(cfg, tr_t.X.device):
-                total, _parts = SAL.total_loss(out, tr_t.batch(idx), lam1=lam1, lam_atom=0.5,
-                                               lam_joint=0.2)
+                out = model(tr_t.X[idx])
+                total, _parts = SAL.total_loss(
+                    out, bb, lam1=lam1,
+                    lam_atom=cfg.lam_atom, lam_joint=cfg.lam_joint,
+                    use_align=cfg.use_align, use_aux=cfg.use_aux,
+                    aux_normalize=cfg.aux_normalize, perm_clamp=cfg.perm_clamp,
+                    boundary_kappa=cfg.boundary_kappa, boundary_sigma=cfg.boundary_sigma,
+                    huber_beta=cfg.huber_beta, pos_weight=cfg.pos_weight,
+                    alpha_nonjoint=cfg.alpha_nonjoint,
+                    lam_phys=cfg.lam_phys, row_scaler=scaler,
+                    feature_names=scaler.names, phys_huber_beta=cfg.phys_huber_beta,
+                    phys_por_scale=cfg.phys_por_scale)
             opt.zero_grad(set_to_none=True)
             total.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -277,15 +294,43 @@ def train_arm(args, cache, folds, spec, scalers, device, arm: str) -> dict:
     cont = M.decode_continuous(pred)
     gated = M.atom_gate(cont, pred["q_atom"], None)
     sc = M.score_of(y_true, gated, lab["mask"])
-    auc = M.auc_report(lab["y_atom"] >= 0.5, pred["q_atom"])
+    auc = M.auc_report(lab["y_atom"] >= 0.5, pred["q_atom"], mask=lab["mask"] >= 0.5)
     gate_rep = None
     if hasattr(model, "gate_report"):
         try:
             gate_rep = model.gate_report(tr_t.X[:2048])
         except Exception as exc:                       # 不静默
             gate_rep = {"error": f"{type(exc).__name__}: {exc}"}
+    ckpt_path = None
+    if getattr(args, "save_dir", None):
+        model_kw = {"arch": "MMoE" if arm != "independent" else "IndependentHeads",
+                    "n_features": int(tr_t.X.shape[1])}
+        if arm != "independent":
+            model_kw.update({
+                "hidden": int(getattr(model, "hidden", args.hidden)),
+                "n_experts": int(getattr(model, "n_experts", 1)),
+                "expert_width": int(getattr(model, "expert_width", 0)) or None,
+                "gate_temp": float(getattr(model, "gate_temp", args.gate_temp)),
+            })
+        else:
+            model_kw.update({"hidden": int(getattr(model, "hidden", 0))})
+        ck_dir = Path(args.save_dir) / arm
+        ck_dir.mkdir(parents=True, exist_ok=True)
+        ckpt_path = ck_dir / f"fold{k}.pt"
+        CK.save_checkpoint(ckpt_path, model, meta={
+            "stage": "E8", "arm": arm, "fold": k,
+            "row_scaler": scaler.to_dict(), "target_scalers": dict(target),
+            "feature_names": list(scaler.names),
+            "feature_spec": spec.as_dict() if spec else None,
+            "physics_params": phys.as_dict() if phys else None,
+            "model": model_kw, "arch": model_kw["arch"],
+            "arch_kwargs": {key: val for key, val in model_kw.items()
+                            if key not in ("arch", "n_features")},
+            "tau_atom": None,
+        }, bf16=False)
     return {"arm": arm, "eval_mode": "inner_only" if args.inner_only else "outer_val",
             "fold": k, "n_params": n_params,
+            "checkpoint": (None if ckpt_path is None else str(ckpt_path)),
             "indep_hidden": (int(getattr(model, "hidden", 0)) if arm == "independent"
                              else None), "n_train_rows": n, "n_eval_rows": int(ev_t.n_rows),
             "total": float(sc["total"]),

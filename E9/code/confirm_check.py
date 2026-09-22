@@ -25,6 +25,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 V4 = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(V4))
@@ -129,22 +130,52 @@ def score_wells(per_well: dict, wells: list[str]) -> dict:
             "n_rows": int(y.shape[0]), "n_wells": len(wells)}
 
 
+def _tau_vector(t) -> "np.ndarray":
+    arr = np.asarray(t, dtype="float64").reshape(-1)
+    if arr.size == 1:
+        return np.repeat(arr, 3)
+    if arr.size != 3:
+        raise ValueError(f"tau_atom 必须是标量或长度 3，got {arr.size}")
+    return arr
+
+
 def predict_confirm(ckpts: list[Path], wells: list[str], args) -> dict:
-    """用注册权重在确认井上推理（**不重训**）：多折时按连续头平均。"""
+    """用注册权重在确认井上推理（**不重训**）：先融合连续头/q_atom，再统一硬切换。
+
+    审查 H3：此前对各折已硬切换的预测求平均，会在线不一致时产生插值；
+    现在与 `predict.py` / `src/ensemble/blend.py` 的“切换在融合之后”纪律一致。
+    """
+    from src.data import dataset as D
     from src.inference import predictor as PR
+
+    loaded: list[tuple[Path, Any, Any]] = []
+    for ck in ckpts:
+        man = PR.load_manifest(ck)
+        loaded.append((ck, man, PR.load_model(ck, man, device=args.device)))
 
     per_well: dict[str, dict] = {}
     for w in wells:
-        acc, depth = None, None
-        for ck in ckpts:
-            man = PR.load_manifest(ck)
-            model = PR.load_model(ck, man, device=args.device)
-            got = PR.predict_wells(model, man, args.cache_root, [w], split=args.confirm_split,
-                                   batch_size=args.batch_size, device=args.device)[w]
-            cont = np.asarray(got["pred"], dtype="float64")
-            acc = cont if acc is None else acc + cont
-            depth = np.asarray(got["depth"], dtype="float64")
-        per_well[w] = {"depth": depth, "pred": acc / float(len(ckpts)),
+        sh = D.read_well_shard(args.cache_root, w, args.confirm_split)
+        cont_sum = q_sum = None
+        depth = None
+        taus: list["np.ndarray"] = []
+        for _ck, man, model in loaded:
+            depth, cont, q_atom = PR.predict_well_components(
+                model, man, sh, device=args.device, batch_size=args.batch_size)
+            cont_sum = cont if cont_sum is None else cont_sum + cont
+            q_sum = q_atom if q_sum is None else q_sum + q_atom
+            if man.tau_atom is not None:
+                taus.append(_tau_vector(man.tau_atom))
+        cont = cont_sum / float(len(loaded))
+        q_atom = q_sum / float(len(loaded))
+        if len(taus) == len(loaded):
+            tau = np.mean(np.vstack(taus), axis=0)
+            pred = M.atom_gate(cont, q_atom, tau)
+        else:
+            # 折间 tau 状态不一致：只用连续头，绝不混用（宁缺勿错）。
+            pred = cont
+        per_well[w] = {"depth": np.asarray(depth, dtype="float64"),
+                       "pred": np.asarray(pred, dtype="float64"),
                        "y": None, "mask": None}
     return per_well
 

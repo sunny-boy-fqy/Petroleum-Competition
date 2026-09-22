@@ -172,7 +172,7 @@ def run(args) -> int:
             if w not in ctx["backbone_pred"]:
                 from src.training import seq_loop as SL
                 ctx["backbone_pred"][w] = SL.predict_well_chunked(
-                    EC.load_backbone(args, ctx["n_features"], device)[0],
+                    EC.load_backbone(args, ctx["n_features"], device, fold=k)[0],
                     EC.scaled_well(cache, w, spec, ctx["scaler"], ctx["phys"]),
                     ctx["cfg"], ctx["opt"], device)
         head, losses = train_branch(args, ctx, labels, device)

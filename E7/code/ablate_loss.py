@@ -9,8 +9,8 @@
 * **exp4** L_aux 训练折尺度归一化 vs **绝对** Smooth L1（2 臂）
 * **exp5** 边界聚焦 κ ∈ {0.5,1.0,2.0} × σ ∈ {0.15,0.25,0.35}（9 臂，**默认关**）
 * **exp6** PERM 截断开关（2 臂）
-* **exp7**（可选）L_phys λ₃ ∈ {0,0.02,0.05} —— **本实现尚未提供**，报告中显式标
-  `not_implemented`，绝不静默跳过
+* **exp7** L_phys λ₃ ∈ {0,0.02,0.05}（可选物理软约束，见 `src/losses/physics.py`；
+  默认关，必须消融验证）
 
 纪律
 ----
@@ -52,7 +52,7 @@ LAM2_GRID = (0.1, 0.2, 0.3)
 SCHEDULE_GRID = ("constant", "linear_to_0.1", "cosine")
 KAPPA_GRID = (0.5, 1.0, 2.0)
 SIGMA_GRID = (0.15, 0.25, 0.35)
-NOT_IMPLEMENTED = ["exp7: L_phys（物理一致性项）——本实现未提供，需先新增 src/losses/physics.py"]
+NOT_IMPLEMENTED: list[str] = []  # exp7 已实现：src/losses/physics.py
 
 
 def env_path(name: str, default: str) -> Path:
@@ -80,7 +80,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--scalers-dir", default=os.environ.get("V4_SCALERS_DIR") or "")
     ap.add_argument("--spec", default="F1")
     ap.add_argument("--arm-set", default="exp1",
-                    choices=("exp1", "exp2", "exp3", "exp4", "exp5", "exp6", "all"))
+                    choices=("exp1", "exp2", "exp3", "exp4", "exp5", "exp6",
+                             "exp7", "all"))
     ap.add_argument("--arms", default=None, help="逗号分隔的臂 id（覆盖 --arm-set）")
     ap.add_argument("--folds", default="0")
     ap.add_argument("--inner-only", action="store_true", default=True)
@@ -158,6 +159,10 @@ def build_arms(arm_set: str, arms: str | None) -> list[dict]:
         out += [{"id": "exp6_clamp_on", "group": "exp6", "overrides": {"perm_clamp": "on"}},
                 {"id": "exp6_clamp_off", "group": "exp6",
                  "overrides": {"perm_clamp": "off"}}]
+    if arm_set in ("exp7", "all"):
+        for lam3 in (0.02, 0.05):
+            out.append({"id": f"exp7_lam3_{lam3}", "group": "exp7",
+                        "overrides": {"lam3": lam3}})
     if arms:
         want = {a.strip() for a in str(arms).split(",") if a.strip()}
         out = [a for a in out if a["id"] in want]
@@ -186,6 +191,7 @@ def loss_kwargs(args, overrides: dict, target: dict, batch: dict) -> dict:
         "perm_clamp": (o.get("perm_clamp", args.perm_clamp) == "on"),
         "boundary_kappa": float(o.get("boundary_kappa", args.boundary_kappa)),
         "boundary_sigma": float(o.get("boundary_sigma", args.boundary_sigma)),
+        "lam_phys": float(o.get("lam3", args.lam3)),
     }
     kw["_lam1_schedule"] = sched
     return kw
@@ -229,19 +235,32 @@ def train_arm(args, cache, folds, spec, scalers, device, arm: dict) -> dict:
                         dropout=args.dropout, init_stats=target).to(device)
     kw = loss_kwargs(args, arm["overrides"], target, {})
     schedule = kw.pop("_lam1_schedule")
+    # 审查 H2：必须保留 lam_phys 并真正传给 total_loss；旧实现 pop 后丢弃，
+    # 导致 exp7 的 L_phys 消融臂与基线逐位相同（假消融）。
+    lam_phys = float(kw.pop("lam_phys", 0.0))
+    lam1_override = arm["overrides"].get("lam1")
+    lam1_cfg = (L.TrainConfig(**{**cfg.as_dict(), "lam1_start": float(lam1_override)})
+                if lam1_override is not None else cfg)
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     n = int(tr_t.n_rows)
     losses: list[float] = []
+    parts_last: dict[str, float] = {}
     for ep in range(int(args.epochs)):
         model.train()
         perm = torch.randperm(n, device=tr_t.X.device)
         tot, nb = 0.0, 0
-        lam1 = L.lam1_schedule(schedule, ep, args.epochs, cfg)
+        lam1 = L.lam1_schedule(schedule, ep, args.epochs, lam1_cfg)
         for i in range(0, n, int(args.batch_size)):
             idx = perm[i:i + int(args.batch_size)]
-            out = model(tr_t.X[idx])
+            bb = tr_t.batch(idx)
+            bb["x"] = tr_t.X[idx]
             with L.amp_context(cfg, tr_t.X.device):
-                total, _parts = SAL.total_loss(out, tr_t.batch(idx), **{**kw, "lam1": lam1})
+                out = model(tr_t.X[idx])
+                total, parts = SAL.total_loss(
+                    out, bb, **{**kw, "lam1": lam1},
+                    lam_phys=lam_phys, row_scaler=scaler,
+                    feature_names=scaler.names)
+            parts_last = parts
             opt.zero_grad(set_to_none=True)
             total.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -259,7 +278,7 @@ def train_arm(args, cache, folds, spec, scalers, device, arm: dict) -> dict:
     gated = M.atom_gate(cont, pred["q_atom"], None)
     sc = M.score_of(y_true, gated, lab["mask"])
     cont_sc = M.score_of(y_true, cont, lab["mask"])
-    auc = M.auc_report(lab["y_atom"] >= 0.5, pred["q_atom"])
+    auc = M.auc_report(lab["y_atom"] >= 0.5, pred["q_atom"], mask=lab["mask"] >= 0.5)
     dz = np.abs(np.asarray(pred["perm_z"], dtype="float64")
                 - np.asarray(lab["perm_z"], dtype="float64"))
     return {"arm_id": arm["id"], "group": arm["group"], "overrides": arm["overrides"],
@@ -274,6 +293,7 @@ def train_arm(args, cache, folds, spec, scalers, device, arm: dict) -> dict:
                                                       np.asarray(lab["perm_z"]) - 1.0).mean())},
             "final_loss": float(losses[-1]) if losses else None,
             "first_loss": float(losses[0]) if losses else None,
+            "phys_loss": float(parts_last.get("phys", 0.0)),
             "seconds": round(time.time() - t0, 2),
             "exploratory": True, "selection_score_only": True}
 
@@ -331,7 +351,8 @@ def run(args) -> int:
               "not_implemented": NOT_IMPLEMENTED,
               "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
               "notes": ("默认 --inner-only：训练/评估都只在内折上（H1 选择协议）；"
-                        "exp5 边界聚焦默认关；exp7 L_phys 未实现（见 not_implemented）")}
+                        "exp5 边界聚焦默认关；exp7 L_phys 已接入 "
+                        "src/losses/physics.py，默认 λ₃=0")}
     write_json(reports / "E7_loss_ablation.json", report)
 
     # ---- 冻结损失配置（smoke 不写仓库）
@@ -346,6 +367,11 @@ def run(args) -> int:
     if args.smoke and out_cfg == V4 / "versions" / "configs" / "loss_v1.json":
         out_cfg = reports / "loss_v1_smoke.json"
     write_json(out_cfg, cfg_payload)
+    # 审查 H4：仓库内 versions/configs 在云端是临时 clone；必须同时写一份到
+    # $REPORTS_DIR（被 5 分钟 mirror 持久化），否则多任务流程会丢配方。
+    mirror_cfg = reports / Path(out_cfg).name
+    if mirror_cfg.resolve() != Path(out_cfg).resolve():
+        write_json(mirror_cfg, cfg_payload)
     write_json(reports / "training_time_log.json",
                {"stage": "E7/P0", "folds": [{"fold": int(str(args.folds).split(",")[0]),
                                              "seconds": sum(r["seconds"] for r in rows)}]})
@@ -369,7 +395,7 @@ def run(args) -> int:
             "min_detectable_effect": None, "planned_task_training_h": 3.0,
             "mandatory_checks": list(CORE_CHECKS) + list(P0_CHECKS), "decisions_locked": [],
             "notes": ("E7/P0：消融只用内折；主判据为消融后的官方总分；"
-                      "exp7 L_phys 未实现必须显式记录"),
+                      "exp7 L_phys 已实现；默认 λ₃=0，必须消融验证"),
         })
     prereg = json.loads(prereg_path.read_text(encoding="utf-8"))
     perrs = GATES.validate_prereg(prereg)
@@ -419,7 +445,8 @@ def run(args) -> int:
 def report_defaults(args) -> dict:
     return {"use_align": True, "use_aux": True, "lam1": args.lam1,
             "lam1_schedule": args.lam1_schedule, "lam2": args.lam2,
-            "aux_normalize": args.aux_normalize, "perm_clamp": args.perm_clamp,
+            "lam3": args.lam3, "aux_normalize": args.aux_normalize,
+            "perm_clamp": args.perm_clamp,
             "boundary_kappa": args.boundary_kappa, "boundary_sigma": args.boundary_sigma}
 
 

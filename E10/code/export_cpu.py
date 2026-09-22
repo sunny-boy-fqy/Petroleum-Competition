@@ -87,10 +87,12 @@ def export(args) -> dict:
     if not ckpt.is_file():
         return {"status": "checkpoint_missing", "path": str(ckpt)}
     man = CK.read_manifest(ckpt)
-    from src.inference.predictor import Manifest, load_model
+    from src.inference.predictor import Manifest, load_model, cpu_inference_supported
     m = Manifest(path=ckpt, raw=man)
+    if not cpu_inference_supported(m):
+        return {"status": "unsupported_inference_arch", "arch": m.arch}
     model = load_model(ckpt, m, device="cpu").to("cpu").float()
-    n_features = int(m.model_kwargs["n_features"])
+    n_features = int(m.n_features)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -139,7 +141,17 @@ def export(args) -> dict:
     # ---- CPU 冒烟 + 确定性（两次前向必须逐字节一致）
     t0 = time.time()
     gen = torch.Generator().manual_seed(0)
-    x = torch.randn(int(args.smoke_rows), n_features, generator=gen)
+    arch = str(m.arch).lower()
+    if arch in ("unet", "tcn", "patchtf"):
+        patch_len = int(m.arch_kwargs.get("patch_len", 1) or 1)
+        length = int(m.raw.get("inference_chunk") or max(1024, patch_len))
+        length = max(length, patch_len)
+        x = torch.randn(1, length, n_features, generator=gen)
+        input_desc = {"shape": list(x.shape), "arch": arch,
+                      "note": "序列主干用 (B,L,F) 冒烟"}
+    else:
+        x = torch.randn(int(args.smoke_rows), n_features, generator=gen)
+        input_desc = {"shape": list(x.shape), "arch": arch}
     outs = []
     with torch.no_grad():
         for _ in range(2):
@@ -154,7 +166,7 @@ def export(args) -> dict:
 
     # ---- ONNX（尽力而为，不参与 Gate）
     onnx_block = {"status": "not_requested"}
-    if args.onnx:
+    if args.onnx and arch not in ("unet", "tcn", "patchtf"):
         try:
             import onnx  # noqa: F401
             onnx_path = out_dir / f"{ckpt.stem}.onnx"
@@ -171,7 +183,7 @@ def export(args) -> dict:
                                                                      else str(npz_path)),
             "n_keys": len(keys), "keys": keys, "minutes": minutes,
             "memory_gb": peak_memory_gb(), "deterministic": deterministic,
-            "onnx": onnx_block, "manifest": fp32_manifest}
+            "onnx": onnx_block, "manifest": fp32_manifest, "input": input_desc}
 
 
 def run(args) -> int:

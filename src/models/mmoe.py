@@ -173,6 +173,53 @@ if HAS_TORCH:
                 torch.tensor([_logit(r) for r in tuple(atom_rates)]))
 
 
+
+    class IndependentHeads(nn.Module):
+        """完全独立三模型：每目标一套主干 + 连续头 + 原子头（**无共享**）。
+
+        与 `E8/code/train_mmoe.py` 中的实验实现保持同名/同构，便于通用推理加载。
+        """
+
+        def __init__(self, d_in: int, hidden: int = 256, dropout: float = 0.1,
+                     perm_log_abs: float = 6.0):
+            super().__init__()
+            from .. import constants as C
+
+            self.hidden = int(hidden)
+            self.d_in = int(d_in)
+            self.perm_log_abs = float(perm_log_abs)
+            self.branches = nn.ModuleList([
+                nn.Sequential(nn.Linear(d_in, hidden), nn.GELU(), nn.Dropout(dropout))
+                for _ in range(3)])
+            self.cont = nn.ModuleList([nn.Linear(hidden, 1) for _ in range(3)])
+            self.q = nn.ModuleList([nn.Linear(hidden, 1) for _ in range(3)])
+            self.q_joint = nn.Linear(hidden * 3, 1)
+            self.register_buffer("por_max", torch.tensor(float(
+                C.POR_MAX_BUFFER * C.POR_VALID_MAX)))
+            self.register_buffer("sw_mu", torch.tensor(float(C.SW_VALID_MEDIAN)))
+            self.register_buffer("sw_sigma", torch.tensor(20.0))
+            for m in self.modules():
+                if isinstance(m, nn.Linear):
+                    nn.init.zeros_(m.bias)
+                    nn.init.normal_(m.weight, std=0.01)
+
+        def forward(self, x):
+            hs = [b(x) for b in self.branches]
+            por = self.por_max * torch.sigmoid(self.cont[0](hs[0]).squeeze(-1))
+            perm_z = self.perm_log_abs * torch.tanh(self.cont[1](hs[1]).squeeze(-1))
+            sw = self.sw_mu + self.sw_sigma * self.cont[2](hs[2]).squeeze(-1)
+            q_atom_logit = torch.stack([self.q[i](hs[i]).squeeze(-1) for i in range(3)],
+                                       dim=1)
+            q_joint_logit = self.q_joint(torch.cat(hs, dim=-1)).squeeze(-1)
+            return {"por": por, "perm_z": perm_z, "sw": sw,
+                    "q_atom": torch.sigmoid(q_atom_logit),
+                    "q_joint": torch.sigmoid(q_joint_logit),
+                    "q_atom_logit": q_atom_logit, "q_joint_logit": q_joint_logit,
+                    "ph_logit": q_joint_logit}
+
+        def shared_parameters(self):
+            return []
+
 def count_parameters(model) -> int:
     require("torch")
     return int(sum(p.numel() for p in model.parameters() if p.requires_grad))

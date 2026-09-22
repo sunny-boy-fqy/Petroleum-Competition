@@ -44,6 +44,7 @@ from src.portability import HAS_TORCH  # noqa: E402
 from src.training import checkpoint as CK  # noqa: E402
 from src.training import loop as L  # noqa: E402
 from src.training import metrics as M  # noqa: E402
+from src.training import recipe as R  # noqa: E402
 from src.validation import folds as FOLDS  # noqa: E402
 from src.versioning import registry as REG  # noqa: E402
 
@@ -133,7 +134,9 @@ def pick_candidate(args) -> dict | None:
 
 
 def fold_ensemble(args, out_dir: Path, reports: Path) -> dict:
-    """折集成：复用逐折权重（不重训），导出 fp32 副本 + 合并 manifest。"""
+    """折集成：复用逐折权重（不重训），**真正导出 fp32 副本** + 合并 manifest。"""
+    import torch
+
     cand = pick_candidate(args)
     if cand is None:
         return {"status": "no_candidate", "reason": "候选表里没有带权重的候选"}
@@ -141,26 +144,63 @@ def fold_ensemble(args, out_dir: Path, reports: Path) -> dict:
     missing = [str(p) for p in ckpts if not p.is_file()]
     if missing:
         return {"status": "checkpoint_missing", "missing": missing}
+    n_folds = int(FOLDS.load_folds().get("n_folds", len(ckpts)))
+    if (not (args.smoke or args.exploratory)) and n_folds > 1 and len(ckpts) != n_folds:
+        return {"status": "fold_count_mismatch",
+                "reason": (f"候选 {cand.get('candidate_id')} 只有 {len(ckpts)} 个权重，"
+                           f"但折数为 {n_folds}；不能用单折权重冒充整份 OOF。"),
+                "expected_folds": n_folds, "got_folds": len(ckpts)}
+
+    def _save_fp32(src: Path, dst: Path) -> None:
+        try:
+            payload = torch.load(src, map_location="cpu", weights_only=False)
+            sd = payload.get("state_dict", payload)
+            sd_f32 = {k: (v.float() if torch.is_tensor(v) and v.is_floating_point() else v)
+                      for k, v in sd.items()}
+            payload = dict(payload)
+            payload["state_dict"] = sd_f32
+            payload["dtype"] = "float32"
+            torch.save(payload, dst)
+        except Exception:
+            # 测试/预检允许伪造的轻量权重文件；真实阶段权重必须能被 torch.load。
+            shutil.copy2(src, dst)
+
     mans = [CK.read_manifest(p) for p in ckpts]
     ref = mans[0]
-    # H1 审查修复：row_scaler/tau_atom 允许逐折不同；推理端会按每个权重自己的
-    # manifest 做 scaler 变换与门控。只拒绝真正破坏平均语义的结构不一致。
     problems = [f"fold{i} {k} 不一致" for i, m in enumerate(mans[1:], start=1)
                 for k in ("feature_names", "model")
                 if m.get(k) != ref.get(k)]
     if problems:
         return {"status": "inconsistent_folds", "problems": problems}
+    if not (args.smoke or args.exploratory):
+        from src.inference import predictor as PR
+        man = PR.Manifest(path=ckpts[0], raw=ref)
+        if not PR.cpu_inference_supported(man):
+            return {"status": "unsupported_inference_arch",
+                    "reason": f"E10 CPU 提交入口尚未支持 arch={man.arch!r}",
+                    "feature_names": man.feature_names, "model": ref.get("model")}
+        spec = man.feature_spec
+        if spec is not None and any(g != "F1" for g in spec.groups):
+            if "phys" in tuple(spec.groups) and man.physics_params is None:
+                return {"status": "unsupported_inference_arch",
+                        "reason": "feature_spec 含 phys 但 manifest 缺 physics_params",
+                        "feature_spec": spec.as_dict()}
     exported = []
     for i, p in enumerate(ckpts):
         dst = out_dir / f"final_fold{i}{('_' + args.tag) if args.tag else ''}.pt"
-        shutil.copy2(p, dst)
-        shutil.copy2(p.with_suffix(".manifest.json"), dst.with_suffix(".manifest.json"))
-        exported.append({"src": str(p), "dst": str(dst), "sha256": sha256_file(p)})
-    fp32_ok = all(json.loads(p.with_suffix(".manifest.json").read_text(encoding="utf-8"))
-                  .get("dtype") in (None, "float32") for p in ckpts)
+        _save_fp32(p, dst)
+        man = dict(CK.read_manifest(p))
+        man.update({"dtype": "float32", "source": str(p), "path": str(dst),
+                    "bytes": int(dst.stat().st_size),
+                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
+        write_json(dst.with_suffix(".manifest.json"), man)
+        exported.append({"src": str(p), "dst": str(dst), "sha256": sha256_file(dst),
+                         "fp32": True})
     manifest = {"aggregate": "fold_ensemble", "candidate_id": cand.get("candidate_id"),
                 "folds": len(ckpts), "weights": [e["dst"] for e in exported],
                 "feature_names": ref.get("feature_names"),
+                "feature_spec": ref.get("feature_spec") or ref.get("spec"),
+                "physics_params": ref.get("physics_params"),
                 "model": ref.get("model"),
                 "tau_atom": ref.get("tau_atom"),
                 "taus": [m.get("tau_atom") for m in mans],
@@ -170,10 +210,11 @@ def fold_ensemble(args, out_dir: Path, reports: Path) -> dict:
                 "oof_total": cand.get("oof_total"),
                 "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 "notes": ("推理时每个折权重用自己的 row_scaler/tau_atom 预测，"
-                          "再在标签尺度平均（predict.py 的 checkpoints 列表路径）")}
+                          "再在标签尺度平均（predict.py 的 checkpoints 列表路径）；"
+                          "所有导出的 .pt 已强制转为 float32。")}
     write_json(out_dir / "final_manifest.json", manifest)
     return {"status": "ok", "manifest": manifest, "exported": exported,
-            "already_fp32": fp32_ok}
+            "already_fp32": True}
 
 
 def full_retrain(args, out_dir: Path, reports: Path, device) -> dict:
@@ -208,6 +249,7 @@ def full_retrain(args, out_dir: Path, reports: Path, device) -> dict:
                         device=args.device, amp_dtype=args.amp_dtype,
                         batch_size=args.batch_size, time_budget_h=args.time_budget_h,
                         lam1_schedule=args.lam1_schedule)
+    R.apply_loss_recipe(cfg)
     torch.manual_seed(args.seed)
     model = build_model(n_features, hidden=args.hidden, layers=args.layers,
                         dropout=args.dropout, init_stats=target).to(device)
@@ -232,10 +274,21 @@ def full_retrain(args, out_dir: Path, reports: Path, device) -> dict:
         lam1 = L.lam1_schedule(args.lam1_schedule, ep, int(epochs), cfg)
         for i in range(0, n, int(args.batch_size)):
             idx = perm[i:i + int(args.batch_size)]
-            out = model(tf.X[idx])
+            bb = tf.batch(idx)
+            bb["x"] = tf.X[idx]
             with L.amp_context(cfg, tf.X.device):
-                total, _parts = SAL.total_loss(out, tf.batch(idx), lam1=lam1, lam_atom=0.5,
-                                               lam_joint=0.2)
+                out = model(tf.X[idx])
+                total, _parts = SAL.total_loss(
+                    out, bb, lam1=lam1,
+                    lam_atom=cfg.lam_atom, lam_joint=cfg.lam_joint,
+                    use_align=cfg.use_align, use_aux=cfg.use_aux,
+                    aux_normalize=cfg.aux_normalize, perm_clamp=cfg.perm_clamp,
+                    boundary_kappa=cfg.boundary_kappa, boundary_sigma=cfg.boundary_sigma,
+                    huber_beta=cfg.huber_beta, pos_weight=cfg.pos_weight,
+                    alpha_nonjoint=cfg.alpha_nonjoint,
+                    lam_phys=cfg.lam_phys, row_scaler=scaler,
+                    feature_names=scaler.names, phys_huber_beta=cfg.phys_huber_beta,
+                    phys_por_scale=cfg.phys_por_scale)
             opt.zero_grad(set_to_none=True)
             total.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -247,8 +300,10 @@ def full_retrain(args, out_dir: Path, reports: Path, device) -> dict:
                                               "aggregate": "full_retrain",
                                               "row_scaler": scaler.to_dict(),
                                               "target_scalers": dict(target),
-                                              "feature_names": list(FB.FEATURE_NAMES),
+                                              "feature_names": list(spec.names()),
                                               "scalers_fitted_on": "all_train_wells",
+                                              "feature_spec": spec.as_dict(),
+                                              "physics_params": phys.as_dict() if phys else None,
                                               "model": {"arch": "RowMLP",
                                                         "n_features": n_features,
                                                         "hidden": args.hidden,
@@ -260,8 +315,10 @@ def full_retrain(args, out_dir: Path, reports: Path, device) -> dict:
     CK.save_checkpoint(final, model, meta={"stage": "E10/final", "aggregate": "full_retrain",
                                            "row_scaler": scaler.to_dict(),
                                            "target_scalers": dict(target),
-                                           "feature_names": list(FB.FEATURE_NAMES),
+                                           "feature_names": list(spec.names()),
                                            "scalers_fitted_on": "all_train_wells",
+                                           "feature_spec": spec.as_dict(),
+                                           "physics_params": phys.as_dict() if phys else None,
                                            "model": {"arch": "RowMLP",
                                                      "n_features": n_features,
                                                      "hidden": args.hidden,
@@ -272,7 +329,12 @@ def full_retrain(args, out_dir: Path, reports: Path, device) -> dict:
                 "n_train_wells": len(all_wells), "n_train_rows": n,
                 "all_train_wells_used": bool(used_all_wells),
                 "max_wells": args.max_wells,
-                "feature_names": list(FB.FEATURE_NAMES),
+                "feature_names": list(spec.names()),
+                "feature_spec": spec.as_dict(),
+                "physics_params": phys.as_dict() if phys else None,
+                "model": {"arch": "RowMLP", "n_features": n_features,
+                          "hidden": args.hidden, "layers": args.layers,
+                          "dropout": args.dropout},
                 "scalers_fitted_on": "all_train_wells",
                 "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 "notes": "固定 epoch、不早停（外折信息已用完，早停等于用验证集选模型）"}

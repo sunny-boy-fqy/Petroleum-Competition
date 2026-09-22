@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -98,68 +99,146 @@ def _resolve_checkpoints(info: dict) -> list[Path]:
     return paths
 
 
+def _load_decode_config(info: dict):
+    """从 registry/manifest、env、$V4_REPORTS_DIR 或默认路径加载 E7 冻结解码配置。
+
+    审查 H4：E7 现在会把 `decode_v1.json` 镜像到 `$V4_REPORTS_DIR`（随 mirror 持久化）。
+    多任务拆分时先查 reports，避免下一任务静默回退到“无解码配置”。
+    """
+    from src.inference import decode as DEC
+    candidates: list[str] = []
+    if info.get("decode_config"):
+        candidates.append(str(info["decode_config"]))
+    if os.environ.get("V4_DECODE_CONFIG"):
+        candidates.append(str(os.environ["V4_DECODE_CONFIG"]))
+    rep = os.environ.get("V4_REPORTS_DIR")
+    if rep:
+        candidates.append(str(Path(rep) / "decode_v1.json"))
+    candidates.append(str(V4 / "versions" / "configs" / "decode_v1.json"))
+    for raw in candidates:
+        p = _resolve_path(raw)
+        if p.is_file():
+            return DEC.load_decode_config(p)
+    return None
+
+
+def _effective_tau(manifest_tau, decode_cfg):
+    """合并 manifest 原子阈值与 E7 expected-value 解码阈值。
+
+    仅当 decode_cfg.expected_value[t] 为 True 时用 decode_cfg.tau[t] 覆盖对应目标；
+    其余目标仍使用 training/inner-OOF 选出的 manifest tau。
+    """
+    import numpy as np
+    if manifest_tau is None and decode_cfg is None:
+        return None
+    base = None
+    if manifest_tau is not None:
+        arr = np.asarray(manifest_tau, dtype="float64").reshape(-1)
+        base = (np.repeat(arr, 3) if arr.size == 1 else arr).astype("float64").tolist()
+    if base is None:
+        base = [0.5, 0.5, 0.5]
+    if decode_cfg is None or not decode_cfg.tau:
+        return base
+    for i, t in enumerate(C.TARGETS):
+        if bool(decode_cfg.expected_value.get(t, False)):
+            base[i] = float(decode_cfg.tau.get(t, base[i]))
+    return base
+
+
+def _fused_tau(manifest_taus, decode_cfg):
+    """把多折 tau 融合成一个逐目标阈值；任一折缺失语义时返回 None。"""
+    import numpy as np
+    eff: list = []
+    for t in manifest_taus:
+        v = _effective_tau(t, decode_cfg)
+        if v is None:
+            return None
+        eff.append(np.asarray(v, dtype="float64").reshape(3))
+    if not eff:
+        return None
+    return np.mean(np.vstack(eff), axis=0).astype("float64").tolist()
+
+
 def predict_pd1(test_dir: Path, info: dict, batch_size: int = 65536,
                 device: str = "cpu") -> tuple[list, dict]:
     """纯 DL 管线推理（**CPU 主路径**）：manifest → 权重 → 逐井解码 → 提交载荷。
 
-    折集成语义（H1 审查修复）
-    ------------------------
-    每个折权重都用**自己的 manifest 中的 row_scaler/tau_atom** 做特征标准化与原子门控，
-    然后在**标签尺度**平均最终预测。这样不同折可以用各自折内拟合的标尺（这正是
-    "每折只用自己的训练井"纪律的结果），不会再把 fold0 的 scaler 强加到所有折上。
+    折集成语义（审查 H3 修复，遵循项目自身纪律）
+    ------------------------------------------
+    每个折权重仍用自己的 row_scaler 做标准化；但**先融合连续头与 q_atom**，
+    再统一做**一次**原子硬切换。这样折间分歧不会产生“一半原子值、一半连续值”的插值，
+    与 `src/ensemble/blend.py` / `E8/code/ensemble.py` 的“切换必须在融合之后”一致。
+    统一 tau 取各折 `tau_atom`（经 E7 decode 配置覆盖后）的逐目标均值。
     """
     import numpy as np
 
     from src.data import parse as _P                       # noqa: PLC0415
-    from src.features import basic as F                    # noqa: PLC0415
     from src.inference import predictor as PR              # noqa: PLC0415
     from src.training import metrics as M                  # noqa: PLC0415
 
     ckpts = _resolve_checkpoints(info)
     manifests = [PR.load_manifest(c) for c in ckpts]
     ref = manifests[0]
-    ref_names = list(ref.raw.get("feature_names", []))
-    # 折集成只需要结构一致（模型/特征 schema/特征宽度）。row_scaler 允许因折而异，
-    # 因为每个模型在推理时都使用与训练时同源的折内 scaler。
+
+    def _sig(man):
+        return (str(man.arch).lower(), tuple(man.feature_names),
+                json.dumps(man.arch_kwargs, sort_keys=True, default=str),
+                json.dumps(man.feature_spec.as_dict() if man.feature_spec else None,
+                           sort_keys=True, default=str))
+
+    for i, man in enumerate(manifests):
+        if not PR.cpu_inference_supported(man):
+            raise SystemExit(f"[predict] 折 {i} 的架构 {man.arch!r} 尚未接线 CPU 推理")
     for i, man in enumerate(manifests[1:], start=1):
-        if list(man.raw.get("feature_names", [])) != ref_names:
-            raise SystemExit(f"[predict] 折 {i} 的 feature_names 与 fold0 不一致，禁止平均")
-        if man.raw.get("model") != ref.raw.get("model"):
-            raise SystemExit(f"[predict] 折 {i} 的模型结构与 fold0 不一致，禁止平均")
+        if _sig(man) != _sig(ref):
+            raise SystemExit(f"[predict] 折 {i} 的模型/特征配置与 fold0 不一致，禁止平均")
     taus = [man.tau_atom for man in manifests]
     has_tau = [t is not None for t in taus]
     if has_tau and any(h != has_tau[0] for h in has_tau):
         raise SystemExit(f"[predict] 折间 tau_atom 存在/缺失状态不一致：{taus}")
     models = [PR.load_model(c, man, device=device) for c, man in zip(ckpts, manifests)]
+    decode_cfg = _load_decode_config(info)
+    from src.inference import decode as DEC
+    tau_fused = _fused_tau(taus, decode_cfg)
 
     per_well: dict = {}
     n_rows = 0
+    n_folds = len(models)
     for rec in _P.load_split(test_dir, with_targets=False):
         inputs = np.asarray(rec.inputs, dtype="float32")
         depth = np.asarray(rec.depth, dtype="float32")
         missing = (~np.isfinite(inputs)).astype("int8")
-        X_raw = F.build_row_features(inputs, missing, depth)
-        acc = None
+        cont_sum = None
+        q_sum = None
         for model, man in zip(models, manifests):
+            X_raw = PR.build_inference_features(inputs, missing, depth, man)
             X = man.row_scaler.transform(X_raw)
-            out = PR.predict_x(model, X, batch_size=batch_size, device=device)
-            cont = M.decode_continuous(out)
-            tau = man.tau_atom
-            pred = M.atom_gate(cont, out["q_atom"], tau) if tau is not None else cont
-            pred = np.asarray(pred, dtype="float64")
-            acc = pred if acc is None else acc + pred
-        acc = acc / float(len(models))                    # 折平均（标签尺度，已各自门控）
-        per_well[rec.well_id] = {"depth": depth, "pred": acc}
-        n_rows += int(X_raw.shape[0])
+            out = PR.predict_manifest(model, man, X, batch_size=batch_size, device=device)
+            cont = np.asarray(M.decode_continuous(out), dtype="float64")
+            q_atom = np.asarray(out["q_atom"], dtype="float64")
+            cont_sum = cont if cont_sum is None else cont_sum + cont
+            q_sum = q_atom if q_sum is None else q_sum + q_atom
+        cont_fused = cont_sum / float(n_folds)
+        q_fused = q_sum / float(n_folds)
+        if decode_cfg is not None:
+            cont_fused = DEC.apply_decode_config(cont_fused, decode_cfg, q_atom=q_fused)
+        pred = (M.atom_gate(cont_fused, q_fused, tau_fused)
+                if tau_fused is not None else cont_fused)
+        per_well[rec.well_id] = {"depth": depth,
+                                 "pred": np.asarray(pred, dtype="float64")}
+        n_rows += int(inputs.shape[0])
     payload_data = PR.build_payload(per_well, model_name="v4-PD1")
     return payload_data["resultData"], {"checkpoints": [str(c) for c in ckpts],
                                         "n_folds": len(ckpts), "n_rows": n_rows,
                                         "n_wells": len(per_well),
                                         "tau_atom": taus[0], "taus": taus,
+                                        "tau_fused": tau_fused,
                                         "per_fold_scaler": True,
+                                        "decode_config": (None if decode_cfg is None
+                                                          else decode_cfg.as_dict()),
                                         "device": device,
                                         "aggregate": ("single" if len(ckpts) == 1
-                                                      else "fold_mean")}
+                                                      else "fuse_then_gate")}
 
 
 def build_payload(version: str, data_dir: Path, model_name: str | None = None,

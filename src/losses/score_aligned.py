@@ -318,7 +318,10 @@ def total_loss(out: dict, batch: dict, lam1: float = 1.0, lam2: float | None = N
                lam_atom: float = 0.5, lam_joint: float = 0.2,
                use_align: bool = True, use_aux: bool = True, use_ph: bool = True,
                use_atom: bool | None = None, use_joint: bool | None = None,
-               slice_weight=None, **kw) -> tuple:
+               slice_weight=None, lam_phys: float = 0.0,
+               row_scaler=None, feature_names=None,
+               phys_huber_beta: float = 1.0, phys_por_scale: float = 100.0,
+               **kw) -> tuple:
     """组合损失（R3 四段式）。
 
         L = L_align + λ1·L_aux + λ_joint·L_joint + λ_atom·L_atom
@@ -360,7 +363,14 @@ def total_loss(out: dict, batch: dict, lam1: float = 1.0, lam2: float | None = N
     aux_normalize = kw.pop("aux_normalize", True)
 
     if mask is None:
-        mask = torch.ones_like(torch.as_tensor(out["por"]))[:, None].expand(-1, 3)
+        ref = torch.as_tensor(out["por"])
+        if ref.dim() == 1:
+            mask = torch.ones((ref.shape[0], 3), dtype=ref.dtype, device=ref.device)
+        elif ref.dim() == 2:
+            mask = torch.ones((ref.shape[0], ref.shape[1], 3),
+                              dtype=ref.dtype, device=ref.device)
+        else:
+            raise ValueError(f"total_loss: 不支持的 out['por'] 维度 {tuple(ref.shape)}")
 
     parts: dict[str, "torch.Tensor"] = {}
     total = None
@@ -405,6 +415,13 @@ def total_loss(out: dict, batch: dict, lam1: float = 1.0, lam2: float | None = N
         parts["atom_perm"] = ap["PERM"]
         parts["atom_sw"] = ap["SW"]
 
+    if lam_phys and float(lam_phys) > 0.0:
+        from .physics import physics_porosity_loss
+        lp = physics_porosity_loss(out["por"], batch, row_scaler=row_scaler,
+                                   feature_names=feature_names,
+                                   huber_beta=phys_huber_beta,
+                                   por_scale=phys_por_scale)
+        _add("phys", lp, float(lam_phys))
     if total is None:
         raise ValueError("at least one loss term must be enabled")
     return total, {

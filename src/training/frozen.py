@@ -16,6 +16,7 @@ E5 的三个逐目标头都建立在**冻结的序列主干**上（E3/P2 的 U-N
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -23,6 +24,71 @@ import numpy as np
 
 from ..portability import HAS_TORCH, require
 
+
+
+
+def resolve_backbone_checkpoint(backbone_ckpt: str | Path | None, arch: str | None,
+                                fold: int, run_root: str | Path | None = None
+                                ) -> Path | None:
+    """定位某个折的冻结骨干 checkpoint。
+
+    支持：
+      * 直接文件路径；
+      * 含 ``{fold}`` / ``{k}`` 的模板，例如
+        ``$V4_RUN_ROOT/E4/patchtf/fold{fold}/best.pt``；
+      * 一个 run 目录：自动尝试 ``fold{k}/best.pt`` 与
+        ``fold{k}/select/best.pt``；
+      * 未显式给路径时，按 ``E4/{arch}/fold{k}/best.pt`` 与
+        ``E3/{arch}/fold{k}/best.pt`` 自动发现。
+
+    返回 None 表示未找到；调用方在 smoke/exploratory 下可退回随机初始化。
+    """
+    fmt = {"fold": int(fold), "k": int(fold), "i": int(fold)}
+    if backbone_ckpt:
+        raw = str(backbone_ckpt)
+        try:
+            raw = raw.format(**fmt)
+        except Exception:
+            pass
+        p = Path(raw).expanduser()
+        if p.is_file():
+            return p
+        if p.is_dir():
+            for cand in (p / f"fold{fold}" / "best.pt",
+                         p / f"fold{fold}" / "select" / "best.pt",
+                         p / f"select" / f"fold{fold}" / "best.pt"):
+                if cand.is_file():
+                    return cand
+        # 未展开的 glob 模板（例如 fold*）交给调用方报错更清晰。
+        matches: list[Path] = []
+        if any(ch in raw for ch in "*?["):
+            pp = Path(raw)
+            try:
+                if pp.is_absolute():
+                    # Path().glob() 不支持绝对 pattern；拆成 parent + name。
+                    matches = sorted(pp.parent.glob(pp.name))
+                else:
+                    matches = sorted(Path().glob(raw))
+            except (NotImplementedError, ValueError, OSError):
+                matches = []
+        for cand in matches:
+            if cand.is_file() and ("fold" not in cand.name or str(fold) in cand.name):
+                return cand
+        return None
+
+    root = Path(run_root or os.environ.get("V4_RUN_ROOT")
+                or (Path(os.environ.get("V4_DATA_ROOT", "/data")) / "v4" / "runs"))
+    arch_candidates: list[str] = []
+    for a in (arch, "patchtf", "unet", "tcn"):
+        if a and str(a) not in arch_candidates:
+            arch_candidates.append(str(a))
+    for a in arch_candidates:
+        for cand in (root / "E4" / a / f"fold{fold}" / "best.pt",
+                     root / "E3" / a / f"fold{fold}" / "best.pt",
+                     root / "E4" / a / "select" / f"fold{fold}" / "best.pt"):
+            if cand.is_file():
+                return cand
+    return None
 
 def states_supported(model) -> str:
     """返回取特征方式：`"native"`（有 `forward_states`）或 `"hook"`（需传 hook_module）。"""

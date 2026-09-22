@@ -52,6 +52,7 @@ class DecodeConfig:
     version: str = "decode_v1"
     bias: dict[str, float] = field(default_factory=lambda: {t: 0.0 for t in C.TARGETS})
     shrink: dict[str, float] = field(default_factory=lambda: {t: 1.0 for t in C.TARGETS})
+    shrink_centers: dict[str, float] = field(default_factory=dict)
     quantile_shrink: dict[str, float] = field(default_factory=lambda: {t: 0.0 for t in C.TARGETS})
     expected_value: dict[str, bool] = field(default_factory=lambda: {t: False for t in C.TARGETS})
     tau: dict[str, float] = field(default_factory=dict)
@@ -62,6 +63,42 @@ class DecodeConfig:
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def apply_decode_config(pred: Any, config: DecodeConfig | None = None,
+                        q_atom: Any | None = None,
+                        reference: Any | None = None) -> "np.ndarray":
+    """把冻结的 ``decode_v1`` 配置作用到标签尺度连续预测上。
+
+    严格顺序：**连续后处理 → 原子硬切换**。本函数只做连续后处理，原子硬切换仍由调用方
+    使用返回后的连续值执行，以保证命中原子行不会被后处理挪走。
+
+    当前支持：逐目标 bias、shrink（需 ``shrink_centers``）、quantile_shrink（需
+    ``reference`` 分位数）。``expected_value`` 通过调用方传入 config.tau 作为硬切换
+    阈值来体现。
+    """
+    _require_numpy()
+    out = np.asarray(pred, dtype="float64").copy()
+    if config is None:
+        return sw_only_soft_clip(out, (0.0, 100.0))
+    if out.ndim != 2 or out.shape[1] != 3:
+        raise ValueError(f"pred 必须为 (N,3)，got {out.shape}")
+    # 1) 逐目标 bias
+    if config.bias:
+        out = apply_bias(out, config.bias)
+    # 2) 逐目标收缩；center 必须来自冻结配置，禁止在测试集上重新估计
+    if config.shrink:
+        if config.shrink_centers:
+            out = apply_shrink(out, config.shrink, centers=config.shrink_centers)
+        elif all(abs(float(v) - 1.0) <= 1e-12 for v in config.shrink.values()):
+            pass
+        else:
+            # 没有冻结 center 时不做 shrink，避免用测试集中位数引入分布漂移。
+            pass
+    # 3) 分位收缩（可选，只在内折上拟合参考分布时使用）
+    if reference is not None and config.quantile_shrink:
+        out = quantile_shrink(out, config.quantile_shrink, reference)
+    return sw_only_soft_clip(out, config.sw_clip)
 
 
 def save_decode_config(cfg: DecodeConfig, path: str | Path) -> Path:
@@ -80,6 +117,7 @@ def load_decode_config(path: str | Path) -> DecodeConfig:
         version=str(d.get("version", "decode_v1")),
         bias={k: float(v) for k, v in (d.get("bias") or {}).items()},
         shrink={k: float(v) for k, v in (d.get("shrink") or {}).items()},
+        shrink_centers={k: float(v) for k, v in (d.get("shrink_centers") or {}).items()},
         quantile_shrink={k: float(v) for k, v in (d.get("quantile_shrink") or {}).items()},
         expected_value={k: bool(v) for k, v in (d.get("expected_value") or {}).items()},
         tau={k: float(v) for k, v in (d.get("tau") or {}).items()},

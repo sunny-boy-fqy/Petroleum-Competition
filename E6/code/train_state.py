@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pickle
 import sys
 import time
 from pathlib import Path
@@ -48,6 +49,7 @@ from src.training import checkpoint as CK  # noqa: E402
 from src.training import fold_runner as FR  # noqa: E402
 from src.training import loop as L  # noqa: E402
 from src.training import metrics as M  # noqa: E402
+from src.training import recipe as R  # noqa: E402
 from src.training import state_train as ST  # noqa: E402
 from src.validation import folds as FOLDS  # noqa: E402
 from src.validation import gates as GATES  # noqa: E402
@@ -159,8 +161,10 @@ def labels_from(fold) -> dict:
 
 # ---------------------------------------------------------------- 训练
 def run_stage(model, fold, cfg, stage, epochs, loss_kw, optimizer=None, eval_fn=None,
-              patience=10 ** 9, keep_best=True, verbose=False) -> dict:
+              patience=10 ** 9, keep_best=True, verbose=False,
+              row_scaler=None, feature_names=None) -> dict:
     """单个阶段的 epoch 循环（内折早停用真实口径；keep_best 写回最优权重）。"""
+    import time
     import torch
     dev = L.resolve_device(cfg)
     if optimizer is None:
@@ -170,18 +174,32 @@ def run_stage(model, fold, cfg, stage, epochs, loss_kw, optimizer=None, eval_fn=
     bs = int(cfg.batch_size)
     best = {"score": float("-inf"), "epoch": -1, "state": None}
     hist, bad = [], 0
+    stopped = "completed"
     sw_full = loss_kw.pop("slice_weight_full", None)
+    t0 = time.time()
     for ep in range(int(epochs)):
+        if L.pause_requested():
+            stopped = "paused"
+            break
+        if (cfg.time_budget_h is not None
+                and (time.time() - t0) > float(cfg.time_budget_h) * 3600.0):
+            stopped = "time_budget"
+            break
         model.train()
         perm = torch.randperm(n, device=fold.X.device)
         tot, nb = 0.0, 0
         lam1 = L.lam1_at(ep, epochs, cfg)
+        parts: dict = {}
         for i in range(0, n, bs):
             idx = perm[i:i + bs]
+            if idx.numel() < 2:      # BatchNorm1d 训练模式需要 >=2 个样本
+                continue
             xb = fold.X[idx]
             bb = fold.batch(idx)
-            out = model(xb)
-            kw = dict(loss_kw, lam1=lam1)
+            bb["x"] = xb
+            kw = dict(loss_kw)
+            if "lam1" not in kw:
+                kw["lam1"] = lam1   # 未显式给 lam1 时按 schedule；stage2 可显式给常量
             if sw_full is not None:
                 sw = torch.as_tensor(np.asarray(sw_full), dtype=torch.float32,
                                      device=fold.X.device)
@@ -189,13 +207,20 @@ def run_stage(model, fold, cfg, stage, epochs, loss_kw, optimizer=None, eval_fn=
             if int(stage) == 2:
                 kw.update({"use_atom": False, "use_joint": False})
             with L.amp_context(cfg, fold.X.device):
-                total, parts = SAL.total_loss(out, bb, **kw)
+                out = model(xb)
+                total, parts = SAL.total_loss(
+                    out, bb, row_scaler=row_scaler, feature_names=feature_names,
+                    lam_phys=cfg.lam_phys, phys_huber_beta=cfg.phys_huber_beta,
+                    phys_por_scale=cfg.phys_por_scale, **kw)
             optimizer.zero_grad(set_to_none=True)
             total.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             tot += float(total.detach().cpu())
             nb += 1
+        if nb == 0:
+            stopped = "no_batches"
+            break
         rec = {"epoch": ep, "loss": tot / max(nb, 1),
                "parts": {k: float(v) for k, v in parts.items()}}
         if eval_fn is not None:
@@ -212,11 +237,13 @@ def run_stage(model, fold, cfg, stage, epochs, loss_kw, optimizer=None, eval_fn=
                     hist.append(rec)
                     break
         hist.append(rec)
+        # 每个 epoch 结束做磁盘余量守卫（E1/E3 同一纪律）。
+        L.check_disk(cfg, verbose=False)
     if keep_best and best["state"] is not None:
         model.load_state_dict(best["state"])
     return {"epochs": hist, "best_epoch": int(best["epoch"]),
             "best_score": (None if best["score"] == float("-inf") else float(best["score"])),
-            "n_epochs_run": len(hist)}
+            "n_epochs_run": len(hist), "stopped_reason": stopped}
 
 
 def joint_atom_auc(model, fold) -> float | None:
@@ -228,7 +255,9 @@ def joint_atom_auc(model, fold) -> float | None:
         out = model(fold.X)
         q = torch.sigmoid(out["q_joint_logit"]).float().cpu().numpy()
     y = fold.y["y_joint"].detach().cpu().numpy() >= 0.5
-    return M.binary_auc(y, q)
+    mask = fold.y["mask"].detach().cpu().numpy() >= 0.5
+    valid = mask.all(axis=1)
+    return M.binary_auc(y[valid], q[valid])
 
 
 def predict_fold(model, fold) -> dict:
@@ -244,14 +273,24 @@ def slice_mask(y_atom) -> "np.ndarray":
     return ~np.asarray(y_atom, dtype=bool).all(axis=1)
 
 
-def atom_metrics(y_atom, q_atom, tau_scalar: float) -> dict:
-    taus = np.full(3, float(tau_scalar))
-    pr = M.atomic_precision_recall(np.asarray(y_atom) >= 0.5, np.asarray(q_atom), taus)
+def atom_metrics(y_atom, q_atom, tau_scalar: float, mask=None) -> dict:
+    taus = np.asarray(tau_scalar, dtype="float64").reshape(-1)
+    if taus.size == 1:
+        taus = np.repeat(taus, 3)
+    if taus.size != 3:
+        raise ValueError(f"tau must be scalar or length-3, got {taus.size}")
+    y = np.asarray(y_atom, dtype=bool)
+    q = np.asarray(q_atom, dtype="float64")
+    mm = None if mask is None else np.asarray(mask, dtype=bool)
+    pr = M.atomic_precision_recall(y, q, taus, mask=mm)
     acc = {}
     for i, t in enumerate(C.TARGETS):
-        pred = np.asarray(q_atom)[:, i] >= float(tau_scalar)
-        acc[t] = float((pred == (np.asarray(y_atom)[:, i] >= 0.5)).mean())
-    return {"tau": float(tau_scalar), "per_target": pr, "per_target_acc": acc,
+        valid = (np.ones(y.shape[0], dtype=bool) if mm is None
+                 else (mm if mm.ndim == 1 else mm[:, i]))
+        pred = q[valid, i] >= float(taus[i])
+        acc[t] = float((pred == y[valid, i]).mean()) if valid.any() else float("nan")
+    return {"tau": [float(v) for v in taus], "tau_per_target": [float(v) for v in taus],
+            "per_target": pr, "per_target_acc": acc,
             "min_acc": min(acc.values()) if acc else None,
             "min_recall": min(v["recall"] for v in pr.values()) if pr else None}
 
@@ -273,6 +312,7 @@ def run(args) -> int:
         print("[E6] FATAL: 需要 torch", file=sys.stderr)
         return 5
     import torch
+    L.install_pause_handlers()
 
     cache, reports = Path(args.cache_root), Path(args.reports_dir)
     run_dir = Path(args.run_root) / "E6" / "state"
@@ -287,12 +327,14 @@ def run(args) -> int:
     if not (cache / "raw" / "train").is_dir():
         print("[E6] FATAL: 缺少 raw 分片（先跑 run_train.sh --mode data）", file=sys.stderr)
         return 4
-    audit = ST.input_no_label_leak_full(FB.FEATURE_NAMES)
-    if not audit["ok"]:
-        print(f"[E6] FATAL: 输入列审计失败：{audit['hits']}", file=sys.stderr)
-        return 6
-
     spec = G.spec_from_name(args.spec)
+    audit = {"ok": True, "hits": {}, "n_features": len(spec.names()),
+             "f1_audit": ST.input_no_label_leak_full(FB.FEATURE_NAMES),
+             "spec_audit": G.audit_no_target_derivation(spec)}
+    if not (audit["f1_audit"]["ok"] and audit["spec_audit"]["ok"]):
+        print(f"[E6] FATAL: 输入列审计失败：f1={audit['f1_audit']} spec={audit['spec_audit']}",
+              file=sys.stderr)
+        return 6
     folds = FOLDS.load_folds()
     fold_list = list(range(int(folds["n_folds"]))) if args.folds == "all" else \
         [int(x) for x in str(args.folds).split(",") if x.strip()]
@@ -308,6 +350,12 @@ def run(args) -> int:
                         device=args.device, amp_dtype=args.amp_dtype,
                         batch_size=args.batch_size, time_budget_h=args.time_budget_h,
                         min_free_gb=args.min_free_gb, disk_path=args.disk_path)
+    _recipe = R.load_loss_recipe(os.environ.get("V4_LOSS_CONFIG"))
+    _loss_params = R.apply_loss_recipe(cfg, _recipe)
+    if "lam1" in _loss_params:
+        args.lam_cont_fallback = float(_loss_params["lam1"])
+    if "lam_joint" in _loss_params:
+        args.lam_joint = float(_loss_params["lam_joint"])
     tracker = L.TimeTracker("E6", args.time_budget_h)
     t0 = time.time()
 
@@ -322,6 +370,39 @@ def run(args) -> int:
     oof_out_wells: list[str] = []
     for k in fold_list:
         tk = time.time()
+        fold_cache = run_dir / (f"fold{k}" + (f"_{args.tag}" if args.tag else "") + "_result.pkl")
+        cache_key = {"seed": args.seed, "epochs": args.epochs,
+                     "stage2_epochs": args.stage2_epochs, "hidden": args.hidden,
+                     "layers": args.layers, "dropout": args.dropout,
+                     "spec": spec.key, "max_wells": args.max_wells,
+                     "lam_atom": args.lam_atom, "lam_joint": args.lam_joint,
+                     "lam_cont_fallback": args.lam_cont_fallback,
+                     "pos_weight": args.pos_weight, "alpha_nonjoint": args.alpha_nonjoint,
+                     "stage2_w": [args.stage2_w_joint, args.stage2_w_nonjoint_atom,
+                                  args.stage2_w_valid],
+                     "loss_recipe": _loss_params}
+        if args.resume and fold_cache.is_file():
+            try:
+                payload = pickle.loads(fold_cache.read_bytes())
+                if payload.get("key") == cache_key:
+                    ckpts.append(payload["ckpt"])
+                    fold_records.append(payload["rec"])
+                    for key, val in payload["inner"].items():
+                        oof[key].append(val)
+                    oof_wells.extend(payload.get("inner_wells", []))
+                    for key, val in payload["outer"].items():
+                        oof_out[key].append(val)
+                    oof_out_wells.extend(payload.get("outer_wells", []))
+                    rec0 = payload["rec"]
+                    tracker.add_fold(k, max(float(rec0.get("seconds", 0.0)), 1e-3),
+                                     int(rec0.get("n_epochs_run", 0) or 0),
+                                     extra={"resumed_fold": True,
+                                            "state_auc": rec0.get("state_auc")})
+                    print(f"[E6/state] fold{k} 从 {fold_cache.name} 恢复，跳过训练", flush=True)
+                    continue
+            except Exception as exc:
+                print(f"[E6/state] fold{k} 缓存不可用（{exc}），重跑", file=sys.stderr,
+                      flush=True)
         tr_wells, va_wells = RD.fold_wells(folds, k)
         if args.max_wells:
             tr_wells, va_wells = tr_wells[:args.max_wells], va_wells[:args.max_wells]
@@ -351,19 +432,70 @@ def run(args) -> int:
         loss1 = {"lam_atom": args.lam_atom, "lam_joint": args.lam_joint,
                  "pos_weight": (args.pos_weight if args.pos_weight != 1.0 else None),
                  "alpha_nonjoint": args.alpha_nonjoint, "use_atom": True, "use_joint": True,
-                 "use_align": True, "use_aux": True, "s_por": target.get("s_por", 11.34),
+                 "use_align": cfg.use_align, "use_aux": cfg.use_aux,
+                 "aux_normalize": cfg.aux_normalize, "perm_clamp": cfg.perm_clamp,
+                 "boundary_kappa": cfg.boundary_kappa,
+                 "boundary_sigma": cfg.boundary_sigma, "huber_beta": cfg.huber_beta,
+                 "s_por": target.get("s_por", 11.34),
                  "s_sw": target.get("s_sw", 20.0)}
         h1 = run_stage(model, f_in_tr, cfg, 1, args.epochs, dict(loss1),
                        eval_fn=lambda m: joint_atom_auc(m, f_in_va),
-                       patience=args.patience, keep_best=True, verbose=not args.smoke)
+                       patience=args.patience, keep_best=True, verbose=not args.smoke,
+                       row_scaler=scaler, feature_names=list(spec.names()))
+        if h1.get("stopped_reason") in ("paused", "time_budget", "no_batches"):
+            raise L.TrainingPaused(f"[E6 fold{k}] inner stage1 stopped: "
+                                   f"{h1.get('stopped_reason')}")
         best_epoch = max(h1["best_epoch"], 0)
-        # 阶段 1 结束：把最优权重在全折上重训（避免"只看内折"的样本量损失）
-        torch.manual_seed(args.seed)
-        model = build_model(n_features, hidden=args.hidden, layers=args.layers,
-                            dropout=args.dropout, init_stats=target).to(dev)
-        run_stage(model, f_tr, cfg, 1, best_epoch + 1, dict(loss1), keep_best=False)
+        n2 = int(args.stage2_epochs) if args.stage2_epochs else best_epoch + 1
 
-        # ---------------- 阶段 2：冻结/降 lr 原子头，只训连续头（切片加权）
+        # ---------------- 阶段 2 的“内折版本”：仅用于生成真正的 inner-OOF τ 证据
+        # 只使用 inner_tr；绝不能把包含 inner_val 的 f_tr 用来选 τ。
+        y_atom_in = f_in_tr.y["y_atom"].detach().cpu().numpy() >= 0.5
+        y_joint_in = f_in_tr.y["y_joint"].detach().cpu().numpy() >= 0.5
+        w_in = ST.slice_weight_matrix(
+            y_atom_in, y_joint_in,
+            f_in_tr.y["mask"].detach().cpu().numpy() >= 0.5,
+            w_joint=args.stage2_w_joint,
+            w_nonjoint_atom=args.stage2_w_nonjoint_atom,
+            w_valid=args.stage2_w_valid)
+        groups_in, _ = ST.make_param_groups(
+            model, q_head_lr_mult=args.q_head_lr_mult,
+            base_lr=args.lr, weight_decay=args.weight_decay)
+        opt2_in = torch.optim.AdamW(groups_in, lr=args.lr)
+        loss2_in = {"lam1": args.lam_cont_fallback, "use_atom": False, "use_joint": False,
+                    "use_align": cfg.use_align, "use_aux": cfg.use_aux,
+                    "aux_normalize": cfg.aux_normalize, "perm_clamp": cfg.perm_clamp,
+                    "boundary_kappa": cfg.boundary_kappa,
+                    "boundary_sigma": cfg.boundary_sigma, "huber_beta": cfg.huber_beta,
+                    "s_por": target.get("s_por", 11.34),
+                    "s_sw": target.get("s_sw", 20.0),
+                    "slice_weight_full": w_in}
+        h2_in = run_stage(model, f_in_tr, cfg, 2, max(n2, 1), dict(loss2_in),
+                          optimizer=opt2_in, eval_fn=None, keep_best=False,
+                          row_scaler=scaler, feature_names=list(spec.names()))
+        if h2_in.get("stopped_reason") in ("paused", "time_budget", "no_batches"):
+            raise L.TrainingPaused(f"[E6 fold{k}] inner stage2 stopped: "
+                                   f"{h2_in.get('stopped_reason')}")
+
+        # τ 只能来自“未见过 inner_val”的模型；这里模型只训练过 inner_tr。
+        pred_in = predict_fold(model, f_in_va)
+        lin = labels_from(f_in_va)
+        sel = AG.select_tau_per_target(cont=M.decode_continuous(pred_in),
+                                      q_atom=pred_in["q_atom"], y=lin["y"],
+                                      mask=lin["mask"])
+        tau = np.asarray(sel["tau"], dtype="float64")
+
+        # ---------------- 外层最终模型：全部 outer-train 重训阶段 1 + 阶段 2
+        torch.manual_seed(args.seed)
+        model_final = build_model(n_features, hidden=args.hidden, layers=args.layers,
+                                  dropout=args.dropout, init_stats=target).to(dev)
+        hs1 = run_stage(model_final, f_tr, cfg, 1, best_epoch + 1, dict(loss1),
+                        keep_best=False, row_scaler=scaler,
+                        feature_names=list(spec.names()))
+        if hs1.get("stopped_reason") in ("paused", "time_budget", "no_batches"):
+            raise L.TrainingPaused(f"[E6 fold{k}] final stage1 stopped: "
+                                   f"{hs1.get('stopped_reason')}")
+
         y_atom_tr = f_tr.y["y_atom"].detach().cpu().numpy() >= 0.5
         y_joint_tr = f_tr.y["y_joint"].detach().cpu().numpy() >= 0.5
         w = ST.slice_weight_matrix(y_atom_tr, y_joint_tr,
@@ -372,30 +504,34 @@ def run(args) -> int:
                                    w_nonjoint_atom=args.stage2_w_nonjoint_atom,
                                    w_valid=args.stage2_w_valid)
         w_report = ST.slice_weight_report(w)
-        groups, ginfo = ST.make_param_groups(model, q_head_lr_mult=args.q_head_lr_mult,
+        groups, ginfo = ST.make_param_groups(model_final,
+                                            q_head_lr_mult=args.q_head_lr_mult,
                                             base_lr=args.lr,
                                             weight_decay=args.weight_decay)
-        q_before = {n: p.detach().clone() for n, p in model.named_parameters()
+        q_before = {n: p.detach().clone() for n, p in model_final.named_parameters()
                     if n in set(ginfo["q_head_params"])}
         opt2 = torch.optim.AdamW(groups, lr=args.lr)
         loss2 = {"lam1": args.lam_cont_fallback, "use_atom": False, "use_joint": False,
-                 "use_align": True, "use_aux": True, "s_por": target.get("s_por", 11.34),
+                 "use_align": cfg.use_align, "use_aux": cfg.use_aux,
+                 "aux_normalize": cfg.aux_normalize, "perm_clamp": cfg.perm_clamp,
+                 "boundary_kappa": cfg.boundary_kappa,
+                 "boundary_sigma": cfg.boundary_sigma, "huber_beta": cfg.huber_beta,
+                 "s_por": target.get("s_por", 11.34),
                  "s_sw": target.get("s_sw", 20.0),
                  "slice_weight_full": w}
-        n2 = int(args.stage2_epochs) if args.stage2_epochs else best_epoch + 1
-        h2 = run_stage(model, f_tr, cfg, 2, max(n2, 1), dict(loss2), optimizer=opt2,
-                       eval_fn=None, keep_best=False)
-        q_frozen_ok = all(bool(torch.equal(p.detach(), q_before[n]))
-                          for n, p in model.named_parameters() if n in q_before) \
+        h2 = run_stage(model_final, f_tr, cfg, 2, max(n2, 1), dict(loss2),
+                       optimizer=opt2, eval_fn=None, keep_best=False,
+                       row_scaler=scaler, feature_names=list(spec.names()))
+        if h2.get("stopped_reason") in ("paused", "time_budget", "no_batches"):
+            raise L.TrainingPaused(f"[E6 fold{k}] final stage2 stopped: "
+                                   f"{h2.get('stopped_reason')}")
+        q_frozen_ok = (
+            all(bool(torch.equal(p.detach(), q_before[n]))
+                for n, p in model_final.named_parameters() if n in q_before)
             if args.q_head_lr_mult == 0.0 else None
+        )
 
-        # ---------------- 外折推理一次 + τ 只在内折选
-        pred_in = predict_fold(model, f_in_va)
-        lin = labels_from(f_in_va)
-        sel = AG.select_tau_per_target(cont=M.decode_continuous(pred_in),
-                                      q_atom=pred_in["q_atom"], y=lin["y"],
-                                      mask=lin["mask"])
-        tau = np.asarray(sel["tau"], dtype="float64")
+        # ---------------- 记录 inner-OOF 证据（真正的内折模型预测）
         oof["cont"].append(M.decode_continuous(pred_in))
         oof["q_atom"].append(np.asarray(pred_in["q_atom"], dtype="float64"))
         oof["q_joint"].append(np.asarray(pred_in["q_joint"], dtype="float64").reshape(-1))
@@ -407,23 +543,26 @@ def run(args) -> int:
         oof["well_index"].append(np.asarray(t_in_va.well_index, dtype="int64")
                                  + len(oof_wells))
         oof_wells += [str(w) for w in t_in_va.well_ids]
-        pred = predict_fold(model, f_va)
+        pred = predict_fold(model_final, f_va)
         lva = labels_from(f_va)
         cont = M.decode_continuous(pred)
         gated = AG.per_target_hard_switch(cont, pred["q_atom"], tau)
         n_int = no_interpolation_check(cont, pred["q_atom"], tau)
-        auc = M.auc_report(lva["y_atom"] >= 0.5, pred["q_atom"])
-        m_half = atom_metrics(lva["y_atom"], pred["q_atom"], 0.5)
-        m_best = atom_metrics(lva["y_atom"], pred["q_atom"], float(tau.mean()))
+        auc = M.auc_report(lva["y_atom"] >= 0.5, pred["q_atom"],
+                           mask=lva["mask"] >= 0.5)
+        m_half = atom_metrics(lva["y_atom"], pred["q_atom"], 0.5,
+                              mask=lva["mask"] >= 0.5)
+        m_best = atom_metrics(lva["y_atom"], pred["q_atom"], tau,
+                              mask=lva["mask"] >= 0.5)
         cs = slice_mask(lva["y_atom"])
         ms = lva["mask"].astype(bool)
         cont_sc = M.score_of(lva["y"][cs], cont[cs], ms[cs])
         gated_sc = M.score_of(lva["y"][cs], gated[cs], ms[cs])
         ph = M.atomic_rows_report(lva["y"], gated, lva["y_atom"] >= 0.5, ms)
         ckpt = run_dir / f"fold{k}{('_' + args.tag) if args.tag else ''}.pt"
-        CK.save_checkpoint(ckpt, model, meta={
+        CK.save_checkpoint(ckpt, model_final, meta={
             "stage": "E6/P0", "fold": k, "spec": spec.as_dict() if spec else None,
-            "feature_names": list(FB.FEATURE_NAMES), "n_features": n_features,
+            "feature_names": list(spec.names()), "n_features": n_features,
             # `row_scaler` 是推理端反变换的**唯一来源**（缺了它 predict.py 直接 KeyError）
             "row_scaler": scaler.to_dict(),
             # `model` 是 `predictor.Manifest.model_kwargs` 的**唯一来源**：
@@ -431,6 +570,9 @@ def run(args) -> int:
             "model": {"arch": "RowMLP", "n_features": n_features, "hidden": args.hidden,
                       "layers": args.layers, "dropout": args.dropout},
             "target_scalers": dict(target), "scalers_fitted_on": "train_fold_only",
+            "physics_params": phys.as_dict() if phys else None,
+            "feature_spec": spec.as_dict() if spec else None,
+            "arch": "RowMLP",
             "tau_atom": [float(v) for v in tau], "tau_source": "inner_oof_only",
             "stage1": {"epochs": args.epochs, "best_epoch": best_epoch,
                        "lam_atom": args.lam_atom, "lam_joint": args.lam_joint},
@@ -440,7 +582,7 @@ def run(args) -> int:
             "inner_train_wells": list(inner_tr), "inner_val_wells": list(inner_val)},
             bf16=False)
         ckpts.append(str(ckpt))
-        rec = {"fold": k, "n_params": int(sum(p.numel() for p in model.parameters())),
+        rec = {"fold": k, "n_params": int(sum(p.numel() for p in model_final.parameters())),
                "train_wells": list(tr_wells), "val_wells": list(va_wells),
                "inner_tr": list(inner_tr), "inner_val": list(inner_val),
                "stage1": {"best_epoch": best_epoch, "inner_joint_auc": h1["best_score"],
@@ -479,6 +621,17 @@ def run(args) -> int:
         fold_records.append(rec)
         tracker.add_fold(k, rec["seconds"], h1["n_epochs_run"] + h2["n_epochs_run"],
                          extra={"state_auc": rec["state_auc"]})
+        try:
+            payload = {"key": cache_key, "ckpt": str(ckpt), "rec": rec,
+                       "inner": {key: oof[key][-1] for key in oof},
+                       "outer": {key: oof_out[key][-1] for key in oof_out},
+                       "inner_wells": [str(w) for w in t_in_va.well_ids],
+                       "outer_wells": [str(w) for w in t_va.well_ids]}
+            tmp = fold_cache.parent / (fold_cache.stem + ".tmp.pkl")
+            tmp.write_bytes(pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL))
+            tmp.replace(fold_cache)
+        except Exception as exc:
+            print(f"[E6/state] fold{k} 缓存写入失败（{exc}），不影响本次训练", file=sys.stderr)
         print(f"[E6/state] fold{k} state_auc={rec['state_auc']} "
               f"min_atom_acc={m_half['min_acc']:.5f} min_recall={m_half['min_recall']:.5f} "
               f"tau={[round(float(v), 3) for v in tau]} frozen_ok={q_frozen_ok} "
@@ -520,8 +673,10 @@ def run(args) -> int:
                              layers=args.layers, dropout=args.dropout).to(dev)
         run_stage(smodel, f_tr, cfg, 1, min(int(args.epochs), 3),
                   {"lam_atom": args.lam_atom, "lam_joint": args.lam_joint,
-                   "use_atom": True, "use_joint": True, "use_align": False, "use_aux": False},
-                  keep_best=False)
+                   "use_atom": True, "use_joint": True, "use_align": False,
+                   "use_aux": False},
+                  keep_best=False, row_scaler=scaler,
+                  feature_names=list(spec.names()))
         shuffle = {"seed": args.seed, "marginals_preserved": ctrl["marginals_preserved"],
                    "row_identity_rate": ctrl["row_identity_rate"],
                    "val_state_auc": joint_atom_auc(smodel, f_va),

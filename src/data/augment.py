@@ -152,7 +152,8 @@ def augment_matrix(X: "np.ndarray", cfg: AugmentConfig, rng: "np.random.Generato
     """特征矩阵层增强（训练循环的便宜路径，**不重算窗口/物理特征**）。
 
     只做：行错位（depth jitter）、按列稳健尺度加噪、可选**整列** dropout。
-    通道置缺的语义正确版本请用 `augment_curves`（见模块 docstring）。
+    特征矩阵层 dropout 用 0.0（标准化后的中性值）填充，避免把 NaN 传给带 BatchNorm 的
+    网络；真正的“仪器失效/缺测”语义必须走 `augment_curves`。
     """
     x = np.asarray(X, dtype="float32")
     if not cfg.enabled:
@@ -171,7 +172,9 @@ def augment_matrix(X: "np.ndarray", cfg: AugmentConfig, rng: "np.random.Generato
     if p > 0:
         drop = rng.random(k) < p
         if drop.any():
-            out[:, drop] = np.nan
+            # 矩阵层没有 missing 指示位；用 0.0（z-score 后的均值）做 dropout，
+            # 避免 NaN 经 BatchNorm 污染整个 batch。语义正确的置缺请用 augment_curves。
+            out[:, drop] = 0.0
     return out.astype("float32")
 
 

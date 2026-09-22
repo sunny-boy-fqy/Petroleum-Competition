@@ -123,6 +123,7 @@ class TestE1Pipeline(unittest.TestCase):
                 self.assertLess(t, 1.0)
         self.assertEqual(met["tau_selected_on"], "inner_oof_official_total")
         self.assertTrue(met["no_interpolation"])
+        self.assertEqual(gate["folds_all_same_direction"], bool(gate["same_direction_folds"] == 1))
         # 逐折 delta 与聚合口径自洽
         self.assertAlmostEqual(met["delta_vs_const"],
                                met["oof_total"] - C.CONSTANT_BASELINE_OOF, places=6)
@@ -173,6 +174,7 @@ class TestE1Pipeline(unittest.TestCase):
         self.assertEqual(G.validate_prereg(prereg), [])
         self.assertEqual(prereg["thresholds"]["oof_total_min"], 78.0)
         self.assertEqual(prereg["thresholds"]["min_delta"], 7.5)
+        self.assertEqual(prereg["thresholds"]["min_same_direction_folds"], 5)
         for c in ("contract_ok", "atomic_precision_reported", "disk_budget_ok",
                   "training_time_log_valid", "checkpoint_resumable", "no_label_leak"):
             self.assertIn(c, prereg["mandatory_checks"])

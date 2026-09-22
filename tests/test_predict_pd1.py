@@ -148,6 +148,32 @@ class TestPredictPD1EndToEnd(unittest.TestCase):
         self.assertTrue(any(v > 1.0 for v in sw),
                         "SW 必须保持百分数尺度（不得整体压到 [0,1]）")
 
+    def test_fold_ensemble_fuses_before_hard_switch(self):
+        """审查 H3 回归：多折必须“先融合 cont/q_atom，再硬切换”，且与单折等价（同权重）。"""
+        import shutil
+        from predict import predict_pd1
+        ck2 = self.root / "pd1_fold1.pt"
+        shutil.copy2(self.ckpt, ck2)
+        shutil.copy2(self.ckpt.with_suffix(".manifest.json"),
+                     ck2.with_suffix(".manifest.json"))
+        multi = self.root / "registry_multi.json"
+        REG.register_pipeline("PD1", self.ckpt, oof_total=80.0,
+                              extra={"checkpoints": [str(self.ckpt), str(ck2)]},
+                              path=multi)
+        single_info = REG.versions(self.reg)["PD1"]
+        multi_info = REG.versions(multi)["PD1"]
+        rows_single, sum_single = predict_pd1(self.te_dir, single_info)
+        rows_multi, sum_multi = predict_pd1(self.te_dir, multi_info)
+        self.assertEqual(sum_single["aggregate"], "single")
+        self.assertEqual(sum_multi["aggregate"], "fuse_then_gate")
+        self.assertEqual(len(rows_single), len(rows_multi))
+        # 两折权重相同 -> 融合后输出应与单折一致（同 tau、同 cont/q_atom）
+        for a, b in zip(rows_single, rows_multi):
+            self.assertEqual(a["logId"], b["logId"])
+            for ra, rb in zip(a["predictions"], b["predictions"]):
+                for key in ("POR", "PERM", "SW"):
+                    self.assertAlmostEqual(ra[key], rb[key], places=9, msg=key)
+
     def test_missing_checkpoint_fails_loudly(self):
         bad = self.root / "bad_registry.json"
         REG.register_pipeline("PD1", self.ckpt, path=bad)
@@ -182,6 +208,95 @@ class TestPredictPD1EndToEnd(unittest.TestCase):
                              capture_output=True, text=True, timeout=600)
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("NOT trained", out.stderr + out.stdout)
+
+
+@unittest.skipUnless(HAS_TORCH, "torch not installed")
+class TestGenericPredictorPaths(unittest.TestCase):
+    """F2 / 序列 / MMoE 的 CPU 推理接线回归。"""
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        cls._td = tempfile.TemporaryDirectory()
+        root = Path(cls._td.name)
+        cls.root = root
+        cls.wells = ["w0", "w1"]
+        SC.build_cache(root / "cache", cls.wells, n_rows=64, seed=5)
+        from src.data import row_dataset as RD
+        from src.features import groups as G
+        cls.spec = G.spec_from_name("F1+phys")
+        cls.fit = RD.fit_scalers_from_wells(cls.wells, root / "cache", spec=cls.spec)
+        cls.scaler = cls.fit["scaler"]
+        cls.target = cls.fit["target"]
+        cls.phys = cls.fit["phys_params"]
+        cls.n_features = int(cls.scaler.median.shape[0])
+        cls.names = list(cls.scaler.names)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._td.cleanup()
+
+    def _meta(self, arch, kw, row_scaler=None):
+        from src.features import groups as G
+        return {
+            "row_scaler": (row_scaler or self.scaler).to_dict(),
+            "target_scalers": dict(self.target),
+            "feature_names": list(self.names),
+            "feature_spec": self.spec.as_dict(),
+            "physics_params": self.phys.as_dict(),
+            "arch": arch,
+            "arch_kwargs": kw,
+            "model": {"arch": arch, "n_features": self.n_features, **kw},
+            "tau_atom": [0.5, 0.5, 0.5],
+        }
+
+    def _predict(self, ckpt, manifest):
+        from src.data import dataset as D
+        from src.inference import predictor as PR
+        sh = D.read_well_shard(self.root / "cache", "w0", "train")
+        model = PR.load_model(ckpt, manifest, device="cpu")
+        depth, pred = PR.predict_well(model, manifest, sh, device="cpu")
+        self.assertEqual(pred.shape[0], int(sh["depth"].shape[0]))
+        self.assertTrue(np.isfinite(pred).all())
+        return pred
+
+    def test_f2_row_mlp(self):
+        from src.models.row_mlp import build_model
+        from src.training import checkpoint as CK
+        from src.inference import predictor as PR
+        m = build_model(self.n_features, hidden=8, layers=1)
+        ck = self.root / "f2.pt"
+        CK.save_checkpoint(ck, m, meta=self._meta(
+            "RowMLP", {"hidden": 8, "layers": 1, "dropout": 0.0}), bf16=False)
+        self._predict(ck, PR.load_manifest(ck))
+
+    def test_sequence_backbones(self):
+        from src.training import checkpoint as CK
+        from src.training.seq_loop import build_seq_model
+        from src.inference import predictor as PR
+        for arch, kw in (("unet", {"base_ch": 8, "depth": 2, "k": 3}),
+                         ("tcn", {"channels": 8, "n_blocks": 2, "k": 3}),
+                         ("patchtf", {"patch_len": 8, "stride": 4, "d_model": 16,
+                                      "n_layers": 1, "n_heads": 2})):
+            m = build_seq_model(arch, self.n_features, **kw)
+            ck = self.root / f"{arch}.pt"
+            CK.save_checkpoint(ck, m, meta=self._meta(arch, kw), bf16=False)
+            self._predict(ck, PR.load_manifest(ck))
+
+    def test_mmoe_and_independent(self):
+        from src.models.mmoe import IndependentHeads, MMoE
+        from src.training import checkpoint as CK
+        from src.inference import predictor as PR
+        specs = [
+            ("MMoE", MMoE(self.n_features, hidden=16, n_experts=2),
+             {"hidden": 16, "n_experts": 2}),
+            ("IndependentHeads", IndependentHeads(self.n_features, hidden=16),
+             {"hidden": 16}),
+        ]
+        for arch, model, kw in specs:
+            ck = self.root / f"{arch}.pt"
+            CK.save_checkpoint(ck, model, meta=self._meta(arch, kw), bf16=False)
+            self._predict(ck, PR.load_manifest(ck))
 
 
 if __name__ == "__main__":

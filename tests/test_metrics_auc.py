@@ -15,8 +15,8 @@ import numpy as np
 V4 = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(V4))
 
-from src.training.metrics import (_average_ranks, auc_report,  # noqa: E402
-                                  average_precision, binary_auc)
+from src.training.metrics import (_average_ranks, atomic_precision_recall,  # noqa: E402
+                                  auc_report, average_precision, binary_auc)
 
 
 class TestBinaryAuc(unittest.TestCase):
@@ -88,6 +88,26 @@ class TestAucReport(unittest.TestCase):
     def test_min_auc_none_when_single_class(self):
         rep = auc_report(np.ones((5, 3), dtype=bool), np.random.rand(5, 3))
         self.assertIsNone(rep["min_auc"])
+
+
+class TestAtomicPrecisionRecallMask(unittest.TestCase):
+    def test_mask_excludes_unobserved_rows(self):
+        # 第二行未观测，却被预测成正例；带 mask 时不得作为 false positive 计入。
+        y = np.array([[1, 0, 0],
+                      [0, 0, 0],
+                      [0, 1, 1]], dtype=bool)
+        q = np.array([[0.9, 0.1, 0.1],
+                      [0.9, 0.1, 0.1],
+                      [0.1, 0.8, 0.8]], dtype="float64")
+        mask = np.array([[1, 1, 1],
+                         [0, 0, 0],
+                         [1, 1, 1]], dtype=bool)
+        nomask = atomic_precision_recall(y, q, np.full(3, 0.5))
+        masked = atomic_precision_recall(y, q, np.full(3, 0.5), mask=mask)
+        self.assertEqual(nomask["POR"]["precision"], 0.5)
+        self.assertEqual(masked["POR"]["precision"], 1.0)
+        self.assertEqual(masked["POR"]["n_observed"], 2)
+        self.assertEqual(masked["PERM"]["recall"], 1.0)
 
 
 if __name__ == "__main__":

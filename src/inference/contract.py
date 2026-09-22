@@ -124,7 +124,7 @@ def validate_payload(payload: dict[str, Any], test_dir: str | Path | None = None
     # M3 审查修复：POR/PERM 也有物理范围，不能只查有限与 PERM>0。
     # 缺省上界取模型/标签物理量级（PERM=10**6，POR=60 与现有 row_scales 一致）；
     # 调用方可用 row_scales 覆盖。SW 的 [0,100] 是官方标签软上界，低于 0/高于 100 必拒。
-    bounds = row_scales or {"SWeX": (0.0, 100.0)}
+    bounds = row_scales or {"SW": (0.0, 100.0)}
     por_lo, por_hi = (bounds.get("POR") or (0.0, 60.0))
     perm_lo, perm_hi = (bounds.get("PERM") or (0.0, 1e6))
     sw_lo, sw_hi = (bounds.get("SW") or (0.0, 100.0))
