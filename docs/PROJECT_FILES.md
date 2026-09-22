@@ -331,9 +331,25 @@ $V4_LOCAL_ROOT/v4/{cache,runs,reports,logs,tb,state}/
 | 项 | 数量 |
 |---|---:|
 | git 跟踪文件 | 见 `git ls-files \| wc -l` |
-| 计划文件（`PLAN.md`） | 1（总，892 行）+ 12（阶段，759 行）+ 33（P，5,225 行）= **46 份 / 6,876 行** |
-| P 级计划平均篇幅 | **158 行**（合计 5,225；由 `tools/plan_stats.py` 统计） |
+| 计划文件（`PLAN.md`） | 1（总，892 行）+ 12（阶段，759 行）+ 33（P，5,226 行）= **46 份 / 6,877 行** |
+| P 级计划平均篇幅 | **158 行**（合计 5,226；由 `tools/plan_stats.py` 统计） |
 | 代码模块（`v4/src/**/*.py`） | 见 `find v4/src -name '*.py' \| wc -l` |
 | E 层脚本（`v4/E*/code/*.py`） | 见 `find v4/E* -name '*.py' \| wc -l` |
 
 > 本文档不手写文件数，避免与实物漂移；以命令行输出为准。
+
+---
+
+## 四、冲分优化（WP0–WP7，详见 [`SCORE_MAX_PLAN.md`](SCORE_MAX_PLAN.md)）
+
+| WP | 新增/改动 | 文件 |
+|---|---|---|
+| WP0 | Gate 强制 placeholder ≥0.98 + gated 代理早停 | `E1/code/train_row.py`、`src/training/fold_runner.py`、`src/validation/gates.py` |
+| WP1 | 原子概率校准 + 期望分数动作表 | `src/inference/calibration.py`、`src/inference/atom_decision.py`、`E7/code/fit_atom_decision.py` |
+| WP2 | 序列/行级原子分类器 + focal/非联合/边界难负例 | `src/models/atom_head.py`、`src/losses/atom_classifier.py`、`src/training/atom_train.py`、`E3/code/train_atom.py` |
+| WP3 | 先融合再硬切换 + 同源剔除 | `src/ensemble/blend.py::fuse_and_decode/prune_correlated` |
+| WP4 | PERM 不对称损失 | `src/losses/score_aligned.py`（`perm_over_weight`）、`E7/code/ablate_loss.py`（exp8） |
+| WP5 | Transductive/自训练公共件 | `src/training/self_training.py` |
+| WP6 | 二阶 stacking/树集成 | `src/ensemble/stacking.py` |
+| WP7 | 自监督 masked curve modeling | `src/training/ssl.py` |
+

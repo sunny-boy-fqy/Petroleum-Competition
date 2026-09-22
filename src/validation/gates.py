@@ -60,7 +60,7 @@ GATE_TYPES = ("delta", "absolute", "boolean", "non_inferior")
 # 且 result 里只认 score/oof_total，auc/atomic_acc/minutes/memory_gb/point_diff 等字段取不到值，
 # 于是这些阈值**静默失效**。下面按方向拆成两组，并为每个键声明 result 字段名候选。
 MIN_ABSOLUTE_KEYS = (
-    "oof_total_min", "min_same_direction_folds",
+    "oof_total_min", "min_same_direction_folds", "min_placeholder_acc",
     "min_auc", "min_atomic_acc", "min_atomic_f1",
     "min_atomic_precision", "min_atomic_recall",
     "min_atom_acc", "min_atom_precision", "min_atom_recall", "min_atom_f1",
@@ -82,6 +82,8 @@ METRIC_RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "oof_total_min": ("oof_total", "score"),
     # E1 硬 Gate 的“5 折同向”判据（审查 M2：此前只写在 notes 里，未真正判定）
     "min_same_direction_folds": ("same_direction_folds",),
+    # E1 硬 Gate 的“占位行逐目标 Acc”判据（审查：此前只写在报告里，未真正判定）
+    "min_placeholder_acc": ("placeholder_min_acc", "min_placeholder_acc"),
     # --- E6/P0 状态分类 ---
     "min_auc": ("auc", "state_auc"),
     "min_atomic_acc": ("atomic_acc",),

@@ -143,16 +143,20 @@ def run_fold(fold: int, folds: dict, cache: Path, run_dir: Path, scalers_dir: Pa
                 "lam1": rec.get("lam1"), "loss_total": rec.get("total"),
                 "loss_align": rec.get("align"), "loss_aux": rec.get("aux"),
                 "loss_joint": rec.get("joint"), "loss_atom": rec.get("atom"),
-                "val_total_cont": val.get("total"), "val_por": val.get("acc_por"),
+                "val_total_gated_proxy": val.get("total"),
+                "val_total_cont": val.get("cont_total"),
+                "val_por": val.get("acc_por"),
                 "val_perm": val.get("acc_perm"), "val_sw": val.get("acc_sw"),
                 "disk_free_gb": rec.get("disk_free_gb")}
 
     def on_select(epoch: int, rec: dict) -> None:
         curve.append(_row("select", epoch, rec))
         if (epoch + 1) % max(cfg.log_every, 1) == 0 or epoch < 2:
-            t = (rec.get("val") or {}).get("total", float("nan"))
+            val = rec.get("val") or {}
+            t = val.get("total", float("nan"))
+            tc = val.get("cont_total", float("nan"))
             print(f"[E1] fold{fold} ep{epoch:3d} loss={rec.get('total', float('nan')):.4f} "
-                  f"innerOOF={t:.4f}", flush=True)
+                  f"innerOOF_gated@0.5={t:.4f} innerOOF_cont={tc:.4f}", flush=True)
 
     def on_final(epoch: int, rec: dict) -> None:
         curve.append(_row("final", epoch, rec))
@@ -311,7 +315,8 @@ def main(argv: list[str] | None = None) -> int:
             "baseline_version": "CONST", "baseline_artifact": str(const_baseline_path),
             "baseline_manifest_sha256": sha256_file(const_baseline_path),
             "thresholds": {"min_delta": 7.5, "min_effect_floor": 0.0,
-                           "oof_total_min": 78.0, "min_same_direction_folds": 5},
+                           "oof_total_min": 78.0, "min_same_direction_folds": 5,
+                           "min_placeholder_acc": 0.98},
             "alpha": 0.05, "multiplicity": "none", "candidate_budget": 1,
             "bootstrap_iters": 1000, "bootstrap_unit": "well_row_weighted_cluster",
             "pilot_std": None, "mde_units": C.EXPECTED_N_TRAIN_WELLS,
@@ -326,8 +331,13 @@ def main(argv: list[str] | None = None) -> int:
         return 6
     # 审查 M2：预注册必须显式包含“5 折同向”阈值。若读到旧版预注册（没有该键），
     # 不得静默按旧口径判 Gate；必须新建修订号（或删除旧文件）后重跑。
-    if "min_same_direction_folds" not in (prereg.get("thresholds") or {}):
+    _prereg_th = prereg.get("thresholds") or {}
+    if "min_same_direction_folds" not in _prereg_th:
         print("[E1] PREREG 缺少 thresholds.min_same_direction_folds；"
+              "请新建修订号或删除旧预注册后重跑（不得静默沿用旧口径）", file=sys.stderr)
+        return 6
+    if "min_placeholder_acc" not in _prereg_th:
+        print("[E1] PREREG 缺少 thresholds.min_placeholder_acc；"
               "请新建修订号或删除旧预注册后重跑（不得静默沿用旧口径）", file=sys.stderr)
         return 6
 
@@ -459,8 +469,8 @@ def main(argv: list[str] | None = None) -> int:
 
     with (reports / "E1_loss_curve.csv").open("w", newline="", encoding="utf-8") as fh:
         cols = ["fold", "phase", "epoch", "seconds", "lr", "lam1", "loss_total", "loss_align",
-                "loss_aux", "loss_joint", "loss_atom", "val_total_cont", "val_por", "val_perm",
-                "val_sw", "disk_free_gb"]
+                "loss_aux", "loss_joint", "loss_atom", "val_total_gated_proxy",
+                "val_total_cont", "val_por", "val_perm", "val_sw", "disk_free_gb"]
         wr = csv.DictWriter(fh, fieldnames=cols)
         wr.writeheader()
         for r in results:
@@ -506,6 +516,7 @@ def main(argv: list[str] | None = None) -> int:
               "delta": float(gated_score["total"] - C.CONSTANT_BASELINE_OOF),
               "paired_ci_low": float(boot["ci_low"]),
               "same_direction_folds": int(same_direction_folds),
+              "placeholder_min_acc": float(min_ph),
               "por_acc": float(gated_score["acc_por"]),
               "perm_acc": float(gated_score["acc_perm"]),
               "sw_acc": float(gated_score["acc_sw"]),

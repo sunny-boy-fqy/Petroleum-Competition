@@ -211,7 +211,11 @@ def run_stage(model, fold, cfg, stage, epochs, loss_kw, optimizer=None, eval_fn=
                 total, parts = SAL.total_loss(
                     out, bb, row_scaler=row_scaler, feature_names=feature_names,
                     lam_phys=cfg.lam_phys, phys_huber_beta=cfg.phys_huber_beta,
-                    phys_por_scale=cfg.phys_por_scale, **kw)
+                    phys_por_scale=cfg.phys_por_scale,
+                    perm_over_weight=cfg.perm_over_weight,
+                    perm_under_weight=cfg.perm_under_weight,
+                    perm_aux_over_weight=cfg.perm_aux_over_weight,
+                    perm_aux_under_weight=cfg.perm_aux_under_weight, **kw)
             optimizer.zero_grad(set_to_none=True)
             total.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)

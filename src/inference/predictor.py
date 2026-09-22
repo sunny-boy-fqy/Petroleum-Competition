@@ -311,8 +311,11 @@ def predict_well(model, manifest: Manifest, shard: dict,
     depth, cont, q_atom = predict_well_components(
         model, manifest, shard, device=device, decode_cfg=decode_cfg,
         batch_size=batch_size)
-    tau = manifest.tau_atom
-    pred = M.atom_gate(cont, q_atom, tau) if tau is not None else cont
+    from . import decode as DEC
+    pred, used_decision = DEC.apply_atom_decision(cont, q_atom, decode_cfg)
+    if not used_decision:
+        tau = manifest.tau_atom
+        pred = M.atom_gate(cont, q_atom, tau) if tau is not None else cont
     return depth, np.asarray(pred, dtype="float64")
 
 

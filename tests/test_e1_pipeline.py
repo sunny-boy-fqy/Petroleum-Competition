@@ -175,6 +175,7 @@ class TestE1Pipeline(unittest.TestCase):
         self.assertEqual(prereg["thresholds"]["oof_total_min"], 78.0)
         self.assertEqual(prereg["thresholds"]["min_delta"], 7.5)
         self.assertEqual(prereg["thresholds"]["min_same_direction_folds"], 5)
+        self.assertEqual(prereg["thresholds"]["min_placeholder_acc"], 0.98)
         for c in ("contract_ok", "atomic_precision_reported", "disk_budget_ok",
                   "training_time_log_valid", "checkpoint_resumable", "no_label_leak"):
             self.assertIn(c, prereg["mandatory_checks"])

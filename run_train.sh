@@ -595,13 +595,14 @@ PY
             "${e6_args[@]+"${e6_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
         fi ;;
     E7)
-        # `--phase loss|decode|all`（loss=七组损失消融；decode=解码搜索）
+        # `--phase loss|decode|atom|all`（loss=损失消融；decode=解码搜索；
+        # atom=WP1 原子校准+期望分数动作表）
         e7_phase="all"; e7_args=(); e7_expect=""
         for a in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
           if [[ "$e7_expect" == "phase" ]]; then
             case "${a,,}" in
-              loss|decode|all) e7_phase="${a,,}" ;;
-              *) log "!! E7 --phase 只支持 loss/decode/all，got $a"; return 1 ;;
+              loss|decode|atom|all) e7_phase="${a,,}" ;;
+              *) log "!! E7 --phase 只支持 loss/decode/atom/all，got $a"; return 1 ;;
             esac
             e7_expect=""; continue
           fi
@@ -618,6 +619,19 @@ PY
           log "--- [E7] P1 解码搜索"
           python3 "$HERE/E7/code/decode_search.py" --reports-dir "$REPORTS_DIR" \
             --run-root "$RUN_ROOT" "${e7_args[@]+"${e7_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
+        fi
+        if [[ "$e7_phase" == "atom" || "$e7_phase" == "all" ]]; then
+          # WP1：原子概率校准 + 期望分数动作表（缺失 inner_oof 时显式跳过，不假装做过）
+          e7_oof="$RUN_ROOT/E6/state/inner_oof.npz"
+          if [[ -f "$e7_oof" ]]; then
+            log "--- [E7] P1 原子校准 + 期望分数动作表"
+            python3 "$HERE/E7/code/fit_atom_decision.py" \
+              --oof "$e7_oof" --reports-dir "$REPORTS_DIR" \
+              --out-config "$HERE/versions/configs/decode_v1.json" \
+              "${e7_args[@]+"${e7_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
+          else
+            log "!! [E7] 跳过 atom decision：缺少 $e7_oof（先跑 E6/P0）"
+          fi
         fi ;;
     E8)
         # `--target mmoe|well|transductive|ensemble|all`

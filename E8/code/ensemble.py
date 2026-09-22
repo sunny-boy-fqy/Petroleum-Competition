@@ -85,6 +85,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--iters", type=int, default=1000)
     ap.add_argument("--prereg", default=None)
     ap.add_argument("--candidates", default=os.environ.get("V4_CANDIDATES") or str(V4 / "versions" / "candidates.json"))
+    ap.add_argument("--decode-config", default=None,
+                    help="可选 E7 冻结 decode_v1.json；含 action_table 时用 WP1 期望分数决策")
     ap.add_argument("--tag", default="")
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--exploratory", action="store_true")
@@ -182,14 +184,19 @@ def fuse(members: dict[str, dict], weights, strategy: str, stacking_l2: float,
     return BL.blend_predictions(preds, w), info
 
 
-def fused_decode(fused: dict, tau=None) -> np.ndarray:
-    """融合后的连续头 → 标签尺度（`blend.score_prediction` 内部同口径）。"""
+def fused_decode(fused: dict, tau=None, decode_cfg=None) -> np.ndarray:
+    """融合后的连续头 → 标签尺度；优先 WP1 期望分数决策，其次 τ 硬切换。"""
     from src.inference.atomic_gate import per_target_hard_switch
     cont = np.stack([
         np.asarray(fused["por"], dtype="float64"),
         np.power(10.0, np.clip(np.asarray(fused["perm_z"], dtype="float64"),
                                C.PERM_LOG_MIN, C.PERM_LOG_MAX)),
         np.clip(np.asarray(fused["sw"], dtype="float64"), 0.0, 100.0)], axis=1)
+    if decode_cfg is not None and getattr(decode_cfg, "action_table", None):
+        from src.inference import decode as DEC
+        pred, used = DEC.apply_atom_decision(cont, fused.get("q_atom"), decode_cfg)
+        if used:
+            return pred
     if tau is not None and "q_atom" in fused:
         cont = per_target_hard_switch(cont, np.asarray(fused["q_atom"], dtype="float64"), tau)
     return cont
@@ -244,7 +251,17 @@ def run(args) -> int:
     if any("tau_row" in m for m in members.values()):
         tau = np.asarray(next(m for m in members.values() if "tau_row" in m)["tau_row"],
                          dtype="float64")[0]
-    pred = fused_decode(fused, tau)
+    decode_cfg = None
+    cfg_path = Path(args.decode_config) if args.decode_config else None
+    if cfg_path is None:
+        rep = os.environ.get("V4_REPORTS_DIR")
+        if rep:
+            cfg_path = Path(rep) / "decode_v1.json"
+    if cfg_path is not None and cfg_path.is_file():
+        from src.inference import decode as DEC
+        decode_cfg = DEC.load_decode_config(cfg_path)
+        # tau 仍保留作为 action_table 缺失时的回退
+    pred = fused_decode(fused, tau, decode_cfg)
 
     # ---- 成员与融合的评分（连续 + 门控两档）
     scores = {name: BL.score_prediction(member_as_pred(mem), y_true, mask, tau)

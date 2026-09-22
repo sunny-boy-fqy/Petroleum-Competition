@@ -167,7 +167,8 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
     "min_delta": 7.5,
     "min_effect_floor": 0.0,
     "oof_total_min": 78.0,
-    "min_same_direction_folds": 5
+    "min_same_direction_folds": 5,
+    "min_placeholder_acc": 0.98
   },
   "alpha": 0.05,
   "multiplicity": "none",

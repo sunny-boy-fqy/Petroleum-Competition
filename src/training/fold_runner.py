@@ -211,7 +211,13 @@ def run_two_phase_fold(fold: int, folds: dict, cache: str | Path, cfg: L.TrainCo
 
     def inner_eval(m) -> dict:
         pred = L.predict_torch(m, va_in_t, cfg)
-        return M.evaluate_predictions(y_in, m_in, pred, y_atom=a_in, tau=None)["cont"]
+        # WP0：早停/选 epoch 必须与最终 gated 目标对齐，而不是只看连续头分数。
+        # 这里用固定 τ=0.5 的 gated 代理分；最终 τ 仍在训练结束后单独在 inner-val 上搜。
+        ev = M.evaluate_predictions(y_in, m_in, pred, y_atom=a_in, tau=0.5)
+        out = dict(ev["gated"])
+        out["cont_total"] = float(ev["cont"]["total"])
+        out["gated_proxy_tau"] = 0.5
+        return out
 
     def on_select(epoch: int, rec: dict) -> None:
         val = rec.get("val")

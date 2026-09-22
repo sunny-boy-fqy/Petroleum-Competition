@@ -56,16 +56,19 @@ def align_score_relative(y, yhat, delta: float, eps: float = 1e-3,
 
 
 def align_score_log(z, zhat, alpha: float = 1e-3, beta: float = 20.0,
-                    eps: float = 1e-3, clamp: bool = True):
+                    eps: float = 1e-3, clamp: bool = True,
+                    over_weight: float = 1.0, under_weight: float = 1.0):
     """PERM 的对齐**得分**（log10 空间，与官方严格同构）。
 
     官方：`s = max(0, 1 − |log10(max(ŷ/y, ε))|)`
       - 当 `ŷ/y ≥ ε` 时，`log10(max(ŷ/y,ε)) = ẑ − z`；
       - 当 `ŷ/y < ε`（严重低估）时，官方把比值**截断在 ε**，
         误差恒为 `log10(1/ε)`（ε=1e-3 → 3.0），不再随低估程度增长。
-    **R2-H3 修复**（保留）：此前直接用 `|ẑ − z|`，在 `ŷ/y < ε` 区域比官方惩罚更重
-    （例如 `ẑ−z=−5` 时官方误差 3.0、旧实现 5.0），梯度方向与官方评分不一致。
-    这里对 **log 空间的差值**做同样的下截断：`d = max(ẑ − z, log10(ε))`。
+      - **高估**没有上界：`ŷ/y = 10^6` 时误差 6 → 0 分。
+
+    `over_weight` / `under_weight`（WP4）：对 `d = ẑ − z > 0`（高估）和 `< 0`（低估）
+    使用不对称权重。官方口径天然对高估更严厉，因此默认仍为 1.0；E7 消融可设
+    `over_weight > 1` 让模型更保守。
     """
     require("torch")
     import math as _math
@@ -73,6 +76,10 @@ def align_score_log(z, zhat, alpha: float = 1e-3, beta: float = 20.0,
     if clamp:                       # 官方截断；`clamp=False` 是 E7/P0 的对照臂
         d = torch.maximum(d, torch.full_like(d, _math.log10(eps)))
     ell = smooth_abs(d, alpha)
+    ow, uw = float(over_weight), float(under_weight)
+    if ow != 1.0 or uw != 1.0:
+        ell = ell * torch.where(d > 0, torch.full_like(ell, ow),
+                                torch.full_like(ell, uw))
     return 1.0 - ell + F.softplus(ell - 1.0, beta=beta)
 
 
@@ -133,7 +140,8 @@ def aligned_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,
                  eps: float = 1e-3, alpha: float = 1e-3, beta: float = 20.0,
                  boundary_kappa: float = 0.0, boundary_sigma: float = 0.25,
                  y_atom=None, include_atom_mask: bool = True,
-                 perm_clamp: bool = True, slice_weight=None):
+                 perm_clamp: bool = True, slice_weight=None,
+                 perm_over_weight: float = 1.0, perm_under_weight: float = 1.0):
     """三目标加权对齐损失（返回标量，越小越好）。
 
     mask : (B, 3) float，1=该目标参与监督（缺测为 0）
@@ -152,7 +160,9 @@ def aligned_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,
     m_sw = None if mask is None else mask[..., 2]
 
     s_por = align_score_relative(y_por, p_por, 0.08, eps, alpha, beta)
-    s_perm = align_score_log(z_perm, zhat_perm, alpha, beta, clamp=perm_clamp)
+    s_perm = align_score_log(z_perm, zhat_perm, alpha, beta, clamp=perm_clamp,
+                            over_weight=perm_over_weight,
+                            under_weight=perm_under_weight)
     s_sw = align_score_relative(y_sw, p_sw, 0.05, eps, alpha, beta)
     if slice_weight is not None:
         W = _as_slice_weight(slice_weight, s_por)
@@ -189,7 +199,8 @@ def aligned_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,
 
 def aux_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,
              s_por: float = 11.34, s_sw: float = 20.0, huber_beta: float = 1.0,
-             slice_weight=None, normalize: bool = True):
+             slice_weight=None, normalize: bool = True,
+             perm_aux_over_weight: float = 1.0, perm_aux_under_weight: float = 1.0):
     """变换空间稠密损失（早期梯度来源）——**逐目标尺度归一化**（R3）。
 
         aux_por  = smooth_l1((p_por − y_por) / s_por)
@@ -227,9 +238,20 @@ def aux_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,
     m_sw = None if mask is None else mask[..., 2]
     scale_por = s_por if normalize else 1.0
     scale_sw = s_sw if normalize else 1.0
+
+    def perm_asym(a, b):
+        # log 空间不对称 SmoothL1：高估权重更大（WP4）
+        d = a - b
+        base = F.smooth_l1_loss(a, b, beta=huber_beta, reduction="none")
+        ow, uw = float(perm_aux_over_weight), float(perm_aux_under_weight)
+        if ow != 1.0 or uw != 1.0:
+            base = base * torch.where(d > 0, torch.full_like(base, ow),
+                                      torch.full_like(base, uw))
+        return base
+
     return (
         0.30 * sl1(p_por, y_por, m_por, 0, scale_por)
-        + 0.35 * sl1(zhat_perm, z_perm, m_perm, 1, 1.0)   # log10 空间本身已同量级
+        + 0.35 * masked_mean(perm_asym(zhat_perm / 1.0, z_perm / 1.0), m_perm)
         + 0.35 * sl1(p_sw, y_sw, m_sw, 2, scale_sw)
     )
 
@@ -361,6 +383,11 @@ def total_loss(out: dict, batch: dict, lam1: float = 1.0, lam2: float | None = N
     s_sw = kw.pop("s_sw", 20.0)
     huber_beta = kw.pop("huber_beta", 1.0)
     aux_normalize = kw.pop("aux_normalize", True)
+    # WP4：PERM 不对称（官方对高估更严厉）
+    perm_over_weight = float(kw.pop("perm_over_weight", 1.0))
+    perm_under_weight = float(kw.pop("perm_under_weight", 1.0))
+    perm_aux_over_weight = float(kw.pop("perm_aux_over_weight", perm_over_weight))
+    perm_aux_under_weight = float(kw.pop("perm_aux_under_weight", perm_under_weight))
 
     if mask is None:
         ref = torch.as_tensor(out["por"])
@@ -384,13 +411,17 @@ def total_loss(out: dict, batch: dict, lam1: float = 1.0, lam2: float | None = N
         _add("align", aligned_loss(
             batch["por"], out["por"], batch["perm_z"], out["perm_z"],
             batch["sw"], out["sw"], mask, y_atom=batch.get("y_atom"),
-            slice_weight=slice_weight, **kw), 1.0)
+            slice_weight=slice_weight,
+            perm_over_weight=perm_over_weight,
+            perm_under_weight=perm_under_weight, **kw), 1.0)
     if use_aux:
         _add("aux", aux_loss(
             batch["por"], out["por"], batch["perm_z"], out["perm_z"],
             batch["sw"], out["sw"], mask, s_por=s_por, s_sw=s_sw,
             huber_beta=huber_beta, slice_weight=slice_weight,
-            normalize=aux_normalize), lam1)
+            normalize=aux_normalize,
+            perm_aux_over_weight=perm_aux_over_weight,
+            perm_aux_under_weight=perm_aux_under_weight), lam1)
     if joint_on:
         y_joint = batch.get("y_joint")
         if y_joint is None:

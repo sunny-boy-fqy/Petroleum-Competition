@@ -144,6 +144,19 @@ class TestDeltaGateAbsoluteThreshold(unittest.TestCase):
                                           "oof_total": 81.5, "checks": chk})
         self.assertTrue(r2["passed"], r2)
 
+    def test_placeholder_absolute_threshold_is_enforced(self):
+        """审查 WP0：min_placeholder_acc 必须真正参与 Gate，0.9723 不得判过。"""
+        d = _prereg(thresholds={"min_delta": 0.0, "min_effect_floor": 0.0,
+                                "min_placeholder_acc": 0.98})
+        chk = {c: True for c in CORE}
+        r = G.aggregate_gate(d, {"delta": 0.5, "paired_ci_low": 0.1,
+                                 "placeholder_min_acc": 0.9723, "checks": chk})
+        self.assertFalse(r["passed"], r)
+        self.assertFalse(r["details"]["absolute_checks"]["min_placeholder_acc"]["ok"])
+        r2 = G.aggregate_gate(d, {"delta": 0.5, "paired_ci_low": 0.1,
+                                  "placeholder_min_acc": 0.99, "checks": chk})
+        self.assertTrue(r2["passed"], r2)
+
     def test_delta_floor(self):
         d = _prereg(thresholds={"min_delta": 0.0, "min_effect_floor": 0.2})
         self.assertAlmostEqual(G.effective_threshold(d), 0.2)

@@ -51,6 +51,7 @@ class TestArmDefinitions(unittest.TestCase):
         self.assertEqual(counts.get("exp3"), 3)
         self.assertEqual(counts.get("exp4"), 2)
         self.assertEqual(counts.get("exp6"), 2)
+        self.assertEqual(counts.get("exp8"), 2)
         self.assertNotIn("exp5", counts, "exp5（边界聚焦）默认关，不进 all")
 
     def test_exp5_group_is_opt_in(self):
@@ -74,9 +75,9 @@ class TestArmDefinitions(unittest.TestCase):
                               "--help"], capture_output=True, text=True, timeout=120)
         self.assertEqual(out.returncode, 0, out.stderr[-600:])
         for flag in ("--arm-set", "--arms", "--inner-only", "--eval-outer", "--lam1",
-                     "--lam1-schedule", "--lam2", "--lam3", "--aux-normalize",
-                     "--boundary-kappa", "--boundary-sigma", "--perm-clamp",
-                     "--out-config"):
+                     "--lam1-schedule", "--lam2", "--lam3", "--perm-over-weight",
+                     "--aux-normalize", "--boundary-kappa", "--boundary-sigma",
+                     "--perm-clamp", "--out-config"):
             self.assertIn(flag, out.stdout, flag)
 
 

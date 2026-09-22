@@ -254,6 +254,19 @@ class TestTotalLoss(unittest.TestCase):
         self.assertIn("align", parts)
 
 
+class TestPermAsymmetry(unittest.TestCase):
+    def test_overprediction_is_penalized_more(self):
+        z = torch.zeros(4)
+        zhat = torch.tensor([-2.0, -0.5, 0.5, 1.5])
+        sym = align_score_log(z, zhat)
+        asym = align_score_log(z, zhat, over_weight=3.0, under_weight=1.0)
+        # d<0 不变，d>0 得分更低
+        self.assertAlmostEqual(float(sym[0]), float(asym[0]), places=6)
+        self.assertAlmostEqual(float(sym[1]), float(asym[1]), places=6)
+        self.assertLess(float(asym[2]), float(sym[2]))
+        self.assertLess(float(asym[3]), float(sym[3]))
+
+
 class TestPhysicsLoss(unittest.TestCase):
     class _Scaler:
         def __init__(self):

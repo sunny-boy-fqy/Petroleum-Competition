@@ -23,6 +23,7 @@
 | [`versions/candidates.json`](versions/candidates.json) | **候选注册表**（唯一事实源，未登记不得提交） |
 | [`versions/registry.json`](versions/registry.json) | 可运行版本注册表（`predict.py` 的版本来源） |
 | [`versions/prereg_templates/`](versions/prereg_templates) | 33 份 Gate 预注册模板（全部通过 `gates.py` 校验） |
+| [`docs/SCORE_MAX_PLAN.md`](docs/SCORE_MAX_PLAN.md) | **冲分优化计划（WP0–WP7：校准/期望分数决策/原子分类/集成/PERM 不对称/自训练/stacking/SSL）** |
 | [`reports/V4_PLAN_REVIEW.md`](reports/V4_PLAN_REVIEW.md) | 一审报告（B1–B6/H1–H5/M1–M10 已逐条处置） |
 | [`reports/V4_PLAN_REVIEW_2.md`](reports/V4_PLAN_REVIEW_2.md) | 二审报告（R2-B1..B6 / H1..H6 / M1..M9 已逐条处置） |
 | [`reports/V4_PLAN_REVIEW_3.md`](reports/V4_PLAN_REVIEW_3.md) | **三审报告**（R3-C1..C3 / H1..H5 / M1..M5 已逐条处置） |
@@ -158,7 +159,7 @@ python3 v4/predict.py --use-version CONST --data_dir ../data --output /tmp/r.jso
 
 ## 当前状态
 
-- [x] **计划全部完成**：总计划 892 行 + 12 个阶段计划（759 行）+ 33 个 P 级详细计划（5,225 行），**合计 6,876 行**（由 `tools/plan_stats.py` 实测）
+- [x] **计划全部完成**：总计划 892 行 + 12 个阶段计划（759 行）+ 33 个 P 级详细计划（5,226 行），**合计 6,877 行**（由 `tools/plan_stats.py` 实测）
 - [x] 状态台账 `versions/status.json`、候选注册表 `versions/candidates.json`、目录总览 `docs/PROJECT_FILES.md`
 - [x] 环境/磁盘自检脚本（`E0/code/check_env.py`、`src/data/disk_guard.py`、`E0/code/setup_deps.sh`）
 - [x] 锁文件与 Gate/引用模板

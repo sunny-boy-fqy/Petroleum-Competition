@@ -222,8 +222,12 @@ def predict_pd1(test_dir: Path, info: dict, batch_size: int = 65536,
         q_fused = q_sum / float(n_folds)
         if decode_cfg is not None:
             cont_fused = DEC.apply_decode_config(cont_fused, decode_cfg, q_atom=q_fused)
-        pred = (M.atom_gate(cont_fused, q_fused, tau_fused)
-                if tau_fused is not None else cont_fused)
+        pred, used_decision = (DEC.apply_atom_decision(cont_fused, q_fused, decode_cfg)
+                               if decode_cfg is not None
+                               else (cont_fused, False))
+        if not used_decision:
+            pred = (M.atom_gate(cont_fused, q_fused, tau_fused)
+                    if tau_fused is not None else cont_fused)
         per_well[rec.well_id] = {"depth": depth,
                                  "pred": np.asarray(pred, dtype="float64")}
         n_rows += int(inputs.shape[0])

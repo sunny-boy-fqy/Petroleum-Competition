@@ -260,7 +260,11 @@ def train_arm(args, cache, folds, spec, scalers, device, arm: str) -> dict:
                     alpha_nonjoint=cfg.alpha_nonjoint,
                     lam_phys=cfg.lam_phys, row_scaler=scaler,
                     feature_names=scaler.names, phys_huber_beta=cfg.phys_huber_beta,
-                    phys_por_scale=cfg.phys_por_scale)
+                    phys_por_scale=cfg.phys_por_scale,
+                    perm_over_weight=cfg.perm_over_weight,
+                    perm_under_weight=cfg.perm_under_weight,
+                    perm_aux_over_weight=cfg.perm_aux_over_weight,
+                    perm_aux_under_weight=cfg.perm_aux_under_weight)
             opt.zero_grad(set_to_none=True)
             total.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)

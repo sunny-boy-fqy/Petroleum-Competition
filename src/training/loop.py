@@ -103,6 +103,11 @@ class TrainConfig:
     phys_por_scale: float = 100.0
     pos_weight: float | None = None
     alpha_nonjoint: float = 1.0
+    # WP4：PERM 不对称损失权重（官方对高估更严厉）
+    perm_over_weight: float = 1.0
+    perm_under_weight: float = 1.0
+    perm_aux_over_weight: float = 1.0
+    perm_aux_under_weight: float = 1.0
     joint_cont_weight: float = 0.2      # 联合占位行在连续头损失中的权重（硬切换后主要靠 q_atom）
     grad_clip: float = 1.0
     amp_dtype: str = "bf16"          # "bf16" | "fp32"
@@ -263,6 +268,10 @@ def train_epoch(model, opt, data: TorchFold, cfg: TrainConfig, epoch: int,
                 boundary_kappa=cfg.boundary_kappa, boundary_sigma=cfg.boundary_sigma,
                 huber_beta=cfg.huber_beta, pos_weight=cfg.pos_weight,
                 alpha_nonjoint=cfg.alpha_nonjoint,
+                perm_over_weight=cfg.perm_over_weight,
+                perm_under_weight=cfg.perm_under_weight,
+                perm_aux_over_weight=cfg.perm_aux_over_weight,
+                perm_aux_under_weight=cfg.perm_aux_under_weight,
                 lam_phys=cfg.lam_phys, row_scaler=scaler_params.get("_row_scaler"),
                 feature_names=scaler_params.get("_feature_names"),
                 phys_huber_beta=cfg.phys_huber_beta,

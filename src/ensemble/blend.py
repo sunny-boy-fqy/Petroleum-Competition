@@ -90,6 +90,69 @@ def blend_predictions(preds: Mapping[str, Mapping[str, "np.ndarray"]],
     return out
 
 
+def fuse_and_decode(preds: Mapping[str, Mapping[str, "np.ndarray"]],
+                    weights: Mapping[str, float], tau=None, decode_cfg=None
+                    ) -> "np.ndarray":
+    """WP3：**先融合 cont+q_atom，再统一原子决策**，返回标签尺度预测。
+
+    这是项目纪律的代码化：绝不对成员各自硬切换后的预测求平均。
+    ``decode_cfg`` 含 action_table 时优先用期望分数决策；否则回退 τ 硬切换。
+    """
+    fused = blend_predictions(preds, weights)
+    cont = np.stack([
+        np.asarray(fused["por"], dtype="float64"),
+        np.power(10.0, np.clip(np.asarray(fused["perm_z"], dtype="float64"),
+                               C.PERM_LOG_MIN, C.PERM_LOG_MAX)),
+        np.clip(np.asarray(fused["sw"], dtype="float64"), 0.0, 100.0),
+    ], axis=1)
+    q = fused.get("q_atom")
+    if decode_cfg is not None and getattr(decode_cfg, "action_table", None):
+        from ..inference import decode as DEC
+        pred, used = DEC.apply_atom_decision(cont, q, decode_cfg)
+        if used:
+            return pred
+    if tau is not None and q is not None:
+        from ..inference.atomic_gate import per_target_hard_switch
+        return per_target_hard_switch(cont, np.asarray(q, dtype="float64"), tau)
+    return cont
+
+
+def member_correlation(preds: Mapping[str, Mapping[str, "np.ndarray"]],
+                       key: str = "por") -> dict[str, dict[str, float]]:
+    """成员预测的逐对 Pearson 相关（用于同源性/多样性报告）。"""
+    members = sorted(preds)
+    out: dict[str, dict[str, float]] = {m: {} for m in members}
+    for i, a in enumerate(members):
+        va = np.asarray(preds[a][key], dtype="float64").reshape(-1)
+        for b in members[i:]:
+            vb = np.asarray(preds[b][key], dtype="float64").reshape(-1)
+            if va.size != vb.size or va.size < 2:
+                r = float("nan")
+            else:
+                r = float(np.corrcoef(va, vb)[0, 1])
+            out[a][b] = r
+            out[b][a] = r
+    return out
+
+
+def prune_correlated(preds: Mapping[str, Mapping[str, "np.ndarray"]],
+                     threshold: float = 0.99, key: str = "por") -> dict[str, Any]:
+    """剔除高度同源成员（保留先出现者），返回保留列表与剔除对。"""
+    members = sorted(preds)
+    corr = member_correlation(preds, key=key)
+    kept: list[str] = []
+    dropped: list[dict[str, Any]] = []
+    for m in members:
+        dup = next((k for k in kept if abs(corr[m].get(k, 0.0)) >= float(threshold)), None)
+        if dup is None:
+            kept.append(m)
+        else:
+            dropped.append({"member": m, "duplicate_of": dup,
+                            "corr": float(corr[m][dup])})
+    return {"kept": kept, "dropped": dropped, "threshold": float(threshold),
+            "corr": corr}
+
+
 def score_prediction(pred: Mapping[str, "np.ndarray"], y_true: "np.ndarray",
                      mask: "np.ndarray", tau: Sequence[float] | None = None) -> dict[str, float]:
     """把（连续+门控）预测解码成标签尺度并**用官方口径**打分（`missing_mode="drop"`）。"""

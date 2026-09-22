@@ -56,6 +56,10 @@ class DecodeConfig:
     quantile_shrink: dict[str, float] = field(default_factory=lambda: {t: 0.0 for t in C.TARGETS})
     expected_value: dict[str, bool] = field(default_factory=lambda: {t: False for t in C.TARGETS})
     tau: dict[str, float] = field(default_factory=dict)
+    # WP1：原子概率校准参数（temperature / isotonic），只允许 inner-OOF 拟合
+    atom_calibration: dict[str, Any] = field(default_factory=dict)
+    # WP1：期望分数动作表（每目标 bin_edges/bin_actions/bin_delta）
+    action_table: dict[str, Any] = field(default_factory=dict)
     sw_clip: tuple[float, float] = (0.0, 100.0)
     inner_only: bool = True
     selected_on: str | None = None
@@ -101,6 +105,56 @@ def apply_decode_config(pred: Any, config: DecodeConfig | None = None,
     return sw_only_soft_clip(out, config.sw_clip)
 
 
+def calibrate_atom_probs(q_atom: Any, calibration: dict[str, Any] | None) -> "np.ndarray":
+    """按冻结配置校准 q_atom；没有配置时原样返回。"""
+    _require_numpy()
+    q = np.asarray(q_atom, dtype="float64")
+    if not calibration:
+        return q
+    out = q.copy()
+    # 1) 全局温度（也支持逐目标 list/dict）
+    temp = calibration.get("temperature")
+    if temp is not None:
+        if isinstance(temp, dict):
+            temps = [float(temp.get(t, 1.0)) for t in C.TARGETS]
+        elif isinstance(temp, (list, tuple)):
+            temps = [float(v) for v in temp]
+        else:
+            temps = [float(temp)] * out.shape[1]
+        from . import calibration as CAL
+        for j in range(out.shape[1]):
+            T = max(float(temps[j]), 1e-6)
+            out[:, j] = CAL.apply_temperature(CAL.logit(out[:, j]), T)
+    # 2) 等渗校准（逐目标优先，其次全局）
+    iso = calibration.get("isotonic")
+    if iso:
+        from . import calibration as CAL
+        if isinstance(iso, dict) and "bin_edges" in iso:
+            out = CAL.apply_isotonic_binned(out, iso)
+        elif isinstance(iso, dict):
+            for j, t in enumerate(C.TARGETS):
+                fit = iso.get(t)
+                if isinstance(fit, dict):
+                    out[:, j] = CAL.apply_isotonic_binned(out[:, j], fit)
+    return np.clip(out, 0.0, 1.0)
+
+
+def apply_atom_decision(cont: Any, q_atom: Any,
+                        config: DecodeConfig | None = None) -> tuple:
+    """应用 WP1 的校准 + 期望分数决策。
+
+    返回 ``(pred, used_decision)``：``used_decision=False`` 表示配置里没有 action_table，
+    调用方应回退到 ``per_target_hard_switch``/``tau``。
+    """
+    _require_numpy()
+    if config is None or not getattr(config, "action_table", None):
+        return np.asarray(cont, dtype="float64"), False
+    from . import atom_decision as AD
+    q = calibrate_atom_probs(q_atom, getattr(config, "atom_calibration", None))
+    pred, _actions = AD.apply_decision_table(cont, q, config.action_table)
+    return sw_only_soft_clip(pred, config.sw_clip), True
+
+
 def save_decode_config(cfg: DecodeConfig, path: str | Path) -> Path:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -121,6 +175,8 @@ def load_decode_config(path: str | Path) -> DecodeConfig:
         quantile_shrink={k: float(v) for k, v in (d.get("quantile_shrink") or {}).items()},
         expected_value={k: bool(v) for k, v in (d.get("expected_value") or {}).items()},
         tau={k: float(v) for k, v in (d.get("tau") or {}).items()},
+        atom_calibration=dict(d.get("atom_calibration") or {}),
+        action_table=dict(d.get("action_table") or {}),
         sw_clip=tuple(d.get("sw_clip") or (0.0, 100.0)),
         inner_only=bool(d.get("inner_only", True)),
         selected_on=d.get("selected_on"), notes=str(d.get("notes", "")))

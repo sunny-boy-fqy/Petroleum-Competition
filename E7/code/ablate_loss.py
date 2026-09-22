@@ -81,7 +81,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--spec", default="F1")
     ap.add_argument("--arm-set", default="exp1",
                     choices=("exp1", "exp2", "exp3", "exp4", "exp5", "exp6",
-                             "exp7", "all"))
+                             "exp7", "exp8", "all"))
     ap.add_argument("--arms", default=None, help="逗号分隔的臂 id（覆盖 --arm-set）")
     ap.add_argument("--folds", default="0")
     ap.add_argument("--inner-only", action="store_true", default=True)
@@ -104,6 +104,10 @@ def build_parser() -> argparse.ArgumentParser:
                     choices=SCHEDULE_GRID)
     ap.add_argument("--lam2", type=float, default=0.2)
     ap.add_argument("--lam3", type=float, default=0.0)
+    ap.add_argument("--perm-over-weight", type=float, default=1.0,
+                    help="WP4：PERM 高估惩罚倍数（官方对高估无上界）")
+    ap.add_argument("--perm-aux-over-weight", type=float, default=None,
+                    help="WP4：L_aux 的 PERM 高估权重；缺省 = --perm-over-weight")
     ap.add_argument("--aux-normalize", default="fold_scale",
                     choices=("fold_scale", "absolute"))
     ap.add_argument("--boundary-kappa", type=float, default=0.0)
@@ -163,6 +167,10 @@ def build_arms(arm_set: str, arms: str | None) -> list[dict]:
         for lam3 in (0.02, 0.05):
             out.append({"id": f"exp7_lam3_{lam3}", "group": "exp7",
                         "overrides": {"lam3": lam3}})
+    if arm_set in ("exp8", "all"):
+        for ow in (1.5, 3.0):
+            out.append({"id": f"exp8_perm_over_{ow}", "group": "exp8",
+                        "overrides": {"perm_over_weight": ow}})
     if arms:
         want = {a.strip() for a in str(arms).split(",") if a.strip()}
         out = [a for a in out if a["id"] in want]
@@ -192,6 +200,10 @@ def loss_kwargs(args, overrides: dict, target: dict, batch: dict) -> dict:
         "boundary_kappa": float(o.get("boundary_kappa", args.boundary_kappa)),
         "boundary_sigma": float(o.get("boundary_sigma", args.boundary_sigma)),
         "lam_phys": float(o.get("lam3", args.lam3)),
+        "perm_over_weight": float(o.get("perm_over_weight", args.perm_over_weight)),
+        "perm_aux_over_weight": float(o.get(
+            "perm_aux_over_weight", args.perm_aux_over_weight
+            if args.perm_aux_over_weight is not None else args.perm_over_weight)),
     }
     kw["_lam1_schedule"] = sched
     return kw
@@ -447,6 +459,7 @@ def report_defaults(args) -> dict:
             "lam1_schedule": args.lam1_schedule, "lam2": args.lam2,
             "lam3": args.lam3, "aux_normalize": args.aux_normalize,
             "perm_clamp": args.perm_clamp,
+            "perm_over_weight": args.perm_over_weight,
             "boundary_kappa": args.boundary_kappa, "boundary_sigma": args.boundary_sigma}
 
 
