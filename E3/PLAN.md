@@ -62,3 +62,11 @@
 - 一切阈值/权重/早停只在 **inner-OOF** 上选；outer 折只推理一次。
 - 训练脚本必须支持 `--resume`、`--time-budget-h`、每 epoch checkpoint 与 `assert_disk_headroom(8.0)`。
 - 所有 Gate 的 `mandatory_checks` 必须含 `contract_ok`、`atomic_precision_reported`、`disk_budget_ok`、`training_time_log_valid`。
+
+---
+
+> **WP2 更新（2026-09）**：新增独立原子分类器路线 `E3/code/train_atom.py` +
+> `src/models/atom_head.py` + `src/losses/atom_classifier.py`。可在
+> E3/E4 主干隐状态或行级特征上训练 q_atom，使用 Focal BCE、非联合原子加权与
+> 边界难负例；重点提升非联合原子行召回。该路线必须与 E3 主干的联合训练做
+> paired CI 对照，不得默认替换现有 q_atom 头。

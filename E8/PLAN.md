@@ -59,3 +59,13 @@
 - 一切阈值/权重/早停只在 **inner-OOF** 上选；outer 折只推理一次。
 - 训练脚本必须支持 `--resume`、`--time-budget-h`、每 epoch checkpoint 与 `assert_disk_headroom(8.0)`。
 - 所有 Gate 的 `mandatory_checks` 必须含 `contract_ok`、`atomic_precision_reported`、`disk_budget_ok`、`training_time_log_valid`。
+
+---
+
+> **WP8/WP11 更新（2026-09）**：参考 SPWLA 2021：
+> - WP8：新增类型井选择（`src/data/type_well.py`）与井间输入分布匹配
+>   （`src/data/well_adapt.py`），E8 all 先产出 `E8_type_well.json`；
+> - WP9：MICE/KNN 插补、异常权重、KS 代表采样作为 E8 前置数据消融；
+> - WP11：链式目标（`src/training/chained.py`）与 GBDT 一阶成员
+>   （`src/models/gbdt.py`）加入 E8 候选；所有融合仍必须先融合再硬切换，
+>   集成权重只允许 inner-OOF 选。

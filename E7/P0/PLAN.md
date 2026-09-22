@@ -162,3 +162,9 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
 > 模板已内置 6 项核心 `mandatory_checks`；写入实际预注册文件时：
 > `created_at` 填当前时间；`baseline_version`/`baseline_artifact`/`baseline_manifest_sha256` 指向**已冻结**的基线；`planned_task_training_h` 必须 >0（软预算，单任务建议 ≤100h）。
 > 校验器：`python3 v4/src/validation/gates.py --prereg <file>`（缺字段即失败）。
+
+---
+
+> **WP4 更新（2026-09）**：新增 exp8 臂，测试 PERM 不对称损失
+> `perm_over_weight ∈ {1.5, 3.0}`（官方对高估无上界、对低估有 ε 截断）。
+> 所有不对称权重只在 inner-OOF 选；若 `perm_acc` 的 paired CI 下界 ≤0，则不采纳。

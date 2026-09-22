@@ -30,7 +30,8 @@
 | `numpy` | 口径层唯一硬依赖（解析/评分/契约/Gate/缓存） | 整个管线不可用 |
 | `pandas` | 逐折表、训练日志、OOF 汇总 | 分析脚本降级为 csv/JSONL |
 | `scipy` | 统计检验（bootstrap/分位数交叉校验） | 自写 bootstrap 仍可用 |
-| `scikit-learn` | `roc_auc_score` / `average_precision_score`（E6 原子头 AUC/AP） | 自写 rank-based AUC 兜底 |
+| `scikit-learn` | `roc_auc_score` / `average_precision_score`（E6 原子头 AUC/AP）、WP11 HistGB/Stacking、WP9 MICE/KNN、WP6 二阶 stacking | 自写 rank-based AUC/中位数/KNN 兜底；HistGB 缺失时 GBDT 成员降级为 numpy Ridge/不启用 |
+| `lightgbm` / `xgboost` / `catboost` | **可选**：WP11 树模型一阶成员；参考 SPWLA 前五名的强基线 | 缺失时只用 sklearn HistGB；WP11 会显式报告 available=false，不静默假装跑过 |
 | `einops` | E3/E4 序列主干（U-Net/TCN/PatchTF）的 `rearrange` | 需改写成 view/permute |
 
 推荐（可选，缺失自动降级）：`tensorboard` —— 平台任务详情页的"迭代曲线"读

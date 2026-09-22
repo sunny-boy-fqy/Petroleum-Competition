@@ -8,6 +8,14 @@
 > `/mnt/d/tmp/Petroleum-Competition/`（WSL 路径，对应 Windows `D:\tmp\Petroleum-Competition\`）。
 > **没有完成“更新文档 + add + commit + push + 打包”这五步，任务不算完成。**
 
+> **参考项目与致谢（必读）**：v4 的冲分计划在方法论上参考了 SPWLA PDDA SIG **2021 PDDA Machine Learning
+> Competition** 的公开方案与赛后论文，尤其是冠军 **UTFE** 的“类型井选择 + 井间自适应”、
+> **MoLPhy** 的“MICE 插补 + KS 代表采样 + 测试输入分布匹配 + 链式/Stacking”、
+> **Atwah_Analytics** 的岩石物理特征工程、**Tomsk** 的后处理规则。我们**只参考方法与工程思路，
+> 不复制其数据、标签或代码**；Volve 数据与其许可归 Equinor / 原仓库所有。
+> 详见 [`docs/SPWLA2021_REVIEW.md`](docs/SPWLA2021_REVIEW.md) 与 [`资料引用索引.md`](资料引用索引.md)。
+
+
 ## 快速导航
 
 | 文档 | 内容 |
@@ -160,7 +168,7 @@ python3 v4/predict.py --use-version CONST --data_dir ../data --output /tmp/r.jso
 
 ## 当前状态
 
-- [x] **计划全部完成**：总计划 892 行 + 12 个阶段计划（759 行）+ 33 个 P 级详细计划（5,226 行），**合计 6,877 行**（由 `tools/plan_stats.py` 实测）
+- [x] **计划全部完成**：总计划 918 行 + 12 个阶段计划（791 行）+ 33 个 P 级详细计划（5,255 行），**合计 6,964 行**（由 `tools/plan_stats.py` 实测）
 - [x] 状态台账 `versions/status.json`、候选注册表 `versions/candidates.json`、目录总览 `docs/PROJECT_FILES.md`
 - [x] 环境/磁盘自检脚本（`E0/code/check_env.py`、`src/data/disk_guard.py`、`E0/code/setup_deps.sh`）
 - [x] 锁文件与 Gate/引用模板
@@ -187,3 +195,32 @@ python3 v4/predict.py --use-version CONST --data_dir ../data --output /tmp/r.jso
 6. **分片缓存证据可复现**：`E0_data_card.json::shard_cache.cache_root` 现为 `$V4_CACHE_ROOT`（本地 `$V4_CACHE_ROOT`）或 repo 相对路径，不再是 `/tmp` 临时路径。
 
 > 未实现的部分在 README 与各 `PLAN.md` 中显式列出；**不宣称任何尚未复算的分数**。
+
+## 参考项目、贡献与致谢
+
+本项目在方法论上参考了以下公开工作；参考的是**方法、流程与经验教训**，不是数据或代码：
+
+| 来源 | 贡献/被参考的部分 | 在 v4 中的落点 |
+|---|---|---|
+| SPWLA PDDA SIG 2021 竞赛及赛后论文 | 任务设定、前五名方案复盘、结论“数据适配比模型更重要” | `docs/SPWLA2021_REVIEW.md`、`docs/SCORE_MAX_PLAN.md` §13 |
+| 冠军 UTFE（Wen Pan, Tianqi Deng） | 类型井选择（KL/DTW）、井间自适应、分区沙/泥基线、半监督插值 | WP8：`src/data/type_well.py`、`src/data/well_adapt.py` |
+| 亚军 MoLPhy（MOL Group） | MICE/LGBM 插补、Kennard-Stone 代表采样、测试输入分布匹配、链式目标、SuperLearner | WP9/WP11：`src/data/impute.py`、`src/validation/representative.py`、`src/training/chained.py`、`src/ensemble/stacking.py` |
+| 第 4 名 Atwah_Analytics | Archie/Simandoux/Indonesia、多骨架密度孔隙度、Larionov/Steiber/Clavier Vsh、Klogh、Boruta 特征选择 | WP10：`src/features/physics_ext.py` |
+| 第 2/4/5 名 | 树模型与 GBDT 集成（ExtraTrees/CatBoost/XGBoost/LightGBM） | WP11：`src/models/gbdt.py`、WP6 `src/ensemble/stacking.py` |
+| 第 3 名 Tomsk | 异常值处理 + 基于 EDA 的后处理规则 | WP9：`src/data/outliers.py`；后续 `postprocess` 规划 |
+
+**没有复制**：Volve 数据、标签、参赛 notebook 的具体代码、SPWLA 的固定阈值/常量。
+我们的数据、标签、评分公式和 66.7% 原子占位结构完全不同，所有阈值都必须重新在 v4 的 inner-OOF 上拟合。
+
+**引用**：
+
+```bibtex
+@article{fu2024well,
+  title={Well-Log-Based Reservoir Property Estimation With Machine Learning: A Contest Summary},
+  author={Fu, Lei and Yu, Yanxiang and Xu, Chicheng and Ashby, Michael and McDonald, Andrew and Pan, Wen and Deng, Tianqi and Szab{\'o}, Istv{\'a}n and Hanzelik, P{\'a}l P and Kalm{\'a}r, Csilla and others},
+  journal={Petrophysics}, volume={65}, number={01}, pages={108--127}, year={2024},
+  publisher={SPWLA}
+}
+```
+
+参考代码仓库：<https://github.com/pddasig/Machine-Learning-Competition-2021>

@@ -214,3 +214,19 @@ hard failures: 0
    基础环境兼容（CPU 镜像配 NPU 资源会失败）。
 4. **镜像数量上限？** 5 个；用不到就删（删除不可恢复，但**不影响正在运行的任务**）。
 5. **训练任务与开发机镜像通用吗？** **不通用**；v4 只需建 1 个「训练任务」镜像。
+
+## 六、可选库与 WP8–WP11
+
+参考 SPWLA 2021 后新增的 WP8–WP11 使用以下**可选**库；缺失时都有明确定义的回退，不会静默跳过：
+
+| 库 | 用途 | 缺失时的行为 |
+|---|---|---|
+| `scikit-learn`（required 段已有） | WP9 MICE/KNN、WP11 HistGB、WP6 Stacking、WP8 KDTree | 自写 numpy KNN/median/Ridge 兜底 |
+| `lightgbm` | WP11 树模型一阶成员 | 不启用该成员，报告 `available=false` |
+| `xgboost` | WP11 树模型一阶成员 | 同上 |
+| `catboost` | WP11 树模型一阶成员 | 同上 |
+| `scipy`（required 段已有） | 统计/距离的可选加速 | WP8/WP9 有纯 numpy 兜底 |
+
+镜像构建时**不必**强制安装三个 GBDT 库；若规则允许树集成且希望最大化分数，可在可写层
+`pip install lightgbm xgboost catboost`（aarch64 轮子需平台可用）。E0 的 `check_env.py`
+只把 required 段当硬依赖，可选库不会导致环境 Gate 失败。

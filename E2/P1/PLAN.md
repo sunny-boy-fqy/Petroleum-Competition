@@ -151,3 +151,10 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
 > 模板已内置 6 项核心 `mandatory_checks`；写入实际预注册文件时：
 > `created_at` 填当前时间；`baseline_version`/`baseline_artifact`/`baseline_manifest_sha256` 指向**已冻结**的基线；`planned_task_training_h` 必须 >0（软预算，单任务建议 ≤100h）。
 > 校验器：`python3 v4/src/validation/gates.py --prereg <file>`（缺字段即失败）。
+
+---
+
+> **WP10 更新（2026-09）**：参考 SPWLA 2021 第 4 名 Atwah 的岩石物理特征，新增
+> `src/features/physics_ext.py`（多骨架 φD、Larionov/Steiber/Clavier Vsh、
+> Archie/Simandoux/Indonesia Sw、Klogh 等 18 列）。是否纳入 F2/`FeatureSpec`
+> 必须先做 inner-OOF 消融；参数（sand/shale、Rw/Rsh）只在训练折拟合。

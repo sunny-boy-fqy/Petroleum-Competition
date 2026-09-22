@@ -52,3 +52,10 @@
 - 一切阈值/权重/早停只在 **inner-OOF** 上选；outer 折只推理一次。
 - 训练脚本必须支持 `--resume`、`--time-budget-h`、每 epoch checkpoint 与 `assert_disk_headroom(8.0)`。
 - 所有 Gate 的 `mandatory_checks` 必须含 `contract_ok`、`atomic_precision_reported`、`disk_budget_ok`、`training_time_log_valid`。
+
+---
+
+> **参考项目审计记录（2026-09）**：v4 复盘了 SPWLA PDDA SIG 2021 PDDA ML Competition
+> （参考仓库 `Machine-Learning-Competition-2021`，论文 Fu et al., Petrophysics 65(01), 2024）。
+> 归档：`docs/SPWLA2021_REVIEW.md`、`docs/SCORE_MAX_PLAN.md` §13–§14、`资料引用索引.md` §五。
+> 参考边界：只参考方法/流程，不复制数据、标签或代码；Volve 数据许可归 Equinor/原仓库。

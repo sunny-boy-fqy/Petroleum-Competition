@@ -165,3 +165,50 @@ WP8 → WP9 → WP10 → WP11，并用自己的 OOF/paired CI 与 v4 现有成�
 3. **WP11 GBDT + Stacking + 链式目标**：用现成强模型补齐 v4 的“纯 DL 赌注”风险。
 
 > 注意：v4 的 66.7% 占位行是 SPWLA 没有的特殊结构；WP1 的原子校准/期望分数决策仍然必须优先，不能用 SPWLA 方法替代。
+
+## 6. 参考边界、贡献与引用
+
+### 6.1 我们参考了什么
+
+| 参考内容 | 对应 v4 WP | 落点 |
+|---|---|---|
+| 类型井选择：KL 散度 / 归一化 DTW，为每口测试井找相似训练井 | WP8 | `src/data/type_well.py`、`E8/code/type_well_report.py` |
+| 井间自适应：训练/测试井之间的分布对齐、线性/分位匹配 | WP8 | `src/data/well_adapt.py` |
+| 缺失值插补：KNN / MICE(LGBM) / 相邻已解释段半监督 | WP9 | `src/data/impute.py` |
+| Kennard-Stone 代表采样：让验证集覆盖特征空间 | WP9 | `src/validation/representative.py` |
+| 异常值处理：IsolationForest / 稳健统计 / 样本降权 | WP9 | `src/data/outliers.py` |
+| 测试输入分布匹配（MoLPhy） | WP8/WP5 | `well_adapt`、`self_training` |
+| 链式目标预测：VSH→PHIF→SW，前序预测追加为特征 | WP11 | `src/training/chained.py` |
+| 岩石物理特征：Archie/Simandoux/Indonesia、多骨架 φD、Vsh 多公式、Klogh | WP10 | `src/features/physics_ext.py` |
+| 树/GBDT 与 SuperLearner stacking | WP6/WP11 | `src/ensemble/stacking.py`、`src/models/gbdt.py` |
+| 后处理规则思想（边界/异常区间用领域规则修正） | 规划中 | `docs/SCORE_MAX_PLAN.md` §WP9/后续 |
+
+### 6.2 我们没有参考/没有复制什么
+
+- 未复制 Volve 数据、标签、参赛 notebook 的具体代码、模型权重或提交文件；
+- 未套用参考项目的固定阈值（DEN>3、GR 上界、RDEP_log<-2 等）——我们的数据与评分不同；
+- 未使用参考项目的 RMSE 指标或随机划分；v4 仍保持自己的按井 5 折冻结协议；
+- 未使用任何测试标签；类型井/分布匹配只使用测试**输入**。
+
+### 6.3 参考项目本身的贡献
+
+SPWLA 2021 竞赛及公开方案的主要贡献：
+
+1. 首次系统梳理了“多井测井解释”的机器学习竞赛基准与公开数据（Volve）；
+2. 证明在井间非平稳条件下，**类型井选择与数据适配**往往比模型复杂度更有效；
+3. 公开了前五名完整方案，覆盖数据清洗、插补、代表采样、特征工程、树集成、小 NN 与后处理；
+4. 赛后论文给出了可复用的结论：模型选择不是成功的关键，训练井相似性、异常值处理与数据质量才是；
+5. 为后续测井 ML 工作提供了可复现的公开代码与数据（CC BY-NC-SA）。
+
+### 6.4 引用
+
+```bibtex
+@article{fu2024well,
+  title={Well-Log-Based Reservoir Property Estimation With Machine Learning: A Contest Summary},
+  author={Fu, Lei and Yu, Yanxiang and Xu, Chicheng and Ashby, Michael and McDonald, Andrew and Pan, Wen and Deng, Tianqi and Szab{\'o}, Istv{\'a}n and Hanzelik, P{\'a}l P and Kalm{\'a}r, Csilla and others},
+  journal={Petrophysics}, volume={65}, number={01}, pages={108--127}, year={2024},
+  publisher={SPWLA}
+}
+```
+
+参考仓库：<https://github.com/pddasig/Machine-Learning-Competition-2021>

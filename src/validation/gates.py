@@ -64,6 +64,7 @@ MIN_ABSOLUTE_KEYS = (
     "min_auc", "min_atomic_acc", "min_atomic_f1",
     "min_atomic_precision", "min_atomic_recall",
     "min_atom_acc", "min_atom_precision", "min_atom_recall", "min_atom_f1",
+    "min_atom_auc", "min_nonjoint_atom_recall",
     "min_joint_atom_auc", "min_por_acc", "min_perm_acc", "min_sw_acc",
     "min_align_score", "min_hard_pass", "min_effect_abs",
 )
@@ -96,6 +97,9 @@ METRIC_RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "min_atom_recall": ("atom_recall",),
     "min_atom_f1": ("atom_f1",),
     "min_joint_atom_auc": ("joint_atom_auc",),
+    # WP2：独立原子分类器指标
+    "min_atom_auc": ("atom_auc", "min_atom_auc"),
+    "min_nonjoint_atom_recall": ("nonjoint_atom_recall", "min_nonjoint_atom_recall"),
     "min_por_acc": ("por_acc",),
     "min_perm_acc": ("perm_acc",),
     "min_sw_acc": ("sw_acc",),

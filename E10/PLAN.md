@@ -58,3 +58,10 @@
 - 一切阈值/权重/早停只在 **inner-OOF** 上选；outer 折只推理一次。
 - 训练脚本必须支持 `--resume`、`--time-budget-h`、每 epoch checkpoint 与 `assert_disk_headroom(8.0)`。
 - 所有 Gate 的 `mandatory_checks` 必须含 `contract_ok`、`atomic_precision_reported`、`disk_budget_ok`、`training_time_log_valid`。
+
+---
+
+> **WP1 交付更新（2026-09）**：E10 打包时必须一同冻结 `versions/configs/decode_v1.json`，
+> 其中可包含 `atom_calibration` 与 `action_table`。推理端（`predict.py` /
+> `src/inference/predictor.py`）优先使用期望分数动作表，缺失时才回退 τ；
+> 不允许在推理时重新在测试集上拟合校准/动作表。

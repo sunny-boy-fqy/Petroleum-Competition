@@ -51,10 +51,10 @@
 
 | 层级 | 数量 | 篇幅 | 状态 |
 |---|---:|---:|---|
-| 总计划 `PLAN.md` | 1 | **892 行** | ✅ 完成 |
-| 阶段计划 `E*/PLAN.md` | 12 | 平均 63 行（合计 759） | ✅ 完成 |
-| P 级子计划 `E*/P*/PLAN.md` | 33 | **平均 158 行**（合计 5,226） | ✅ 完成（V2 深度：输入/输出契约、执行步骤、参数表、完成判据、禁止事项、风险对策、停止规则、inner-OOF 选择协议、复算命令、Gate 预注册 JSON） |
-| 计划文件合计 | 46 | **6,877 行** | ✅ |
+| 总计划 `PLAN.md` | 1 | **918 行** | ✅ 完成 |
+| 阶段计划 `E*/PLAN.md` | 12 | 平均 65 行（合计 791） | ✅ 完成 |
+| P 级子计划 `E*/P*/PLAN.md` | 33 | **平均 159 行**（合计 5,255） | ✅ 完成（V2 深度：输入/输出契约、执行步骤、参数表、完成判据、禁止事项、风险对策、停止规则、inner-OOF 选择协议、复算命令、Gate 预注册 JSON） |
+| 计划文件合计 | 46 | **6,964 行** | ✅ |
 
 > **行数由 `tools/plan_stats.py` 实测、`tools/sync_plan_stats.py` 同步、`plan_stats.py --check` 校验**
 > （审查 R2-H6/R3-C2：此前手写数字两次过期，且旧校验只查总量、漏检阶段/P 分项）。
@@ -640,7 +640,7 @@ L = L_align(主) + λ₁·L_aux(稠密梯度) + λ_joint·L_joint + λ_atom·L_a
 执行顺序：**E0 → E1 → E2 ⇒ E3 → E4 → E5 → E6 →（E7 公共件）→ E8 → E9 → E10 → E11**
 
 - [E0 数据、评测与提交契约](E0/PLAN.md) — 数据卡、哨兵、标签状态、评分器复算（70.4907）、按井折、提交契约与 CPU-only 单测。**不训练任何模型。**　**状态：本地契约 Gate 13/13 PASS（`reports/E0_local_contract_gate.json`）；云端 Gate `blocked_pending_cloud_run`（`reports/E0_cloud_gate.json`）。**
-- [E1 纯 DL 行级基线](E1/PLAN.md) — **当前阶段（P0/P1 代码待写）**。32 维行级输入 + MLP（无序列上下文），对接对齐损失，建立纯 DL 分母与容量标定；硬 Gate ≥ 78.0。
+- [E1 纯 DL 行级基线](E1/PLAN.md) — **代码已实现，本地契约/烟雾测试通过；正式云端 5 折 Gate 待跑**。32 维行级输入 + MLP（无序列上下文），对接对齐损失；硬 Gate ≥ 78.0 且占位行 Acc ≥ 0.98。
 - [E2 特征工程与数据管线](E2/PLAN.md) — `F_phys`/`F_win`/`F_well` 三组特征、增强策略、按井分片缓存与 16 GiB 内存纪律。
 - [E3 深度序列主干](E3/PLAN.md) — 1D U-Net 与 TCN 头对头，含**感受野消融**；硬 Gate ≥ 81.0 且序列主干必须优于同头行级模型。
 - [E4 Patch Transformer 与多尺度](E4/PLAN.md) — PatchTST 式通道独立 Transformer；与 CNN 主干的多尺度融合。
@@ -874,7 +874,7 @@ v4 可能整体失败（纯 DL 在 80 井上不收敛优于树模型）。因此
 | P75 | 多尺度 + 集成 + 井级分支有效 | 82.6–83.2 | 82.5–83.2 |
 | 冲刺 | PatchTF + 对齐损失 + 集成同时正增益 | ≥83.2 | >83.5，不保证 |
 
-> 参照系：v1 E7（树 + 手工特征）= 本地 80.3825 / A 榜 82.2757；v2 从零树管线 = dev64 80.3052；v2 E13.5 激进场最佳 A 榜 = 82.3035。**v4 的核心赌注是：序列主干提供的深度上下文 + 与评分同构的损失，能突破树模型 + 手工特征的天花板。**
+> 参照系：v1 E7（树 + 手工特征）= 本地 80.3825 / A 榜 82.2757；v2 从零树管线 = dev64 80.3052；v2 E13.5 激进场最佳 A 榜 = 82.3035。**v4 的核心策略（2026-09 更新）**：最初的核心赌注是“序列主干 + 评分同构损失能突破树模型天花板”。在复盘 SPWLA 2021（冠军为类型井自适应 + 线性/KNN，前五名以特征工程/树集成/数据适配为主）之后，正式扩展为**多路线并行、以 paired CI 裁决**：① 数据适配/类型井（WP8）与缺失/异常/代表采样（WP9）；② 岩石物理特征（WP10）与链式目标（WP11）；③ GBDT/Stacking（WP6/WP11）作为强一阶成员；④ 深度序列主干（E3/E4）从“唯一主线”降级为**多样性成员**；⑤ 66.7% 原子占位行仍是 v4 独有结构，WP1 原子校准/期望分数决策保持最高优先级。
 
 ---
 
@@ -890,3 +890,29 @@ v4 可能整体失败（纯 DL 在 80 井上不收敛优于树模型）。因此
 8. **井级/地质信息大多不可直接获得**：`资料库/04` §9 → 只用可观测的井级聚合与工程曲线。
 9. **复现是比赛硬要求**：`rules.md` §6/§8、`资料库/12` §5 → §9.2/§9.3。
 10. **前代负知识资产**：v1 E8–E11、v2 E6/E7 的 NO-GO 只在“无新信息源”下有效；v4 的 GPU 与新架构即“新的可观测条件”，因此允许重开序列模型方向，但**仍以消融与预注册 Gate 约束**。
+
+## 十四、外部参考与新增工作包（WP8–WP11）
+
+**参考项目**：SPWLA PDDA SIG *2021 PDDA Machine Learning Competition*（Volve 数据，预测 VSH/PHIF/SW），
+赛后论文：Fu et al., *Well-Log-Based Reservoir Property Estimation With Machine Learning: A Contest Summary*,
+*Petrophysics* 65(01), 2024。参考代码仓库：<https://github.com/pddasig/Machine-Learning-Competition-2021>。
+
+**参考到的核心结论**：
+
+1. 冠军 UTFE 用 **类型井选择（KL/DTW）+ 井间自适应 + 简单模型**，说明井间非平稳性比模型复杂度更关键；
+2. 亚军 MoLPhy 用 **MICE(LGBM) 插补 + Kennard-Stone 代表采样 + 测试输入分布匹配 + 链式目标 + SuperLearner**；
+3. 第 4 名 Atwah 用 **大量岩石物理特征**（Archie/Simandoux/Indonesia、多骨架 φD、多公式 Vsh、Klogh）；
+4. 第 2/4/5 名都用了 **ExtraTrees/CatBoost/XGBoost/LightGBM 集成**；
+5. 论文讨论的明确结论：**模型选择不是成功的关键；选与测试井相似的训练井、异常值处理、数据质量与数据准备才是**。
+
+**我们只参考方法与思路，不复制数据、标签或具体代码；Volve 数据版权与许可归 Equinor / 原仓库所有。**
+
+| WP | 名称 | 代码落点 | 对应参考 |
+|---|---|---|---|
+| WP8 | 类型井选择 + 井间分布匹配 | `src/data/type_well.py`、`src/data/well_adapt.py`、`E8/code/type_well_report.py` | UTFE |
+| WP9 | MICE/KNN 插补 + 异常权重 + KS 代表采样 | `src/data/impute.py`、`src/data/outliers.py`、`src/validation/representative.py` | MoLPhy/Tomsk/Atwah |
+| WP10 | 扩展岩石物理特征 | `src/features/physics_ext.py` | Atwah |
+| WP11 | 链式目标 + GBDT/Stacking | `src/training/chained.py`、`src/models/gbdt.py`、`src/ensemble/stacking.py` | MoLPhy/Atwah/Jaehyuk |
+
+执行顺序、Gate 与红线见 [`docs/SCORE_MAX_PLAN.md`](docs/SCORE_MAX_PLAN.md) §13 与
+[`docs/SPWLA2021_REVIEW.md`](docs/SPWLA2021_REVIEW.md)。

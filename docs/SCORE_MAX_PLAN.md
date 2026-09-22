@@ -298,3 +298,20 @@
 
 **与 WP0–WP7 的关系**：WP8/WP9/WP10 先做（便宜且是数据层），WP11 在 WP3 的集成框架上加入 GBDT/链式成员；WP1 的原子校准仍然优先，因为 66.7% 占位行是 SPWLA 没有的特殊结构。
 
+## 14. 参考项目贡献与引用（必读）
+
+本计划的 WP8–WP11 来自对 SPWLA PDDA SIG 2021 竞赛公开方案的复盘，参考仓库：
+<https://github.com/pddasig/Machine-Learning-Competition-2021>；赛后论文：
+Fu et al., *Well-Log-Based Reservoir Property Estimation With Machine Learning: A Contest Summary*,
+*Petrophysics* 65(01), 108–127, 2024。
+
+**参考项目的主要贡献**：
+- 公开了多井测井 ML 竞赛的完整数据、任务与榜单；
+- 冠军 UTFE 证明**类型井选择 + 井间自适应**比模型复杂度更关键；
+- 亚军 MoLPhy 展示了 MICE、KS 代表采样、测试输入分布匹配与 SuperLearner；
+- 第 4 名 Atwah 展示了系统性岩石物理特征工程；
+- 论文总结了“数据/适配 > 模型”的可复用结论。
+
+**我们的使用边界**：只参考方法与工程思路；未复制 Volve 数据、标签、代码或固定阈值。
+v4 的数据、标签、官方指标与 66.7% 原子占位结构不同，所有参数必须重新在 v4 的
+inner-OOF 上拟合。详见 [`SPWLA2021_REVIEW.md`](SPWLA2021_REVIEW.md)。

@@ -121,3 +121,24 @@ passed = (delta >= effective_threshold)
 | `reports/<GATE_ID>_gate.json` | 判定结果（实验后） |
 | `reports/<GATE_ID>_metrics.json` | 原始指标与 bootstrap 明细 |
 | `experiments/<E>/<P>/<candidate_id>/` | `result.json` / `result.zip` / `cv.json` / `manifest.json` |
+
+## 9. v4 冲分计划新增的 Gate 键（WP0–WP11）
+
+除既有 `min_delta` / `oof_total_min` / `min_auc` / `min_atomic_acc` / `min_atomic_f1` 外，
+以下绝对门槛已登记进 `src/validation/gates.py`，可在预注册 `thresholds` 中使用：
+
+| 键 | 方向 | 含义 | 对应 result 字段 |
+|---|---|---|---|
+| `min_same_direction_folds` | `>=` | 5 折同向的最低折数（E1 固定 5） | `same_direction_folds` |
+| `min_placeholder_acc` | `>=` | 占位行逐目标最低准确率（E1 固定 0.98） | `placeholder_min_acc` |
+| `min_nonjoint_atom_recall` | `>=` | 非联合原子行最低召回（WP2） | `nonjoint_atom_recall` |
+| `min_atom_auc` | `>=` | 原子头最低 AUC（WP2） | `atom_auc` / `min_atom_auc` |
+
+建议新增的 mandatory/报告项（WP1–WP11）：
+
+- `atom_calibration_reported`：温度/等渗校准的 ECE/Brier 已落盘；
+- `decision_table_inner_only`：期望分数动作表只在 inner-OOF 拟合；
+- `no_atom_continuous_interpolation`：先融合再硬切换；
+- `type_well_report_written`：E8 类型井选择报告已产出；
+- `impute_fit_on_train_only`：MICE/KNN 插补器只在训练折 fit；
+- `gbdt_member_available_reported`：GBDT 可选库缺失时显式报告，不静默跳过。

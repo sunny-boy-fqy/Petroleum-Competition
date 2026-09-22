@@ -159,3 +159,16 @@ bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage
 | 镜像数量上限 | 5 个 | 只建 1 个训练镜像 |
 | 镜像场景 | 开发机 / 训练任务互不通用 | 建「训练任务」场景 |
 | 停止任务后续跑 | 不支持，只能【重新训练】 | 依赖 checkpoint + `--resume` |
+
+## 九、WP8–WP11 新增任务说明
+
+| 任务 | 命令/入口 | 说明 |
+|---|---|---|
+| E7 原子校准 + 期望分数决策 | `run_train.sh --stage E7 --phase atom`（或 `--phase all`） | 读取 E6 `inner_oof.npz`，交叉拟合校准/动作表，仅当 paired CI 正增益才写 `decode_v1.json` |
+| E8 类型井报告 | `run_train.sh --stage E8 --target all` 会先运行 `E8/code/type_well_report.py` | 只读测试输入曲线，选 top-k 训练类型井；供 scaler 参考/分布匹配/适配成员 |
+| E8 集成解码 | `E8/code/ensemble.py --decode-config ...` | 优先使用 `decode_v1.json::action_table`，否则回退 τ；仍然先融合再硬切换 |
+| WP9 插补/异常/代表采样 | `src/data/impute.py`、`src/data/outliers.py`、`src/validation/representative.py` | 离线消融；sklearn 缺失时自动降级/跳过并明确报告 |
+| WP10 扩展物理特征 | `src/features/physics_ext.py` | 产出 18 列扩展特征；接入 FeatureSpec 前先用 inner-OOF 消融 |
+| WP11 链式/GBDT | `src/training/chained.py`、`src/models/gbdt.py` | 作为 E8 一阶成员候选；GBDT 库缺失时报告 available=false |
+
+**纪律**：以上新增模块的参数都必须在 inner-OOF 上拟合；outer/confirm 折只推理一次。

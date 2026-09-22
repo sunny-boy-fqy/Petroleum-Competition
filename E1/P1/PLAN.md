@@ -195,3 +195,12 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
 > 模板已内置 6 项核心 `mandatory_checks`；写入实际预注册文件时：
 > `created_at` 填当前时间；`baseline_version`/`baseline_artifact`/`baseline_manifest_sha256` 指向**已冻结**的基线；`planned_task_training_h` 必须 >0（软预算，单任务建议 ≤100h）。
 > 校验器：`python3 v4/src/validation/gates.py --prereg <file>`（缺字段即失败）。
+
+---
+
+> **WP0 更新（2026-09）**：
+> - 预注册新增 `min_placeholder_acc: 0.98` 与 `min_same_direction_folds: 5`，两者都进入
+>   `aggregate_gate` 的绝对门槛；读取旧预注册缺键时拒绝静默沿用。
+> - 早停/选 epoch 由“连续头分数”改为 **gated 代理分（τ=0.5）**；日志同时输出
+>   `innerOOF_gated@0.5` 与 `innerOOF_cont`。
+> - 重跑验收：`oof_total ≥ 78` **且** `placeholder_min_acc ≥ 0.98`；否则不得进入 E3。

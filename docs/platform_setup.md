@@ -347,3 +347,11 @@ with RunLogger(f"E3_unet_fold{fold}") as log:
    纪律：**根因未定之前，不要在文档里写死"就是某某导致的"**。2026-09-20 那次先被误判为
    "平台仓库地址填了 SSH"，随后被上面的正则事实证伪（表单不会放行 scp 形式）——结论必须由
    实验或平台侧证据支撑。
+
+## 6. WP8–WP11 的可选依赖与任务参数
+
+- E7 现在支持 `--phase loss|decode|atom|all`；`atom` 需要 E6 先产出 `inner_oof.npz`。
+- E8 `--target all` 会先写 `E8_type_well.json`（类型井报告），再跑 mmoe/well/transductive/ensemble。
+- 若希望启用 GBDT 成员（HistGB/LightGBM/XGBoost/CatBoost），在镜像可写层安装对应库；
+  缺失时 WP11 只保留 numpy Ridge/sklearn HistGB，并显式报告 `available=false`。
+- 所有新增方法仍只使用测试输入；不得使用测试标签，类型井/分布匹配必须留审计记录。

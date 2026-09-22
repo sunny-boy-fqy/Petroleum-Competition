@@ -17,7 +17,7 @@
 ```
 v4/
 ├── README.md                 总入口：环境、平台速查、当前状态
-├── PLAN.md                   总计划（892 行，唯一权威）
+├── PLAN.md                   总计划（918 行，唯一权威）
 ├── 资料引用索引.md            每处引用的可核验定位
 ├── run_train.sh              平台训练任务统一入口（env/data/e0/smoke/stage/all）
 ├── predict.py                推理入口（官方 --data_dir/--output）
@@ -314,7 +314,7 @@ $V4_LOCAL_ROOT/v4/{cache,runs,reports,logs,tb,state}/
 
 | 类别 | 已实现 | 说明 |
 |---|---|---|
-| `src/` | constants, portability, score, data/{parse,labels,dataset,disk_guard,row_dataset,seq_dataset,augment}, features/{basic,physics,window,well,groups}, losses/{score_aligned,physics}, models/{row_mlp,unet1d,tcn,patchtf,heads,mmoe,well_head,target_heads}, training/{loop,metrics,fold_runner,seq_loop,checkpoint,tb_logger,state_train,frozen,ema,recipe}, inference/{contract,atomic_gate,predictor,decode}, ensemble/blend, validation/{folds,gates}, versioning/registry | 本地代码层无“未实现”项；exp7 L_phys 已实现，正式消融结论待云端 |
+| `src/` | constants, portability, score, data/{parse,labels,dataset,disk_guard,row_dataset,seq_dataset,augment,type_well,well_adapt,impute,outliers}, features/{basic,physics,physics_ext,window,well,groups}, losses/{score_aligned,physics,atom_classifier}, models/{row_mlp,unet1d,tcn,patchtf,heads,mmoe,well_head,target_heads,atom_head,gbdt}, training/{loop,metrics,fold_runner,seq_loop,checkpoint,tb_logger,state_train,frozen,ema,recipe,atom_train,chained,self_training,ssl}, inference/{contract,atomic_gate,atom_decision,calibration,predictor,decode}, ensemble/{blend,stacking}, validation/{folds,gates,representative}, versioning/registry | 本地代码层无“未实现”项；WP1–WP11 模块已实现并有单测/端到端测试；正式云端消融结论待跑 |
 | 根目录 | predict.py（含 PD1 折集成）、train.py（阶段转发/配置默认值）、run_train.sh（E0–E10 全部阶段）、requirements.txt、configs/v4.yaml、configs/paths.yaml | — |
 | 产物 | reports/E0_*.json（13 份）——其中 E0_goal_audit.json / E0_pipeline_check.json / E0_final_acceptance.json 是自检证据；另有 `versions/{registry,candidates,status,folds_sha256}.json`、`versions/prereg_templates/`（33 份） | 各阶段 Gate/报告在**云端**产出（`$V4_REPORTS_DIR`），本仓库只保留 E0 口径证据快照 |
 | `run_train.sh` | `env` / `data` / `e0` / `smoke` / `data-health`；`--stage E1..E10`（E2/E3/E5/E6/E7/E8/E9/E10 带 `--phase`/`--target` 子路由） | `--mode all [--through 1..14] [--fresh]` = env→data→e0→E1…E10 共 14 个任务；已完成任务自动跳过，失败即停，进度写 `/data/v4/state/all_pipeline_progress.json` |
@@ -331,8 +331,8 @@ $V4_LOCAL_ROOT/v4/{cache,runs,reports,logs,tb,state}/
 | 项 | 数量 |
 |---|---:|
 | git 跟踪文件 | 见 `git ls-files \| wc -l` |
-| 计划文件（`PLAN.md`） | 1（总，892 行）+ 12（阶段，759 行）+ 33（P，5,226 行）= **46 份 / 6,877 行** |
-| P 级计划平均篇幅 | **158 行**（合计 5,226；由 `tools/plan_stats.py` 统计） |
+| 计划文件（`PLAN.md`） | 1（总，918 行）+ 12（阶段，791 行）+ 33（P，5,255 行）= **46 份 / 6,964 行** |
+| P 级计划平均篇幅 | **159 行**（合计 5,255；由 `tools/plan_stats.py` 统计） |
 | 代码模块（`v4/src/**/*.py`） | 见 `find v4/src -name '*.py' \| wc -l` |
 | E 层脚本（`v4/E*/code/*.py`） | 见 `find v4/E* -name '*.py' \| wc -l` |
 
@@ -366,3 +366,12 @@ $V4_LOCAL_ROOT/v4/{cache,runs,reports,logs,tb,state}/
 | WP11 | `src/training/chained.py` | POR→PERM→SW 链式目标（OOF 前序预测） |
 | WP11 | `src/models/gbdt.py` | HistGB/LGBM/XGB/CatBoost 一阶成员（可选依赖） |
 
+## 五、外部参考与贡献
+
+v4 在方法论上参考了 SPWLA PDDA SIG 2021 PDDA Machine Learning Competition 及其赛后论文
+（Fu et al., *Petrophysics* 65(01), 2024）。参考内容包括：类型井选择（KL/DTW）、井间自适应、
+MICE/KNN 插补、Kennard-Stone 代表采样、测试输入分布匹配、链式目标、岩石物理特征工程、
+GBDT/Stacking 与后处理规则思想。**未复制其数据、标签或代码；Volve 数据许可归 Equinor/原仓库。**
+
+详细映射见 [`docs/SPWLA2021_REVIEW.md`](SPWLA2021_REVIEW.md) 与
+[`docs/SCORE_MAX_PLAN.md`](SCORE_MAX_PLAN.md) §13–§14。
