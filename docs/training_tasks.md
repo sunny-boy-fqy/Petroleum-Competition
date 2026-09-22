@@ -192,3 +192,5 @@ bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage
 | `--wp self-training` / `--wp ssl` | 运行对应模块单测 | WP5/WP7（训练入口待接线） |
 
 `start.sh` 也可以 `--fresh` 清进度重跑、`--e1-rerun` 清旧 E1 预注册后重跑 E1。
+
+| `--wp type-well-adapt` | `--through 3` + `E8/code/type_well_member.py` | WP8 适配成员 |

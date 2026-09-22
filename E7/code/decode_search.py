@@ -205,24 +205,55 @@ def run(args) -> int:
                        "best_alpha": max(rows_q, key=lambda r: r["acc"])["alpha"]})
         quantile_report = qt
 
-    # ---- 5) 原子优先级 + SW 尺度收据
-    tau_use = tau_existing if tau_existing is not None else np.full(3, 0.5)
-    # 原子优先级：后处理后的连续值再做硬切换，命中行必须与"后处理前"的切换结果逐位一致
-    prio = DEC.assert_atom_priority(stage, cont, q_atom, tau_use)
+    # ---- 5) 期望值解码的**增益/CI 门槛**：只有相对当前 τ 基线有正增益且 CI 下界 >0
+    #         的目标才采纳 expected_value；否则退回 τ 网格结果。
+    tau_base = np.asarray(tau_existing if tau_existing is not None
+                          else np.full(3, 0.5), dtype="float64").reshape(-1)
+    if tau_base.size == 1:
+        tau_base = np.repeat(tau_base, 3)
+    else:
+        tau_base = np.resize(tau_base, 3)
+    base_decoded = AG.per_target_hard_switch(stage, q_atom, tau_base)
+    ev_gate: list[dict] = []
+    ev_accept = [False, False, False]
+    tau_selected = tau_base.astype("float64").copy()
+    if args.expected_decode == "on":
+        for i, (t, ev) in enumerate(zip(C.TARGETS, ev_report or [])):
+            entry = {"target": t, "monotone": bool(ev.get("monotone")) if ev else False,
+                     "table_tau": (float(ev["tau_from_table"])
+                                   if ev and ev.get("tau_from_table") is not None else None),
+                     "accepted": False, "gain": None, "paired_ci": None}
+            ok = bool(ev and ev.get("monotone")
+                      and ev.get("tau_from_table") is not None
+                      and float(ev["tau_from_table"]) > 0.0)
+            if ok:
+                cand_tau = tau_selected.copy()
+                cand_tau[i] = float(ev["tau_from_table"])
+                cand = AG.per_target_hard_switch(stage, q_atom, cand_tau)
+                ci = paired_ci(y, cand, base_decoded, mask, well_index, n_wells, rows,
+                               args.iters)
+                gain = _total(y, cand, mask) - _total(y, base_decoded, mask)
+                entry["gain"] = float(gain)
+                entry["paired_ci"] = [float(x) for x in ci["ci"]]
+                if gain > float(args.min_gain) and ci["ci"][0] > 0:
+                    ev_accept[i] = True
+                    tau_selected[i] = float(ev["tau_from_table"])
+                    entry["accepted"] = True
+            ev_gate.append(entry)
+
+    # ---- 6) 原子优先级 + SW 尺度收据
+    tau_use = tau_selected
+    final_pred = AG.per_target_hard_switch(stage, q_atom, tau_use)
+    # 原子优先级：实际管线输出必须满足“命中行=原子值、未命中行=cont_after”
+    prio = DEC.assert_atom_priority(stage, cont, q_atom, tau_use, out_actual=final_pred)
     scale = DEC.sw_scale_receipt()
 
-    final_total = _total(y, stage, mask)
-    final_pt = _per_target(y, stage, mask)
+    final_total = _total(y, final_pred, mask)
+    final_pt = _per_target(y, final_pred, mask)
     selected = {"bias": (bias_sel if accept_bias else {t: 0.0 for t in C.TARGETS}),
                 "shrink": (best_shrink if accept_shrink else {t: 1.0 for t in C.TARGETS}),
-                "expected_value": {t: bool(args.expected_decode == "on"
-                                           and ev.get("monotone") and ev.get("tau_from_table")
-                                           is not None)
-                                   for t, ev in zip(C.TARGETS, ev_report or [])} or
-                                  {t: False for t in C.TARGETS},
-                "tau": {t: (float(ev["tau_from_table"]) if ev and ev.get("tau_from_table")
-                            is not None else (float(tau_use[i])))
-                        for i, (t, ev) in enumerate(zip(C.TARGETS, ev_report or [None] * 3))}}
+                "expected_value": {t: bool(ev_accept[i]) for i, t in enumerate(C.TARGETS)},
+                "tau": {t: float(tau_use[i]) for i, t in enumerate(C.TARGETS)}}
     report = {
         "stage": "E7", "p_stage": "P1", "tag": args.tag,
         "exploratory": bool(args.exploratory), "selection_score_only": True,
@@ -235,6 +266,7 @@ def run(args) -> int:
                    "gain": float(gain_shrink), "paired_ci": ci_shrink["ci"],
                    "grid": list(SHRINK_GRID), "table": shrink_table},
         "expected_value": ev_report,
+        "expected_value_gate": ev_gate,
         "quantile_shrink": quantile_report,
         "final": {"total": final_total, "per_target": final_pt,
                   "gain_vs_base": float(final_total - base_total)},

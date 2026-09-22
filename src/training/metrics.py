@@ -51,7 +51,24 @@ def atom_gate(cont: "np.ndarray", q_atom, tau, atom_values: dict | None = None) 
 
 
 def _hit_rate(y: "np.ndarray", pred: "np.ndarray", t: int) -> float:
-    """官方容差内的**命中率**（score == 1 ⟺ 命中），仅用于原子/占位行判据。"""
+    """原子/占位行上的**官方软准确率**（acc_relative / acc_perm 的逐行均值）。
+
+    注意：这不是“容差带命中率”。`y=0.1, pred=0.105` 的 POR 软 Acc 约 0.375，
+    但旧实现按 `err<=1` 会算成 1.0；后者已拆到 `_tolerance_hit_rate`。
+    """
+    from ..score import acc_perm, acc_relative
+    y = np.asarray(y, dtype="float64").reshape(-1)
+    pred = np.asarray(pred, dtype="float64").reshape(-1)
+    if y.size == 0:
+        return float("nan")
+    if t == 1:
+        return float(acc_perm(y, pred))
+    delta = C.DELTA_POR if t == 0 else C.DELTA_SW
+    return float(acc_relative(y, pred, delta))
+
+
+def _tolerance_hit_rate(y: "np.ndarray", pred: "np.ndarray", t: int) -> float:
+    """官方容差带内的命中率（score > 0 的边缘），仅作诊断；Gate 不再使用。"""
     if y.size == 0:
         return float("nan")
     if t == 1:  # PERM：1 个数量级
@@ -65,14 +82,20 @@ def _hit_rate(y: "np.ndarray", pred: "np.ndarray", t: int) -> float:
 
 def atomic_rows_report(y_true: "np.ndarray", y_pred: "np.ndarray", y_atom: "np.ndarray",
                        mask: "np.ndarray") -> dict[str, Any]:
-    """原子（占位）行上的逐目标命中率 + 原子头精确率/召回率。"""
-    out: dict[str, Any] = {"rows": {}, "hit_rate": {}}
+    """原子（占位）行上的逐目标官方软 Acc + 旧容差命中率（诊断）。"""
+    out: dict[str, Any] = {"rows": {}, "hit_rate": {}, "tolerance_hit_rate": {}}
     for t, name in enumerate(C.TARGETS):
         obs = np.asarray(mask, dtype=bool)[:, t]
         sel = obs & (np.asarray(y_atom, dtype=bool)[:, t])
         out["rows"][name] = int(sel.sum())
-        out["hit_rate"][name] = _hit_rate(np.asarray(y_true, float)[sel, t],
-                                          np.asarray(y_pred, float)[sel, t], t) if sel.any() else None
+        if sel.any():
+            yv = np.asarray(y_true, float)[sel, t]
+            pv = np.asarray(y_pred, float)[sel, t]
+            out["hit_rate"][name] = _hit_rate(yv, pv, t)
+            out["tolerance_hit_rate"][name] = _tolerance_hit_rate(yv, pv, t)
+        else:
+            out["hit_rate"][name] = None
+            out["tolerance_hit_rate"][name] = None
     return out
 
 
@@ -99,7 +122,7 @@ def atomic_precision_recall(y_atom: "np.ndarray", q_atom: "np.ndarray", tau,
         else:
             valid = mm[:, t]
         yv, qv = y[valid, t], q[valid, t]
-        pred = qv >= taus[t]
+        pred = qv > taus[t]
         tp = float(np.sum(pred & yv))
         fp = float(np.sum(pred & ~yv))
         fn = float(np.sum(~pred & yv))

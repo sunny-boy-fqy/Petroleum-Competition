@@ -94,6 +94,41 @@ class TestDecodeOps(unittest.TestCase):
             self.assertGreaterEqual(rep["tau_from_table"], 0.0)
             self.assertLessEqual(rep["tau_from_table"], 1.0)
 
+    def test_expected_value_table_rejects_low_q_atom_suffix_and_tau0(self):
+        # 低 q 箱是原子 -> 不是高 q 后缀；必须 monotone=False / tau=None
+        rng = np.random.RandomState(7)
+        n = 500
+        q = rng.rand(n)
+        is_atom = q < 0.3
+        y = np.column_stack([np.where(is_atom, 0.1, 12.0),
+                             np.where(is_atom, 0.01, 50.0),
+                             np.where(is_atom, 99.9, 60.0)])
+        cont = y.copy()
+        cont[:, 0] = np.where(is_atom, 12.0, 12.0)
+        cont[:, 1] = np.where(is_atom, 50.0, 50.0)
+        cont[:, 2] = np.where(is_atom, 60.0, 60.0)
+        mask = np.ones((n, 3), dtype=bool)
+        rep = DEC.expected_value_table(y, cont, np.column_stack([q, q, q]), mask, 0,
+                                       n_bins=5)
+        self.assertFalse(rep["monotone"])
+        self.assertIsNone(rep["tau_from_table"])
+
+    def test_expected_value_table_accepts_high_q_suffix(self):
+        rng = np.random.RandomState(8)
+        n = 500
+        q = rng.rand(n)
+        is_atom = q > 0.7
+        y = np.column_stack([np.where(is_atom, 0.1, 12.0),
+                             np.where(is_atom, 0.01, 50.0),
+                             np.where(is_atom, 99.9, 60.0)])
+        cont = np.column_stack([np.full(n, 12.0), np.full(n, 50.0), np.full(n, 60.0)])
+        mask = np.ones((n, 3), dtype=bool)
+        rep = DEC.expected_value_table(y, cont, np.column_stack([q, q, q]), mask, 0,
+                                       n_bins=5)
+        self.assertTrue(rep["monotone"])
+        self.assertIsNotNone(rep["tau_from_table"])
+        self.assertGreater(rep["tau_from_table"], 0.0)
+
     def test_sensitivity_flat_midpoint(self):
         y, mask = _toy(200)
         cont = y.copy()
@@ -110,6 +145,23 @@ class TestDecodeOps(unittest.TestCase):
         rep = DEC.assert_atom_priority(after, y, q, tau)
         self.assertTrue(rep["ok"])
         self.assertGreater(rep["n_atom_rows"], 0)
+
+    def test_atom_priority_detects_corrupted_actual_output(self):
+        y, mask = _toy(50)
+        q = np.full((50, 3), 0.9)
+        tau = np.full(3, 0.5)
+        after = DEC.apply_bias(y, {"POR": 1.0, "PERM": 1.0, "SW": 1.0})
+        from src.inference.atomic_gate import per_target_hard_switch
+        actual = per_target_hard_switch(after, q, tau)
+        # 正确顺序：全部命中原子 -> actual 全是原子值，先确认 ok
+        ok = DEC.assert_atom_priority(after, y, q, tau, out_actual=actual)
+        self.assertTrue(ok["ok"], ok)
+        # 污染一个原子行 -> 必须被发现
+        bad = actual.copy()
+        bad[0, 0] = 12345.0
+        rep = DEC.assert_atom_priority(after, y, q, tau, out_actual=bad)
+        self.assertFalse(rep["ok"])
+        self.assertGreaterEqual(rep["n_wrong_on_atom_rows"], 1)
 
 
 def _make_oof(path: Path, *, biased: bool = True, seed: int = 0) -> None:

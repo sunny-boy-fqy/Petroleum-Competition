@@ -212,3 +212,10 @@ SPWLA 2021 竞赛及公开方案的主要贡献：
 ```
 
 参考仓库：<https://github.com/pddasig/Machine-Learning-Competition-2021>
+
+### 6.5 WP8 适配成员落地
+
+- 类型井报告：`E8/code/type_well_report.py`；
+- **类型井 + 井间自适应一阶成员**：`E8/code/type_well_member.py`；
+- 回归：`tests/test_wp_reports.py::test_type_well_member_gbdt`、`tests/test_start_sh.py`；
+- 启动：`start.sh --wp type-well`（报告）与 `start.sh --wp type-well-adapt`（成员）。

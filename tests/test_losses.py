@@ -23,6 +23,7 @@ if HAS_TORCH:
                                     physics_porosity_loss)
     from src.losses.score_aligned import (  # noqa: E402
         align_score_log,
+        aligned_loss,
         atom_bce,
         aux_loss,
         boundary_focus_weight,
@@ -265,6 +266,22 @@ class TestPermAsymmetry(unittest.TestCase):
         self.assertAlmostEqual(float(sym[1]), float(asym[1]), places=6)
         self.assertLess(float(asym[2]), float(sym[2]))
         self.assertLess(float(asym[3]), float(sym[3]))
+
+
+@unittest.skipUnless(HAS_TORCH, "torch not installed")
+class TestBoundaryFocusSequence(unittest.TestCase):
+    def test_boundary_focus_accepts_sequence_atom(self):
+        import torch
+        B, L = 2, 5
+        y_por = torch.rand(B, L); p_por = torch.rand(B, L)
+        z = torch.randn(B, L); zh = torch.randn(B, L)
+        y_sw = torch.rand(B, L); p_sw = torch.rand(B, L)
+        m = torch.ones(B, L, 3)
+        y_atom = (torch.rand(B, L, 3) > 0.5).float()
+        loss = aligned_loss(y_por, p_por, z, zh, y_sw, p_sw, m,
+                            boundary_kappa=1.0, y_atom=y_atom)
+        self.assertTrue(torch.isfinite(loss))
+        self.assertEqual(tuple(loss.shape), ())
 
 
 class TestPhysicsLoss(unittest.TestCase):

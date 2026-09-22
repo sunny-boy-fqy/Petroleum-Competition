@@ -333,16 +333,20 @@ def expected_value_table(y: Any, cont: Any, q_atom: Any, mask: Any, target_index
         rows.append({"bin": b, "lo": lo, "hi": hi, "n_rows": int(sel.sum()),
                      "action": action, "score_atom": float(s_atom),
                      "score_cont": float(s_cont), "gain_atom": float(s_atom - s_cont)})
-    # 单调化：只有"高置信箱切原子、低置信箱保连续"的动作表才是可部署的 τ 规则
+    # 单调化：可部署的 τ 规则要求原子动作是**高 q 侧的后缀**，且不能从 0 号箱开始
+    # （否则 tau=0.0，sigmoid 输出 q>0 恒真，会把整个目标强制写成原子值）。
     atoms = [r["bin"] for r in rows if r["action"] == "atom"]
-    monotone = bool(not atoms or atoms == list(range(min(atoms), max(atoms) + 1)))
+    n_b = len(rows)
+    suffix_ok = bool(atoms) and atoms == list(range(atoms[0], n_b)) and atoms[0] > 0
+    monotone = bool(not atoms or suffix_ok)
     tau = None
-    if monotone and atoms:
-        tau = float(min(rows[b]["lo"] for b in atoms))
+    if suffix_ok:
+        tau = float(rows[atoms[0]]["lo"])
     return {"target": t, "n_bins": int(n_bins), "bins": rows, "monotone": monotone,
+            "suffix_start": (int(atoms[0]) if atoms else None),
             "tau_from_table": tau,
-            "note": ("动作表必须单调（高置信才切原子）才能压成一个 τ；非单调时只作报告，"
-                     "部署仍用 τ 网格搜索的结果")}
+            "note": ("动作表必须单调（高置信才切原子）且原子箱是高 q 侧后缀、起点 >0，"
+                     "才能压成一个 τ；否则只作报告，部署仍用 τ 网格搜索/期望动作表。")}
 
 
 def sensitivity_report(y: Any, pred: Any, mask: Any, target_index: int,
@@ -377,13 +381,17 @@ def sensitivity_report(y: Any, pred: Any, mask: Any, target_index: int,
                      "整段都平坦说明该目标的偏移对分数无影响，宁可不调")}
 
 
-def assert_atom_priority(cont_after: Any, cont_before: Any, q_atom: Any, tau
-                         ) -> dict[str, Any]:
-    """原子优先级证据：**先连续后处理、后原子硬切换**时，原子行必须逐位相同。
+def assert_atom_priority(cont_after: Any, cont_before: Any, q_atom: Any, tau,
+                         out_actual: Any | None = None) -> dict[str, Any]:
+    """原子优先级证据：**先连续后处理、后原子硬切换**时，原子行必须逐位等于原子值。
 
-    `cont_before` / `cont_after` 是后处理前/后的连续头输出（都是标签尺度）。两边的硬切换
-    结果在"命中原子"的行上必须**完全一致**（因为命中即用原子值覆写，与连续值无关）；
-    若不一致，说明有人把顺序写反了（先切原子再后处理 → 把原子值又挪走了）。
+    审计修复（P2）：
+    - 传入 ``out_actual``（实际管线输出）时，断言：
+      1. 命中原子行（q > tau）的实际输出必须**逐位等于原子值**；
+      2. 未命中行的实际输出必须**逐位等于后处理后的连续值 cont_after**；
+      两者任一不满足 -> ok=False，能真正发现“先切原子再后处理”的顺序错误。
+    - 未传 ``out_actual`` 时保留旧的诊断路径（只比较 cont_before/cont_after 的硬切换），
+      但新调用方都应传 ``out_actual``。
     """
     _require_numpy()
     from ..inference.atomic_gate import per_target_hard_switch
@@ -393,8 +401,131 @@ def assert_atom_priority(cont_after: Any, cont_before: Any, q_atom: Any, tau
     taus = np.asarray(tau, dtype="float64").reshape(-1)
     if taus.size == 1:
         taus = np.repeat(taus, 3)
+    else:
+        taus = np.resize(taus, 3)
     hit = q > taus[None, :]
     changed = int(np.sum((np.asarray(after) != np.asarray(before)) & hit))
-    return {"n_atom_rows": int(hit.sum()), "n_changed_on_atom_rows": changed,
-            "ok": bool(changed == 0), "tau": [float(v) for v in taus],
-            "note": "正确顺序：连续后处理 → 再做原子硬切换；命中行必须逐位等于原子值"}
+    out = {"n_atom_rows": int(hit.sum()), "n_changed_on_atom_rows": changed,
+           "ok": bool(changed == 0), "tau": [float(v) for v in taus],
+           "note": "正确顺序：连续后处理 → 再做原子硬切换；命中行必须逐位等于原子值"}
+    if out_actual is not None:
+        actual = np.asarray(out_actual, dtype="float64")
+        if actual.shape != q.shape:
+            return {**out, "ok": False, "error": f"out_actual 形状 {actual.shape} != {q.shape}"}
+        atom_vals = np.asarray([C.ATOM_VALUES[t] for t in C.TARGETS], dtype="float64")
+        wrong_atom = int(np.sum((~np.isclose(actual, atom_vals[None, :], rtol=1e-9,
+                                              atol=1e-9)) & hit))
+        wrong_cont = int(np.sum((~np.isclose(actual, np.asarray(cont_after, dtype="float64"),
+                                              rtol=1e-9, atol=1e-9)) & (~hit)))
+        out.update({"n_wrong_on_atom_rows": wrong_atom, "n_wrong_on_cont_rows": wrong_cont,
+                    "ok": bool(changed == 0 and wrong_atom == 0 and wrong_cont == 0),
+                    "note": ("实际输出 on atom rows 必须等于原子值，on continuous rows 必须"
+                             "等于 cont_after；否则顺序写反或后处理污染了原子行。")})
+    return out
+
+
+def sw_scale_receipt(clip: tuple[float, float] = (0.0, 100.0)) -> dict[str, Any]:
+    """SW 尺度收据（与 E5/P2 同一条纪律）。"""
+    return {"global_clip_0_1": False, "multiply_100": False,
+            "soft_clip_0_100": bool(tuple(map(float, clip)) == (0.0, 100.0)),
+            "interpolation": False,
+            "ok": bool(tuple(map(float, clip)) == (0.0, 100.0))}
+
+
+# ---------------------------------------------------------------- 得分 / 分箱动作
+def official_acc_columns(y: Any, pred: Any, mask: Any, targets: Sequence[str] = C.TARGETS
+                         ) -> dict[str, float]:
+    """逐目标官方命中率（缺测行排除；PERM 用截断口径）。"""
+    _require_numpy()
+    from ..score import acc_perm, acc_relative
+    yy = np.asarray(y, dtype="float64")
+    pp = np.asarray(pred, dtype="float64")
+    mm = np.asarray(mask, dtype=bool)
+    out: dict[str, float] = {}
+    for i, t in enumerate(targets):
+        keep = mm[:, i]
+        if not keep.any():
+            out[t] = float("nan")
+        elif t == "PERM":
+            out[t] = float(acc_perm(yy[keep, i], pp[keep, i]))
+        else:
+            out[t] = float(acc_relative(yy[keep, i], pp[keep, i], float(DELTA[t])))
+    return out
+
+
+def expected_value_table(y: Any, cont: Any, q_atom: Any, mask: Any, target_index: int,
+                         n_bins: int = 10) -> dict[str, Any]:
+    """按 `q_atom` 分箱比较"切原子 vs 保连续"的官方得分 → 逐箱动作表（期望值解码）。"""
+    _require_numpy()
+    t = C.TARGETS[int(target_index)]
+    yy = np.asarray(y, dtype="float64")[:, int(target_index)]
+    cc = np.asarray(cont, dtype="float64")[:, int(target_index)]
+    qq = np.asarray(q_atom, dtype="float64")[:, int(target_index)]
+    mm = np.asarray(mask, dtype=bool)[:, int(target_index)]
+    atom = float(C.ATOM_VALUES[t])
+    atom_pred = np.full_like(cc, atom)
+    edges = np.linspace(0.0, 1.0, int(n_bins) + 1)
+    rows: list[dict[str, Any]] = []
+    for b in range(int(n_bins)):
+        lo, hi = float(edges[b]), float(edges[b + 1])
+        sel = mm & (qq >= lo) & (qq < hi if b < int(n_bins) - 1 else qq <= hi)
+        if not sel.any():
+            rows.append({"bin": b, "lo": lo, "hi": hi, "n_rows": 0, "action": "continuous",
+                         "score_atom": None, "score_cont": None, "gain_atom": None})
+            continue
+        s_atom = official_acc_columns(y[sel][:, [int(target_index)]],
+                                      atom_pred[sel][:, None], mm[sel][:, None],
+                                      (t,))[t]
+        s_cont = official_acc_columns(y[sel][:, [int(target_index)]],
+                                      cc[sel][:, None], mm[sel][:, None], (t,))[t]
+        action = "atom" if (s_atom is not None and s_cont is not None and s_atom > s_cont) \
+            else "continuous"
+        rows.append({"bin": b, "lo": lo, "hi": hi, "n_rows": int(sel.sum()),
+                     "action": action, "score_atom": float(s_atom),
+                     "score_cont": float(s_cont), "gain_atom": float(s_atom - s_cont)})
+    # 单调化：可部署的 τ 规则要求原子动作是**高 q 侧的后缀**，且不能从 0 号箱开始
+    # （否则 tau=0.0，sigmoid 输出 q>0 恒真，会把整个目标强制写成原子值）。
+    atoms = [r["bin"] for r in rows if r["action"] == "atom"]
+    n_b = len(rows)
+    suffix_ok = bool(atoms) and atoms == list(range(atoms[0], n_b)) and atoms[0] > 0
+    monotone = bool(not atoms or suffix_ok)
+    tau = None
+    if suffix_ok:
+        tau = float(rows[atoms[0]]["lo"])
+    return {"target": t, "n_bins": int(n_bins), "bins": rows, "monotone": monotone,
+            "suffix_start": (int(atoms[0]) if atoms else None),
+            "tau_from_table": tau,
+            "note": ("动作表必须单调（高置信才切原子）且原子箱是高 q 侧后缀、起点 >0，"
+                     "才能压成一个 τ；否则只作报告，部署仍用 τ 网格搜索/期望动作表。")}
+
+
+def sensitivity_report(y: Any, pred: Any, mask: Any, target_index: int,
+                       grid: tuple[float, float, int] | None = None,
+                       tol: float = DEFAULT_SENSITIVITY_TOL) -> dict[str, Any]:
+    """一维敏感性：扫描该目标的整体偏移，找"分数变化 ≤ tol"的**平坦区中点**。"""
+    _require_numpy()
+    t = C.TARGETS[int(target_index)]
+    lo, hi, n = grid or DEFAULT_BIAS_GRID[t]
+    vals = np.linspace(float(lo), float(hi), int(n))
+    base = official_acc_columns(y, pred, mask)[t]
+    rows = []
+    for b in vals:
+        shifted = pred.copy()
+        shifted[:, int(target_index)] = shifted[:, int(target_index)] + float(b)
+        shifted = sw_only_soft_clip(shifted)
+        rows.append({"bias": float(b), "acc": official_acc_columns(y, shifted, mask)[t]})
+    ok = [r for r in rows if abs(r["acc"] - base) <= float(tol)]
+    mid = (float(np.mean([r["bias"] for r in ok])) if ok else 0.0)
+    best = max(rows, key=lambda r: r["acc"])
+    return {"target": t, "base_acc": float(base), "tol": float(tol), "curve": rows,
+            "flat_region": ([min(r["bias"] for r in ok), max(r["bias"] for r in ok)]
+                            if ok else None),
+            "flat_midpoint": float(mid), "flat_hit": bool(ok),
+            "argmax_bias": float(best["bias"]), "argmax_acc": float(best["acc"]),
+            "argmax_gain": float(best["acc"] - base),
+            "recommended": (float(mid) if ok and (abs(best["bias"])
+                                                  <= max(abs(min(r["bias"] for r in ok)),
+                                                         abs(max(r["bias"] for r in ok)))
+                                                  + 1e-12) else float(best["bias"])),
+            "note": ("推荐值 = 平坦区中点（若最优值落在平坦区内），否则用最优格点；"
+                     "整段都平坦说明该目标的偏移对分数无影响，宁可不调")}

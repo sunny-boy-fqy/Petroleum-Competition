@@ -54,6 +54,13 @@ class TestPayloadBasics(unittest.TestCase):
         d = _good(); d["resultData"][0]["predictions"][0]["SW"] = float("nan")
         self.assertFalse(CT.validate_payload(d, expected_rows=2, expected_wells=1).ok)
 
+    def test_sw_guard_not_bypassed_by_partial_row_scales(self):
+        d = _good()
+        d["resultData"][0]["predictions"][0]["SW"] = 12345.0
+        r = CT.validate_payload(d, expected_rows=2, expected_wells=1,
+                                row_scales={"POR": (0.0, 60.0)})
+        self.assertFalse(r.ok, r.errors)
+
     def test_rowcount_mismatch(self):
         self.assertFalse(CT.validate_payload(_good(2), expected_rows=3,
                                              expected_wells=1).ok)

@@ -367,6 +367,19 @@ class TestMetricsDecoding(unittest.TestCase):
         self.assertAlmostEqual(rep["hit_rate"]["POR"], 1.0)
         self.assertAlmostEqual(M.placeholder_min_acc({"atomic_rows": rep}), 1.0)
 
+    def test_placeholder_acc_is_official_soft_acc_not_tolerance_hit(self):
+        # POR: y=0.1, pred=0.105 -> 官方 Acc ≈ 0.375，绝不能算 1.0
+        y_true = np.array([[0.1, 0.01, 99.9]])
+        y_pred = np.array([[0.105, 0.1, 99.9]])
+        y_atom = np.ones((1, 3))
+        mask = np.ones((1, 3), dtype=bool)
+        rep = M.atomic_rows_report(y_true, y_pred, y_atom, mask)
+        self.assertLess(rep["hit_rate"]["POR"], 0.5)
+        self.assertAlmostEqual(rep["tolerance_hit_rate"]["POR"], 1.0, places=6)
+        self.assertAlmostEqual(rep["hit_rate"]["PERM"], 0.0, places=6)
+        self.assertAlmostEqual(rep["tolerance_hit_rate"]["PERM"], 1.0, places=6)
+        self.assertLess(M.placeholder_min_acc({"atomic_rows": rep}), 0.5)
+
     def test_label_scale_stack_percent_scale(self):
         out = M.label_scale_stack(np.array([1.0]), np.array([0.0]), np.array([50.0]))
         np.testing.assert_allclose(out[0], [1.0, 1.0, 50.0])

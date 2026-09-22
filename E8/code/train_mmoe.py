@@ -97,6 +97,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--save-dir", default=None,
                     help="可选：把各臂权重保存到 <save-dir>/<arm>/fold{k}.pt，"
                          "供通用 CPU predictor 直接加载/注册")
+    ap.add_argument("--resume", action="store_true",
+                    help="若 <save-dir>/<arm>/fold{k}.pt 已存在则加载并跳过该折训练")
     return ap
 
 
@@ -236,10 +238,22 @@ def train_arm(args, cache, folds, spec, scalers, device, arm: str) -> dict:
     model = make_arm(arm, n_features, args).to(device)
     n_params = int(sum(p.numel() for p in model.parameters()))
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    # P2 审计修复：支持 fold 级 resume（加载已有权重并跳过该折训练）
+    ck_dir = (Path(args.save_dir) / arm) if getattr(args, "save_dir", None) else None
+    ckpt_path = (ck_dir / f"fold{k}.pt") if ck_dir is not None else None
+    resumed = False
+    if bool(getattr(args, "resume", False)) and ckpt_path is not None and ckpt_path.is_file():
+        try:
+            CK.load_checkpoint(ckpt_path, model=model)
+            resumed = True
+            print(f"[E8/{arm}] resume fold{k} from {ckpt_path}", flush=True)
+        except Exception as exc:
+            print(f"[E8/{arm}] resume failed ({type(exc).__name__}: {exc}); "
+                  "refit from scratch", flush=True)
     n = int(tr_t.n_rows)
     losses: list[float] = []
     conflict = None
-    for ep in range(int(args.epochs)):
+    for ep in range(0 if resumed else int(args.epochs)):
         model.train()
         perm = torch.randperm(n, device=tr_t.X.device)
         tot, nb = 0.0, 0
@@ -305,7 +319,6 @@ def train_arm(args, cache, folds, spec, scalers, device, arm: str) -> dict:
             gate_rep = model.gate_report(tr_t.X[:2048])
         except Exception as exc:                       # 不静默
             gate_rep = {"error": f"{type(exc).__name__}: {exc}"}
-    ckpt_path = None
     if getattr(args, "save_dir", None):
         model_kw = {"arch": "MMoE" if arm != "independent" else "IndependentHeads",
                     "n_features": int(tr_t.X.shape[1])}
@@ -318,7 +331,6 @@ def train_arm(args, cache, folds, spec, scalers, device, arm: str) -> dict:
             })
         else:
             model_kw.update({"hidden": int(getattr(model, "hidden", 0))})
-        ck_dir = Path(args.save_dir) / arm
         ck_dir.mkdir(parents=True, exist_ok=True)
         ckpt_path = ck_dir / f"fold{k}.pt"
         CK.save_checkpoint(ckpt_path, model, meta={

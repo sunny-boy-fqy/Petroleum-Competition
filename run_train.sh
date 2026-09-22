@@ -559,8 +559,12 @@ PY
         # 子阶段路由：`--phase p0|p1|all`（p0=原子两阶段训练；p1=τ 搜索；all=两者依次）
         e6_phase="p0"
         e6_args=()
+        e6_resume=()
         e6_expect=""
         for a in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
+          if [[ "${a,,}" == "--resume" ]]; then
+            e6_resume=(--resume); continue
+          fi
           if [[ "$e6_expect" == "phase" ]]; then
             case "${a,,}" in
               p0|p1|p2|all) e6_phase="${a,,}" ;;
@@ -577,7 +581,8 @@ PY
           log "--- [E6] P0 原子状态头两阶段训练"
           python3 "$HERE/E6/code/train_state.py" \
             --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
-            --run-root "$RUN_ROOT" "${e6_args[@]+"${e6_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
+            --run-root "$RUN_ROOT" "${e6_resume[@]+"${e6_resume[@]}"}" \
+            "${e6_args[@]+"${e6_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
         fi
         if [[ "$e6_phase" == "p1" || "$e6_phase" == "all" ]]; then
           log "--- [E6] P1 τ 搜索（内折 OOF）"
@@ -635,8 +640,11 @@ PY
         fi ;;
     E8)
         # `--target mmoe|well|transductive|ensemble|all`
-        e8_target="mmoe"; e8_args=(); e8_expect=""
+        e8_target="mmoe"; e8_args=(); e8_resume=(); e8_expect=""
         for a in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
+          if [[ "${a,,}" == "--resume" ]]; then
+            e8_resume=(--resume); continue
+          fi
           if [[ "$e8_expect" == "target" ]]; then
             case "${a,,}" in
               mmoe|well|transductive|ensemble|all) e8_target="${a,,}" ;;
@@ -654,7 +662,8 @@ PY
           # pseudo_label / ensemble 只读 OOF，不直接读 cache；传 --cache-root 会触发 argparse 错误。
           case "$name" in
             train_mmoe) extra+=(--cache-root "$CACHE_ROOT"
-                                --save-dir "$RUN_ROOT/E8/weights") ;;
+                                --save-dir "$RUN_ROOT/E8/weights"
+                                "${e8_resume[@]+"${e8_resume[@]}"}") ;;
             well_branch) extra+=(--cache-root "$CACHE_ROOT") ;;
           esac
           log "--- [E8] $name"
@@ -779,9 +788,9 @@ run_all_task() {
     8) STAGE="E4"; EXTRA_ARGS=(--channel-independence-ablation --rel-pos-ablation \
                                --capacity-ablation "${r[@]+"${r[@]}"}"); run_stage ;;
     9) STAGE="E5"; EXTRA_ARGS=(--target all); run_stage ;;
-    10) STAGE="E6"; EXTRA_ARGS=(--phase all); run_stage ;;
+    10) STAGE="E6"; EXTRA_ARGS=(--phase all "${r[@]+"${r[@]}"}"); run_stage ;;
     11) STAGE="E7"; EXTRA_ARGS=(); run_stage ;;
-    12) STAGE="E8"; EXTRA_ARGS=(--target all); run_stage ;;
+    12) STAGE="E8"; EXTRA_ARGS=(--target all "${r[@]+"${r[@]}"}"); run_stage ;;
     13) STAGE="E9"; EXTRA_ARGS=(); run_stage ;;
     14) STAGE="E10"; EXTRA_ARGS=(); run_stage ;;
     *)  log "!! unknown all task: $n"; return 1 ;;

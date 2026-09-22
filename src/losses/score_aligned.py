@@ -173,13 +173,17 @@ def aligned_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,
     atom = None
     if boundary_kappa and y_atom is not None and include_atom_mask:
         atom = torch.as_tensor(y_atom, dtype=s_por.dtype, device=s_por.device)
+        if atom.ndim not in (2, 3):
+            raise ValueError(f"boundary_kappa 需要 y_atom 为 (B,3) 或 (B,L,3)，"
+                             f"got {tuple(atom.shape)}")
 
     if boundary_kappa:
 
         def _focus(r, t: int):
             wf = boundary_focus_weight(r, boundary_kappa, boundary_sigma)
             if atom is not None:
-                non_atom = (atom[:, t] == 0).to(wf.dtype)
+                # E3 泛化：y_atom 允许 (B,3) 行模式或 (B,L,3) 序列模式。
+                non_atom = (atom[..., t] == 0).to(wf.dtype)
                 wf = 1.0 + (wf - 1.0) * non_atom
             return wf
 

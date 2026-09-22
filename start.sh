@@ -111,6 +111,7 @@ list_choices() {
 
 --wp 可用值:
   type-well       E8 类型井选择报告（KL/DTW）
+  type-well-adapt WP8 类型井 + 井间自适应一阶成员（E8/code/type_well_member.py）
   data-quality    WP9 数据质量报告（缺失/插补/异常/KS）
   petro           WP10 扩展岩石物理特征报告
   atom-row        WP2 行级原子分类器（E3/code/train_atom.py）
@@ -122,7 +123,7 @@ list_choices() {
   chained         WP11 链式目标成员（E8/code/tabular_member.py）
   self-training   WP5 模块级验证（训练入口待接线）
   ssl             WP7 模块级验证（训练入口待接线）
-  all            依次跑 data-quality/petro/type-well/atom-row/gbdt/chained/atom-decision/loss-full/stacking
+  all            依次跑 data-quality/petro/type-well/type-well-adapt/atom-row/gbdt/chained/atom-decision/loss-full/stacking
 EOF
 }
 
@@ -315,6 +316,14 @@ if [[ -n "$WP" ]]; then
         --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
         --topk 3 --method kl "${EXTRA[@]}"
       ;;
+    type-well-adapt)
+      run_all_through 3
+      run_cmd python3 "$HERE/E8/code/type_well_member.py" \
+        --kind gbdt --folds all --spec F1 --topk 10 \
+        --select-method kl --adapt-method quantile --adapt-alpha 1.0 \
+        --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
+        --run-root "$RUN_ROOT" "${EXTRA[@]}"
+      ;;
     data-quality)
       run_all_through 3
       run_cmd python3 "$HERE/E2/code/report_data_quality.py" \
@@ -375,6 +384,10 @@ if [[ -n "$WP" ]]; then
         --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" --run-root "$RUN_ROOT"
       run_cmd python3 "$HERE/E8/code/type_well_report.py" \
         --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" --topk 3 --method kl
+      run_cmd python3 "$HERE/E8/code/type_well_member.py" \
+        --kind gbdt --folds all --spec F1 --topk 10 --select-method kl \
+        --adapt-method quantile --cache-root "$CACHE_ROOT" \
+        --reports-dir "$REPORTS_DIR" --run-root "$RUN_ROOT" --tag gbdt
 
       run_all_through 5
       run_cmd python3 "$HERE/E3/code/train_atom.py" \

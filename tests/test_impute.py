@@ -33,6 +33,22 @@ class TestImpute(unittest.TestCase):
         self.assertFalse(np.isnan(res["X"]).any())
         self.assertIn("iterative", res["method"].lower())
 
+    def test_matrix_imputer_knn_transform_no_nan(self):
+        X = self._X()
+        imp = IM.MatrixImputer(method="knn", params={"k": 3}).fit(X[:120])
+        train = imp.fit_transform(X[:120])
+        val = imp.transform(X[120:])
+        self.assertFalse(np.isnan(train).any())
+        self.assertFalse(np.isnan(val).any())
+
+    def test_matrix_imputer_mice_transform_no_nan(self):
+        X = self._X()
+        imp = IM.MatrixImputer(method="mice", params={"max_iter": 3}).fit(X[:120])
+        train = imp.fit_transform(X[:120])
+        val = imp.transform(X[120:])
+        self.assertFalse(np.isnan(train).any())
+        self.assertFalse(np.isnan(val).any())
+
     def test_matrix_imputer_uses_train_fill(self):
         X = self._X()
         imp = IM.MatrixImputer(method="median").fit(X[:120])

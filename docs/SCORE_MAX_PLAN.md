@@ -338,3 +338,14 @@ start.sh --e1-rerun --to E2
 
 `start.sh` 自动补前置、复用 `run_train.sh` 的断点续跑与 `/data` mirror；
 全部可选值见 `start.sh --list`。
+
+## 16. 第二轮审查修复记要
+
+- **P0**：`placeholder_min_acc` 已改为官方软 Acc（`acc_relative` / `acc_perm` 逐行均值）；
+  `SCORE_MAX_PLAN` 里记录的 `0.9723` 是旧“容差带命中率”口径，**必须重跑 E1 复算**。
+- **P1**：`expected_value_table` 只接受高 q 后缀且起点 >0；`decode_search` 为 expected_value
+  增加 paired CI/gain 门槛，杜绝 τ=0 导致整列强制原子值。
+- **P1**：`MatrixImputer` 的 KNN/MICE transform 现在使用 fit 阶段保存的模型，不再静默返回 NaN。
+- **P2**：`assert_atom_priority` 现在检查实际管线输出；E6/E8 支持 `--resume`。
+- **WP8**：新增 `E8/code/type_well_member.py`，完成“类型井选择 + 井间输入适配”的一阶成员。
+- 详细清单见 [`AUDIT_FIXES.md`](AUDIT_FIXES.md)。

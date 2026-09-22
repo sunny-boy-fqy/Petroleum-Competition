@@ -57,6 +57,12 @@ class TestStartSh(unittest.TestCase):
         self.assertIn("run_train.sh --mode all --through 5", p.stdout)
         self.assertIn("tabular_member.py --kind gbdt", p.stdout)
 
+    def test_wp_type_well_adapt(self):
+        p = run_start("--wp", "type-well-adapt")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("run_train.sh --mode all --through 3", p.stdout)
+        self.assertIn("type_well_member.py", p.stdout)
+
     def test_wp_data_quality_and_petro(self):
         for wp, script in (("data-quality", "report_data_quality.py"),
                            ("petro", "report_petro.py")):

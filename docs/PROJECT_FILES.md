@@ -331,8 +331,8 @@ $V4_LOCAL_ROOT/v4/{cache,runs,reports,logs,tb,state}/
 | 项 | 数量 |
 |---|---:|
 | git 跟踪文件 | 见 `git ls-files \| wc -l` |
-| 计划文件（`PLAN.md`） | 1（总，918 行）+ 12（阶段，791 行）+ 33（P，5,255 行）= **46 份 / 6,964 行** |
-| P 级计划平均篇幅 | **159 行**（合计 5,255；由 `tools/plan_stats.py` 统计） |
+| 计划文件（`PLAN.md`） | 1（总，918 行）+ 12（阶段，791 行）+ 33（P，5,259 行）= **46 份 / 6,968 行** |
+| P 级计划平均篇幅 | **159 行**（合计 5,259；由 `tools/plan_stats.py` 统计） |
 | 代码模块（`v4/src/**/*.py`） | 见 `find v4/src -name '*.py' \| wc -l` |
 | E 层脚本（`v4/E*/code/*.py`） | 见 `find v4/E* -name '*.py' \| wc -l` |
 
@@ -386,3 +386,16 @@ GBDT/Stacking 与后处理规则思想。**未复制其数据、标签或代码�
 | `E2/code/report_petro.py` | WP10 扩展岩石物理特征报告 + 样例矩阵 |
 | `E8/code/tabular_member.py` | WP11 GBDT / Chained 一阶成员 OOF |
 
+### 四之四、第二轮审查修复与 WP8 完成
+
+| 文件 | 修复/新增 |
+|---|---|
+| `src/training/metrics.py` | `_hit_rate` 改为官方软 Acc；旧容差命中率拆为 `tolerance_hit_rate`；P/R 用 `>` |
+| `src/inference/decode.py` | `expected_value_table` 只接受高 q 后缀且起点 >0；`assert_atom_priority` 支持 `out_actual` |
+| `E7/code/decode_search.py` | expected_value 增加 paired CI/gain 门槛，输出 `expected_value_gate` |
+| `src/data/impute.py` | `MatrixImputer` KNN/MICE 真正保存模型，transform 不再返回原始 NaN |
+| `E8/code/train_mmoe.py` | 新增 `--resume`，支持按折加载权重跳过已训练折 |
+| `run_train.sh` | E6/E8 的 `--resume` 分离透传，不再污染其他子脚本 |
+| `src/losses/score_aligned.py` | boundary_focus 兼容 `(B,L,3)` 序列模式 |
+| `E8/code/type_well_member.py` | **WP8 完成**：类型井选择 + 井间输入适配的一阶成员 |
+| `docs/AUDIT_FIXES.md` | 本轮全部审计项与修复映射 |

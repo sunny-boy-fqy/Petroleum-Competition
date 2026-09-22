@@ -1,487 +1,487 @@
 {
- "schema_version": 1,
- "created_at": "2026-09-19T20:40:00+00:00",
- "note": "v4 执行状态台账（唯一事实源）。status ∈ pending / in_progress / done / no_go / blocked。任何状态变更必须同时更新 evidence 字段。",
- "project": {
-  "version": "v4",
-  "phase": "E0",
-  "summary": "E0 本地契约 Gate 13/13 PASS（云端 Gate 待 P0 实机）；计划全部完成（46 份 / 6,964 行，由 tools/plan_stats.py 实测）；三审 R3-C1..C3/H1..H5/M1..M5、四审 R4-B1..B3/H1..H3/M1..M6、五审 R5-B1/H1/H2/M1/M2/L1..L3 与六审 R6-M1/M2/L1..L3 已修复并回归验证；改进 proposal 已落进 PLAN.md / E6 与 src/",
-  "last_updated": "2026-09-19T21:10:00+00:00",
-  "score_max_plan": "docs/SCORE_MAX_PLAN.md（WP0–WP11 冲分/数据适配优化执行计划）",
-  "spwla_review": "docs/SPWLA2021_REVIEW.md（SPWLA 2021 冠军/前五方案复盘与 v4 新 WP8–WP11）",
-  "start_sh": "start.sh（云端统一入口：--to/--stage/--through/--wp/--fresh/--e1-rerun/--dry-run/--list）"
- },
- "stages": [
-  {
-   "stage": "E0",
-   "title": "数据、评测与提交契约",
-   "status": "in_progress",
-   "p": [
+  "schema_version": 1,
+  "created_at": "2026-09-19T20:40:00+00:00",
+  "note": "v4 执行状态台账（唯一事实源）。status ∈ pending / in_progress / done / no_go / blocked。任何状态变更必须同时更新 evidence 字段。",
+  "project": {
+    "version": "v4",
+    "phase": "E0",
+    "summary": "E0 本地契约 Gate 13/13 PASS（云端 Gate 待 P0 实机）；计划全部完成（46 份 / 6,968 行，由 tools/plan_stats.py 实测）；三审 R3-C1..C3/H1..H5/M1..M5、四审 R4-B1..B3/H1..H3/M1..M6、五审 R5-B1/H1/H2/M1/M2/L1..L3 与六审 R6-M1/M2/L1..L3 已修复并回归验证；改进 proposal 已落进 PLAN.md / E6 与 src/",
+    "last_updated": "2026-09-19T21:10:00+00:00",
+    "score_max_plan": "docs/SCORE_MAX_PLAN.md（WP0–WP11 冲分/数据适配优化执行计划）",
+    "spwla_review": "docs/SPWLA2021_REVIEW.md（SPWLA 2021 冠军/前五方案复盘与 v4 新 WP8–WP11）",
+    "start_sh": "start.sh（云端统一入口：--to/--stage/--through/--wp/--fresh/--e1-rerun/--dry-run/--list）"
+  },
+  "stages": [
     {
-     "id": "P0",
-     "title": "环境与磁盘实测",
-     "status": "blocked",
-     "reason": "需要云端 A100 训练任务实机运行（本机无 GPU/torch）；不阻塞本机侧计划与代码工作",
-     "evidence": [
-      "E0/code/check_env.py",
-      "E0/code/setup_deps.sh"
-     ],
-     "blocked_by": "cloud_training_task"
+      "stage": "E0",
+      "title": "数据、评测与提交契约",
+      "status": "in_progress",
+      "p": [
+        {
+          "id": "P0",
+          "title": "环境与磁盘实测",
+          "status": "blocked",
+          "reason": "需要云端 A100 训练任务实机运行（本机无 GPU/torch）；不阻塞本机侧计划与代码工作",
+          "evidence": [
+            "E0/code/check_env.py",
+            "E0/code/setup_deps.sh"
+          ],
+          "blocked_by": "cloud_training_task"
+        },
+        {
+          "id": "P1",
+          "title": "数据卡、哨兵与标签三状态",
+          "status": "done",
+          "evidence": [
+            "reports/E0_data_card.json",
+            "E0/docs/data_card.md",
+            "versions/folds_sha256.json",
+            "reports/E0_folds.json",
+            "$V4_CACHE_ROOT/manifest.json",
+            "reports/E0_score_check.json",
+            "reports/E0_gate_prereg.json",
+            "reports/E0_gate_result.json",
+            "reports/E0_plan_stats.json"
+          ],
+          "findings": [
+            "3 口训练井 schema 非规范：17,426 行多列（含 CASE）+ 9,654 行缺 CASE",
+            "输入列泄漏曾使 inputs[:,13]==POR（80 井全中），已修复并加 input_no_label_leak 回归",
+            "分片缓存已纳入 E0 产出（32.39 MB，90 井输入列校验通过；cache_root 已改为可复现形式，不再是 /tmp 临时路径）",
+            "缓存证据持久化：本地证据 `cache_root` 记为可复现形式（repo 相对），云端为 `$V4_CACHE_ROOT`（= /data/v4/cache），manifest 见 `$V4_CACHE_ROOT/manifest.json`",
+            "R4-H1：`E0_gate_prereg.json` × `E0_local_contract_gate.json` 可用同一 `aggregate_gate` 复算通过（13/13 + `abs_diff`），结论落在 `reports/E0_gate_result.json`",
+            "R4-H2：`reports/E0_plan_stats.json` 由 `tools/sync_plan_stats.py` 与实测同源生成，并被 `plan_stats.py --check` / `check_status.py` 强制校验"
+          ]
+        },
+        {
+          "id": "P2",
+          "title": "评分器与分母口径冻结",
+          "status": "done",
+          "evidence": [
+            "src/score.py",
+            "reports/E0_score_check.json",
+            "reports/E0_data_card.json::constant_baseline"
+          ],
+          "findings": [
+            "drop 口径 70.490735 命中锚点；mask 口径 69.843218（低 0.65）",
+            "逐目标 acc: POR 0.6735824 / PERM 0.7072023 / SW 0.7294624",
+            "总分恒等式 100·Σw·acc 与 total 完全一致（0.00e+00 差）"
+          ]
+        },
+        {
+          "id": "P3",
+          "title": "提交契约、版本路由与干净目录冒烟",
+          "status": "done",
+          "evidence": [
+            "predict.py",
+            "src/inference/contract.py",
+            "src/versioning/registry.py",
+            "versions/registry.json",
+            "reports/E0_contract_tests.json",
+            "versions/candidates.json"
+          ],
+          "findings": [
+            "CONST 基线端到端 10 井/95,948 行/1.4 s CPU，契约全部负样例被拒绝（项数见 reports/E0_contract_tests.json）"
+          ]
+        }
+      ],
+      "gate": {
+        "local": {
+          "id": "E0_local_contract_gate",
+          "passed": true,
+          "mandatory_passed": 13,
+          "mandatory_total": 13,
+          "report": "reports/E0_local_contract_gate.json",
+          "prereg": "reports/E0_gate_prereg.json",
+          "prereg_recompute": "reports/E0_gate_result.json",
+          "note": "13 项 = 原 12 项 + `contract_ok`（`contract_selftest` 的显式别名，R4-H1：此前 prereg 有 13 项、report 只有 12 项，用 aggregate_gate 复算会 mandatory_failures=['contract_ok']）；由 tools/plan_stats.py 从报告实测，禁止手写。"
+        },
+        "cloud": {
+          "id": "E0_cloud_gate",
+          "passed": false,
+          "status": "blocked_pending_cloud_run",
+          "report": "reports/E0_cloud_gate.json",
+          "disk_budget_source": "E0_disk_budget.json::level（现已由 --data-root 指向 $V4_DATA_ROOT，即 /data 的 30 GB 配额，而不是 /）"
+        }
+      },
+      "note": "本地契约 Gate 已通过（reports/E0_local_contract_gate.json）；云端 Gate（env+disk）状态 blocked_pending_cloud_run，需在平台 A100 任务执行 run_train.sh --mode env。因此 E0 阶段整体仍为 in_progress。"
     },
     {
-     "id": "P1",
-     "title": "数据卡、哨兵与标签三状态",
-     "status": "done",
-     "evidence": [
-      "reports/E0_data_card.json",
-      "E0/docs/data_card.md",
-      "versions/folds_sha256.json",
-      "reports/E0_folds.json",
-      "$V4_CACHE_ROOT/manifest.json",
-      "reports/E0_score_check.json",
-      "reports/E0_gate_prereg.json",
-      "reports/E0_gate_result.json",
-      "reports/E0_plan_stats.json"
-     ],
-     "findings": [
-      "3 口训练井 schema 非规范：17,426 行多列（含 CASE）+ 9,654 行缺 CASE",
-      "输入列泄漏曾使 inputs[:,13]==POR（80 井全中），已修复并加 input_no_label_leak 回归",
-      "分片缓存已纳入 E0 产出（32.39 MB，90 井输入列校验通过；cache_root 已改为可复现形式，不再是 /tmp 临时路径）",
-      "缓存证据持久化：本地证据 `cache_root` 记为可复现形式（repo 相对），云端为 `$V4_CACHE_ROOT`（= /data/v4/cache），manifest 见 `$V4_CACHE_ROOT/manifest.json`",
-      "R4-H1：`E0_gate_prereg.json` × `E0_local_contract_gate.json` 可用同一 `aggregate_gate` 复算通过（13/13 + `abs_diff`），结论落在 `reports/E0_gate_result.json`",
-      "R4-H2：`reports/E0_plan_stats.json` 由 `tools/sync_plan_stats.py` 与实测同源生成，并被 `plan_stats.py --check` / `check_status.py` 强制校验"
-     ]
+      "stage": "E1",
+      "title": "纯 DL 行级基线",
+      "status": "in_progress",
+      "p": [
+        {
+          "id": "P0",
+          "title": "行级输入管线与分片缓存",
+          "status": "in_progress",
+          "evidence": [
+            "src/features/basic.py",
+            "src/data/dataset.py"
+          ]
+        },
+        {
+          "id": "P1",
+          "title": "行级 MLP + 对齐损失 + 5 折 OOF",
+          "status": "in_progress",
+          "evidence": [
+            "E1/code/train_row.py",
+            "src/models/row_mlp.py",
+            "src/losses/score_aligned.py"
+          ]
+        }
+      ],
+      "gate": {
+        "id": "E1_P1_gate",
+        "passed": null,
+        "threshold": {
+          "oof_total_min": 78.0
+        },
+        "report": null
+      },
+      "note": "E1 代码已实现并本机验证：src/data/row_dataset.py（折内 fit + F1 分片缓存）、src/training/{loop,metrics,checkpoint}.py、src/inference/predictor.py、E1/code/train_row.py（两阶段：inner-OOF 选 best_epoch 与 τ）；本机 CPU smoke（8 井/2 epoch）六项 mandatory checks 全绿；**80 井 5 折 OOF 与硬 Gate（≥78.0）待 Ascend 910B 云端任务**。"
     },
     {
-     "id": "P2",
-     "title": "评分器与分母口径冻结",
-     "status": "done",
-     "evidence": [
-      "src/score.py",
-      "reports/E0_score_check.json",
-      "reports/E0_data_card.json::constant_baseline"
-     ],
-     "findings": [
-      "drop 口径 70.490735 命中锚点；mask 口径 69.843218（低 0.65）",
-      "逐目标 acc: POR 0.6735824 / PERM 0.7072023 / SW 0.7294624",
-      "总分恒等式 100·Σw·acc 与 total 完全一致（0.00e+00 差）"
-     ]
+      "stage": "E2",
+      "title": "特征工程与数据管线",
+      "status": "in_progress",
+      "p": [
+        {
+          "id": "P0",
+          "status": "in_progress"
+        },
+        {
+          "id": "P1",
+          "status": "in_progress"
+        },
+        {
+          "id": "P2",
+          "status": "in_progress"
+        }
+      ],
+      "note": "E2 代码已实现并本机验证：src/features/{physics,window,well,groups}.py、src/data/augment.py、E2/code/{build_features,ablate_groups}.py；80 井 F2（368 列）缓存 0.503 GB / 峰值常驻 1.31 GiB（均达标）；1 折 8 井 exploratory 消融链路可跑（F_phys +0.42 / F_win +1.13 采纳、F_well −2.00 NO-GO，**样本太小不作结论**）；正式消融待云端全折"
     },
     {
-     "id": "P3",
-     "title": "提交契约、版本路由与干净目录冒烟",
-     "status": "done",
-     "evidence": [
-      "predict.py",
-      "src/inference/contract.py",
-      "src/versioning/registry.py",
-      "versions/registry.json",
-      "reports/E0_contract_tests.json",
-      "versions/candidates.json"
-     ],
-     "findings": [
-      "CONST 基线端到端 10 井/95,948 行/1.4 s CPU，契约全部负样例被拒绝（项数见 reports/E0_contract_tests.json）"
-     ]
+      "stage": "E3",
+      "title": "深度序列主干",
+      "status": "in_progress",
+      "p": [
+        {
+          "id": "P0",
+          "status": "in_progress"
+        },
+        {
+          "id": "P1",
+          "status": "in_progress"
+        },
+        {
+          "id": "P2",
+          "status": "in_progress"
+        }
+      ],
+      "gate": {
+        "id": "E3_P2_gate",
+        "threshold": {
+          "oof_total_min": 81.0
+        }
+      },
+      "note": "E3 代码全部落地：主干（heads/unet1d/tcn）、序列数据集与拼接（seq_dataset）、序列训练/推理循环（seq_loop）、三个入口脚本（train_seq / rf_ablation / compare_row_vs_seq）。本机 6 井 2 epoch exploratory 全链路跑通：6 项 mandatory checks 全绿、TCN 977k 参数、OOF 72.11、RSS 增长 0、边界差 0.28 已照实上报；**受控对照显示序列 −3.16（CI 全负）→ 未达显著，决策串拒绝宣称增益**（小样本不作结论）。正式 5 折与硬 Gate ≥81.0 待云端。"
+    },
+    {
+      "stage": "E4",
+      "title": "Patch Transformer 与多尺度",
+      "status": "in_progress",
+      "p": [
+        {
+          "id": "P0",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        },
+        {
+          "id": "P1",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        }
+      ],
+      "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
+    },
+    {
+      "stage": "E5",
+      "title": "逐目标精修",
+      "status": "in_progress",
+      "p": [
+        {
+          "id": "P0",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        },
+        {
+          "id": "P1",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        },
+        {
+          "id": "P2",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        }
+      ],
+      "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
+    },
+    {
+      "stage": "E6",
+      "title": "联合常量状态与原子门",
+      "status": "in_progress",
+      "p": [
+        {
+          "id": "P0",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        },
+        {
+          "id": "P1",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        },
+        {
+          "id": "P2",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        }
+      ],
+      "gate": {
+        "id": "E6_P2_gate",
+        "threshold": {
+          "oof_total_min": 82.0
+        }
+      },
+      "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
+    },
+    {
+      "stage": "E7",
+      "title": "评分对齐损失与解码",
+      "status": "in_progress",
+      "p": [
+        {
+          "id": "P0",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        },
+        {
+          "id": "P1",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        }
+      ],
+      "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
+    },
+    {
+      "stage": "E8",
+      "title": "多任务、井级分支与集成",
+      "status": "in_progress",
+      "p": [
+        {
+          "id": "P0",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        },
+        {
+          "id": "P1",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        },
+        {
+          "id": "P2",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        }
+      ],
+      "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
+    },
+    {
+      "stage": "E9",
+      "title": "诚实验证与提交护栏",
+      "status": "in_progress",
+      "p": [
+        {
+          "id": "P0",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        },
+        {
+          "id": "P1",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        },
+        {
+          "id": "P2",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        }
+      ],
+      "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
+    },
+    {
+      "stage": "E10",
+      "title": "全量重训、打包与提交",
+      "status": "in_progress",
+      "p": [
+        {
+          "id": "P0",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        },
+        {
+          "id": "P1",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        },
+        {
+          "id": "P2",
+          "status": "in_progress",
+          "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
+        }
+      ],
+      "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
+    },
+    {
+      "stage": "E11",
+      "title": "归档与复盘",
+      "status": "pending",
+      "p": [
+        {
+          "id": "P0",
+          "status": "pending"
+        },
+        {
+          "id": "P1",
+          "status": "pending"
+        }
+      ]
     }
-   ],
-   "gate": {
+  ],
+  "anchors": {
+    "constant_baseline_drop": 70.490735,
+    "constant_baseline_mask": 69.843218,
+    "b0_local_oof": 80.382479,
+    "b0_a_board": 82.2757,
+    "v2_best_dev64_oof": 80.305222,
+    "v2_best_a_board": 82.3035,
+    "guardrail_floor": 81.7757,
+    "reference_oof": 80.382479,
+    "protocol_matched": false
+  },
+  "environment": {
     "local": {
-     "id": "E0_local_contract_gate",
-     "passed": true,
-     "mandatory_passed": 13,
-     "mandatory_total": 13,
-     "report": "reports/E0_local_contract_gate.json",
-     "prereg": "reports/E0_gate_prereg.json",
-     "prereg_recompute": "reports/E0_gate_result.json",
-     "note": "13 项 = 原 12 项 + `contract_ok`（`contract_selftest` 的显式别名，R4-H1：此前 prereg 有 13 项、report 只有 12 项，用 aggregate_gate 复算会 mandatory_failures=['contract_ok']）；由 tools/plan_stats.py 从报告实测，禁止手写。"
+      "python": "3.12 (system) / 3.12 (v2 venv)",
+      "numpy": "1.26.4",
+      "torch": null,
+      "gpu": null,
+      "note": "口径层可跑；训练不可"
     },
     "cloud": {
-     "id": "E0_cloud_gate",
-     "passed": false,
-     "status": "blocked_pending_cloud_run",
-     "report": "reports/E0_cloud_gate.json",
-     "disk_budget_source": "E0_disk_budget.json::level（现已由 --data-root 指向 $V4_DATA_ROOT，即 /data 的 30 GB 配额，而不是 /）"
+      "python": "3.11",
+      "torch": "2.8.0",
+      "torch_npu": "2.8.0",
+      "cann": "8.3rc2",
+      "arch": "aarch64",
+      "torch_npu_semantics": "hard = torch/torch_npu 的 major.minor 一致（缺 torch_npu 则 torch.npu 不可用）；warn = 是否等于声明值 2.8.0",
+      "cann_semantics": "hard = 可探测且 major.minor == (8,3)；warn = 归一化后是否等于声明值 8.3rc2（8.3.RC2/8.3.rc2 等价）；禁止把 rc 钉成 hard 断言",
+      "accelerator": "Ascend 910B x1",
+      "device_memory_gb": 64,
+      "ram_gb": 16,
+      "cloud_disk_gb": 30,
+      "resource_spec": "Ascend910B-1-64G",
+      "verified": false,
+      "pip_install_list": [
+        "numpy",
+        "pandas",
+        "scipy",
+        "scikit-learn",
+        "einops"
+      ],
+      "pip_install_optional": [
+        "tensorboard"
+      ],
+      "note": "待 E0/P0 在云端 Ascend 任务实机确认；依赖由用户 pip 安装（agent 无法自动安装），清单与 check_env.REQUIRED_PY_DEPS 同源；**64 GiB 是显存、30 GB 才是云盘配额、16 GB 是内存**，三者不得混淆"
     }
-   },
-   "note": "本地契约 Gate 已通过（reports/E0_local_contract_gate.json）；云端 Gate（env+disk）状态 blocked_pending_cloud_run，需在平台 A100 任务执行 run_train.sh --mode env。因此 E0 阶段整体仍为 in_progress。"
   },
-  {
-   "stage": "E1",
-   "title": "纯 DL 行级基线",
-   "status": "in_progress",
-   "p": [
+  "pending_plan_artifacts": [
     {
-     "id": "P0",
-     "title": "行级输入管线与分片缓存",
-     "status": "in_progress",
-     "evidence": [
-      "src/features/basic.py",
-      "src/data/dataset.py"
-     ]
-    },
-    {
-     "id": "P1",
-     "title": "行级 MLP + 对齐损失 + 5 折 OOF",
-     "status": "in_progress",
-     "evidence": [
-      "E1/code/train_row.py",
-      "src/models/row_mlp.py",
-      "src/losses/score_aligned.py"
-     ]
+      "item": "reports/E1_P1_gate_prereg.json",
+      "reason": "E1 训练前必须预注册（代码已支持写入）",
+      "owner": "E1/P1"
     }
-   ],
-   "gate": {
-    "id": "E1_P1_gate",
-    "passed": null,
-    "threshold": {
-     "oof_total_min": 78.0
+  ],
+  "review": {
+    "report": "reports/V4_PLAN_REVIEW.md",
+    "resolved": {
+      "B1_input_leak": "fixed + regression (input_no_label_leak, 90 wells)",
+      "B2_sw_scale": "fixed (SW single label scale; SW_SMALL_BRANCH=False)",
+      "B3_schema_doc": "fixed (only c7611b01 lacks CASE)",
+      "B4_gate_split": "fixed (local vs cloud gate)",
+      "B5_registry_scores": "fixed + tools/check_consistency.py",
+      "B6_cache_step": "fixed (run_all --with-cache, 32.4 MB)",
+      "H1_inner_oof": "fixed (P plans section 12.5)",
+      "H2_prereg": "fixed (33 templates validated; src/validation/gates.py implemented)",
+      "H3_counts": "fixed (counts by script; status enum validated)",
+      "H4_check_env": "fixed (V4_DATA_ROOT + CUDA assert + 9 deps + non-zero exit)",
+      "H5_disk": "fixed (cleanup-then-hard-fail semantics + allow_soft)",
+      "M1-M10": "fixed (32-dim docs, POR init, score_check, folds path, registry, empty dirs removed, ghost files listed, pip requirements, dead code)"
     },
-    "report": null
-   },
-   "note": "E1 代码已实现并本机验证：src/data/row_dataset.py（折内 fit + F1 分片缓存）、src/training/{loop,metrics,checkpoint}.py、src/inference/predictor.py、E1/code/train_row.py（两阶段：inner-OOF 选 best_epoch 与 τ）；本机 CPU smoke（8 井/2 epoch）六项 mandatory checks 全绿；**80 井 5 折 OOF 与硬 Gate（≥78.0）待 Ascend 910B 云端任务**。"
-  },
-  {
-   "stage": "E2",
-   "title": "特征工程与数据管线",
-   "status": "in_progress",
-   "p": [
-    {
-     "id": "P0",
-     "status": "in_progress"
+    "review_r3": {
+      "report": "reports/V4_PLAN_REVIEW_3.md",
+      "resolved": {
+        "C1_sw_scale_residue": "fixed（全仓统一单一标签尺度；SW<1=0；生成器已改，E0/docs/data_card.md 由脚本生成）",
+        "C2_plan_line_sync": "fixed（plan_stats 改为逐条带上下文断言；sync 复用同一份正则；check_status 校验阶段/P 分项）",
+        "C3_gate_count_and_cache_root": "fixed（项数由报告实测；cache_root 改可复现形式；status 补 $V4_CACHE_ROOT/manifest.json）；R4-H1 后统一为 13/13 且 prereg 可复算",
+        "H1_gate_direction_and_field_mapping": "fixed（min_*/max_* 分组 + 指标字段映射 + E9_P2/E10 单测）",
+        "H2_disk_budget_data_root": "fixed（disk_guard --data-root/--path，E0_disk_budget.json 含 paths/worst_level/primary_path）",
+        "H3_proposal_not_landed": "fixed（proposal 已落进 PLAN.md / E6 / src/）",
+        "H4_status_phase_semantics": "fixed（project.phase=E0；E1=pending；check_status 增加语义检查）",
+        "H5_e0_evidence_copyback": "fixed（run_e0 回拷全部 reports/E0_*.json）",
+        "M1_check_env_folds_fallback": "fixed（v1_well_folds.json）",
+        "M2_optional_deps_degradable": "fixed（onnx/onnxruntime -> warn + degraded_paths）",
+        "M3_test_coverage": "fixed（tests/test_plan_stats.py、test_platform_scripts.py、test_gates.py 扩充、test_atomic_gate.py）",
+        "M4_check_status_weak": "fixed（增加行数分项/Gate 项数/阶段语义/缓存证据检查）",
+        "M5_e0_p1_cache_evidence": "fixed（evidence 补 $V4_CACHE_ROOT/manifest.json）"
+      }
     },
-    {
-     "id": "P1",
-     "status": "in_progress"
+    "proposal": {
+      "report": "reports/V4_PLAN_IMPROVEMENT_PROPOSAL.md",
+      "landed": [
+        "PLAN.md §5.1/§5.3/§6.4：q_joint + q_por/q_perm/q_sw 逐目标原子头 + 逐目标硬切换 τ_t",
+        "PLAN.md §5.2.1：U-Net padding 伪影 / TCN 非因果 / PatchTF overlap / 门控融合 / 平滑不跨原子边界 / 井级小容量",
+        "PLAN.md §5.4：masked_mean NaN / PERM log 截断 / L_aux 尺度归一化 / 边界聚焦 / λ_atom/λ_joint",
+        "PLAN.md §8.2/§10：逐目标原子 Acc/P/R/F1、τ_t、误判代价、EMA/SWA/快照 CI 判据与风险",
+        "E1/E5/E6/E7/E8/E3/E4 的 P 级计划（由 docs/gen_p_details.py 生成）",
+        "src/models/row_mlp.py、src/losses/score_aligned.py、src/features/basic.py、src/inference/atomic_gate.py"
+      ]
     },
-    {
-     "id": "P2",
-     "status": "in_progress"
+    "review_r5": {
+      "report": "reports/V4_PLAN_REVIEW_5.md",
+      "verdict": "五审不通过 -> 本轮返工（R5-B1/H1/H2/M1/M2/L1/L2/L3 全部修复）",
+      "resolved": {
+        "B1_run_train_data_tarball": "fixed（bootstrap_data.sh 支持 --tarball/$V4_DATA_TARBALL，并依次搜索 repo dist/、$DATA_ROOT、$DATA_ROOT/dist/；run_train.sh 把 --tarball/--manifest 当一等参数透传而不是塞进 EXTRA_ARGS；找不到时列出全部搜索位置并 exit 4）",
+        "H1_check_data_leak_false_green": "fixed（0 井不再 OK：覆盖性断言 train=80/test=10，空目录与错目录一律非零退出；新增 TestCheckDataLeakRequiresData 4 项回归）",
+        "H2_unconditional_row_check": "fixed（80/10 井与 730,268/95,948 行改为**无条件**硬校验，常量来自 src/constants.py；manifest 存在时再校验 tarball sha256 与精确计数）",
+        "M1_dependency_facts_single_source": "fixed（PLAN §3.3.1/§3.4.1、docs/image_requirements.md Dockerfile 统一为 required=numpy/pandas/scipy/sklearn/einops + 可选 tensorboard；新增 TestDependencyFactsAreSingleSourced 4 项，锁定 PLAN/docs/requirements/lock/setup_deps 五处一致）",
+        "M2_setup_deps_numpy": "fixed（lock 过滤规则只排除 torch，numpy 回到安装清单，与 required 集合一致）",
+        "L1_warn_ok_output": "fixed（image_requirements 期望输出改为 [OK]；说明 [WARN] 只在 warn 级**失败**时出现）",
+        "L2_constants_column_comment": "fixed（constants.py：14 个输入字段 = DEPTH + 13 条曲线）",
+        "L3_tar_path_comment": "fixed（bootstrap_data.sh：tar 内路径为 v4/data/...）"
+      }
+    },
+    "review_r6": {
+      "report": "reports/V4_PLAN_REVIEW_6.md",
+      "verdict": "五审返工通过（云端 env→data→e0 可开跑）；六审 2 中 + 3 低危已在本轮全部修复",
+      "resolved": {
+        "M1_onnx_wording": "fixed（PLAN.md §3.3.2/§9.2/§十 与 E10/P0 生成器统一为：ONNX 是 best-effort，需用户额外装 onnx（torch 2.7 dynamo 还需 onnxscript），未装时抛 OnnxExporterError 属预期，实际兜底是 .pt + .npz 清单；ONNX 不写进任何 Gate）",
+        "M2_single_source_of_counts": "fixed（E0/code/run_all.py 改用 C.EXPECTED_N_TRAIN_ROWS；E0/code/check_env.py 导入 src.constants 取 EXPECTED_N_TRAIN_WELLS/TEST_WELLS；新增 TestGateFilesUseContractConstants 3 项静态回归扫描两个 Gate 文件）",
+        "L1_explicit_manifest": "fixed（显式 --manifest/$V4_DATA_MANIFEST 不存在 -> exit 4；manifest 缺 tarball.sha256 -> exit 3，不再打印 'tarball sha256 OK'）",
+        "L2_verify_only_and_dest": "fixed（--verify-only 不再 mkdir/复制任何文件；--dest 显式时先解到临时目录再搬运，真正生效，并在收尾提示里注明 check_env 默认读 $V4_DATA_ROOT/v4/data）",
+        "L3_platform_setup_stale_path": "fixed（docs/platform_setup.md 的示例改为 /data/v4_data.tar.gz，并注明放别处必须 --tarball）"
+      }
     }
-   ],
-   "note": "E2 代码已实现并本机验证：src/features/{physics,window,well,groups}.py、src/data/augment.py、E2/code/{build_features,ablate_groups}.py；80 井 F2（368 列）缓存 0.503 GB / 峰值常驻 1.31 GiB（均达标）；1 折 8 井 exploratory 消融链路可跑（F_phys +0.42 / F_win +1.13 采纳、F_well −2.00 NO-GO，**样本太小不作结论**）；正式消融待云端全折"
   },
-  {
-   "stage": "E3",
-   "title": "深度序列主干",
-   "status": "in_progress",
-   "p": [
-    {
-     "id": "P0",
-     "status": "in_progress"
-    },
-    {
-     "id": "P1",
-     "status": "in_progress"
-    },
-    {
-     "id": "P2",
-     "status": "in_progress"
-    }
-   ],
-   "gate": {
-    "id": "E3_P2_gate",
-    "threshold": {
-     "oof_total_min": 81.0
-    }
-   },
-   "note": "E3 代码全部落地：主干（heads/unet1d/tcn）、序列数据集与拼接（seq_dataset）、序列训练/推理循环（seq_loop）、三个入口脚本（train_seq / rf_ablation / compare_row_vs_seq）。本机 6 井 2 epoch exploratory 全链路跑通：6 项 mandatory checks 全绿、TCN 977k 参数、OOF 72.11、RSS 增长 0、边界差 0.28 已照实上报；**受控对照显示序列 −3.16（CI 全负）→ 未达显著，决策串拒绝宣称增益**（小样本不作结论）。正式 5 折与硬 Gate ≥81.0 待云端。"
-  },
-  {
-   "stage": "E4",
-   "title": "Patch Transformer 与多尺度",
-   "status": "in_progress",
-   "p": [
-    {
-     "id": "P0",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    },
-    {
-     "id": "P1",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    }
-   ],
-   "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
-  },
-  {
-   "stage": "E5",
-   "title": "逐目标精修",
-   "status": "in_progress",
-   "p": [
-    {
-     "id": "P0",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    },
-    {
-     "id": "P1",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    },
-    {
-     "id": "P2",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    }
-   ],
-   "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
-  },
-  {
-   "stage": "E6",
-   "title": "联合常量状态与原子门",
-   "status": "in_progress",
-   "p": [
-    {
-     "id": "P0",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    },
-    {
-     "id": "P1",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    },
-    {
-     "id": "P2",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    }
-   ],
-   "gate": {
-    "id": "E6_P2_gate",
-    "threshold": {
-     "oof_total_min": 82.0
-    }
-   },
-   "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
-  },
-  {
-   "stage": "E7",
-   "title": "评分对齐损失与解码",
-   "status": "in_progress",
-   "p": [
-    {
-     "id": "P0",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    },
-    {
-     "id": "P1",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    }
-   ],
-   "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
-  },
-  {
-   "stage": "E8",
-   "title": "多任务、井级分支与集成",
-   "status": "in_progress",
-   "p": [
-    {
-     "id": "P0",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    },
-    {
-     "id": "P1",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    },
-    {
-     "id": "P2",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    }
-   ],
-   "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
-  },
-  {
-   "stage": "E9",
-   "title": "诚实验证与提交护栏",
-   "status": "in_progress",
-   "p": [
-    {
-     "id": "P0",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    },
-    {
-     "id": "P1",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    },
-    {
-     "id": "P2",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    }
-   ],
-   "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
-  },
-  {
-   "stage": "E10",
-   "title": "全量重训、打包与提交",
-   "status": "in_progress",
-   "p": [
-    {
-     "id": "P0",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    },
-    {
-     "id": "P1",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    },
-    {
-     "id": "P2",
-     "status": "in_progress",
-     "note": "代码已实现，本地链路/契约测试通过；云端正式证据待跑。"
-    }
-   ],
-   "note": "代码已实现（脚本/公共件/测试齐全），本地链路与契约测试通过；正式数值 Gate/集成/打包结果待云端运行。"
-  },
-  {
-   "stage": "E11",
-   "title": "归档与复盘",
-   "status": "pending",
-   "p": [
-    {
-     "id": "P0",
-     "status": "pending"
-    },
-    {
-     "id": "P1",
-     "status": "pending"
-    }
-   ]
-  }
- ],
- "anchors": {
-  "constant_baseline_drop": 70.490735,
-  "constant_baseline_mask": 69.843218,
-  "b0_local_oof": 80.382479,
-  "b0_a_board": 82.2757,
-  "v2_best_dev64_oof": 80.305222,
-  "v2_best_a_board": 82.3035,
-  "guardrail_floor": 81.7757,
-  "reference_oof": 80.382479,
-  "protocol_matched": false
- },
- "environment": {
-  "local": {
-   "python": "3.12 (system) / 3.12 (v2 venv)",
-   "numpy": "1.26.4",
-   "torch": null,
-   "gpu": null,
-   "note": "口径层可跑；训练不可"
-  },
-  "cloud": {
-   "python": "3.11",
-   "torch": "2.8.0",
-   "torch_npu": "2.8.0",
-   "cann": "8.3rc2",
-   "arch": "aarch64",
-   "torch_npu_semantics": "hard = torch/torch_npu 的 major.minor 一致（缺 torch_npu 则 torch.npu 不可用）；warn = 是否等于声明值 2.8.0",
-   "cann_semantics": "hard = 可探测且 major.minor == (8,3)；warn = 归一化后是否等于声明值 8.3rc2（8.3.RC2/8.3.rc2 等价）；禁止把 rc 钉成 hard 断言",
-   "accelerator": "Ascend 910B x1",
-   "device_memory_gb": 64,
-   "ram_gb": 16,
-   "cloud_disk_gb": 30,
-   "resource_spec": "Ascend910B-1-64G",
-   "verified": false,
-   "pip_install_list": [
-    "numpy",
-    "pandas",
-    "scipy",
-    "scikit-learn",
-    "einops"
-   ],
-   "pip_install_optional": [
-    "tensorboard"
-   ],
-   "note": "待 E0/P0 在云端 Ascend 任务实机确认；依赖由用户 pip 安装（agent 无法自动安装），清单与 check_env.REQUIRED_PY_DEPS 同源；**64 GiB 是显存、30 GB 才是云盘配额、16 GB 是内存**，三者不得混淆"
-  }
- },
- "pending_plan_artifacts": [
-  {
-   "item": "reports/E1_P1_gate_prereg.json",
-   "reason": "E1 训练前必须预注册（代码已支持写入）",
-   "owner": "E1/P1"
-  }
- ],
- "review": {
-  "report": "reports/V4_PLAN_REVIEW.md",
-  "resolved": {
-   "B1_input_leak": "fixed + regression (input_no_label_leak, 90 wells)",
-   "B2_sw_scale": "fixed (SW single label scale; SW_SMALL_BRANCH=False)",
-   "B3_schema_doc": "fixed (only c7611b01 lacks CASE)",
-   "B4_gate_split": "fixed (local vs cloud gate)",
-   "B5_registry_scores": "fixed + tools/check_consistency.py",
-   "B6_cache_step": "fixed (run_all --with-cache, 32.4 MB)",
-   "H1_inner_oof": "fixed (P plans section 12.5)",
-   "H2_prereg": "fixed (33 templates validated; src/validation/gates.py implemented)",
-   "H3_counts": "fixed (counts by script; status enum validated)",
-   "H4_check_env": "fixed (V4_DATA_ROOT + CUDA assert + 9 deps + non-zero exit)",
-   "H5_disk": "fixed (cleanup-then-hard-fail semantics + allow_soft)",
-   "M1-M10": "fixed (32-dim docs, POR init, score_check, folds path, registry, empty dirs removed, ghost files listed, pip requirements, dead code)"
-  },
-  "review_r3": {
-   "report": "reports/V4_PLAN_REVIEW_3.md",
-   "resolved": {
-    "C1_sw_scale_residue": "fixed（全仓统一单一标签尺度；SW<1=0；生成器已改，E0/docs/data_card.md 由脚本生成）",
-    "C2_plan_line_sync": "fixed（plan_stats 改为逐条带上下文断言；sync 复用同一份正则；check_status 校验阶段/P 分项）",
-    "C3_gate_count_and_cache_root": "fixed（项数由报告实测；cache_root 改可复现形式；status 补 $V4_CACHE_ROOT/manifest.json）；R4-H1 后统一为 13/13 且 prereg 可复算",
-    "H1_gate_direction_and_field_mapping": "fixed（min_*/max_* 分组 + 指标字段映射 + E9_P2/E10 单测）",
-    "H2_disk_budget_data_root": "fixed（disk_guard --data-root/--path，E0_disk_budget.json 含 paths/worst_level/primary_path）",
-    "H3_proposal_not_landed": "fixed（proposal 已落进 PLAN.md / E6 / src/）",
-    "H4_status_phase_semantics": "fixed（project.phase=E0；E1=pending；check_status 增加语义检查）",
-    "H5_e0_evidence_copyback": "fixed（run_e0 回拷全部 reports/E0_*.json）",
-    "M1_check_env_folds_fallback": "fixed（v1_well_folds.json）",
-    "M2_optional_deps_degradable": "fixed（onnx/onnxruntime -> warn + degraded_paths）",
-    "M3_test_coverage": "fixed（tests/test_plan_stats.py、test_platform_scripts.py、test_gates.py 扩充、test_atomic_gate.py）",
-    "M4_check_status_weak": "fixed（增加行数分项/Gate 项数/阶段语义/缓存证据检查）",
-    "M5_e0_p1_cache_evidence": "fixed（evidence 补 $V4_CACHE_ROOT/manifest.json）"
-   }
-  },
-  "proposal": {
-   "report": "reports/V4_PLAN_IMPROVEMENT_PROPOSAL.md",
-   "landed": [
-    "PLAN.md §5.1/§5.3/§6.4：q_joint + q_por/q_perm/q_sw 逐目标原子头 + 逐目标硬切换 τ_t",
-    "PLAN.md §5.2.1：U-Net padding 伪影 / TCN 非因果 / PatchTF overlap / 门控融合 / 平滑不跨原子边界 / 井级小容量",
-    "PLAN.md §5.4：masked_mean NaN / PERM log 截断 / L_aux 尺度归一化 / 边界聚焦 / λ_atom/λ_joint",
-    "PLAN.md §8.2/§10：逐目标原子 Acc/P/R/F1、τ_t、误判代价、EMA/SWA/快照 CI 判据与风险",
-    "E1/E5/E6/E7/E8/E3/E4 的 P 级计划（由 docs/gen_p_details.py 生成）",
-    "src/models/row_mlp.py、src/losses/score_aligned.py、src/features/basic.py、src/inference/atomic_gate.py"
-   ]
-  },
-  "review_r5": {
-   "report": "reports/V4_PLAN_REVIEW_5.md",
-   "verdict": "五审不通过 -> 本轮返工（R5-B1/H1/H2/M1/M2/L1/L2/L3 全部修复）",
-   "resolved": {
-    "B1_run_train_data_tarball": "fixed（bootstrap_data.sh 支持 --tarball/$V4_DATA_TARBALL，并依次搜索 repo dist/、$DATA_ROOT、$DATA_ROOT/dist/；run_train.sh 把 --tarball/--manifest 当一等参数透传而不是塞进 EXTRA_ARGS；找不到时列出全部搜索位置并 exit 4）",
-    "H1_check_data_leak_false_green": "fixed（0 井不再 OK：覆盖性断言 train=80/test=10，空目录与错目录一律非零退出；新增 TestCheckDataLeakRequiresData 4 项回归）",
-    "H2_unconditional_row_check": "fixed（80/10 井与 730,268/95,948 行改为**无条件**硬校验，常量来自 src/constants.py；manifest 存在时再校验 tarball sha256 与精确计数）",
-    "M1_dependency_facts_single_source": "fixed（PLAN §3.3.1/§3.4.1、docs/image_requirements.md Dockerfile 统一为 required=numpy/pandas/scipy/sklearn/einops + 可选 tensorboard；新增 TestDependencyFactsAreSingleSourced 4 项，锁定 PLAN/docs/requirements/lock/setup_deps 五处一致）",
-    "M2_setup_deps_numpy": "fixed（lock 过滤规则只排除 torch，numpy 回到安装清单，与 required 集合一致）",
-    "L1_warn_ok_output": "fixed（image_requirements 期望输出改为 [OK]；说明 [WARN] 只在 warn 级**失败**时出现）",
-    "L2_constants_column_comment": "fixed（constants.py：14 个输入字段 = DEPTH + 13 条曲线）",
-    "L3_tar_path_comment": "fixed（bootstrap_data.sh：tar 内路径为 v4/data/...）"
-   }
-  },
-  "review_r6": {
-   "report": "reports/V4_PLAN_REVIEW_6.md",
-   "verdict": "五审返工通过（云端 env→data→e0 可开跑）；六审 2 中 + 3 低危已在本轮全部修复",
-   "resolved": {
-    "M1_onnx_wording": "fixed（PLAN.md §3.3.2/§9.2/§十 与 E10/P0 生成器统一为：ONNX 是 best-effort，需用户额外装 onnx（torch 2.7 dynamo 还需 onnxscript），未装时抛 OnnxExporterError 属预期，实际兜底是 .pt + .npz 清单；ONNX 不写进任何 Gate）",
-    "M2_single_source_of_counts": "fixed（E0/code/run_all.py 改用 C.EXPECTED_N_TRAIN_ROWS；E0/code/check_env.py 导入 src.constants 取 EXPECTED_N_TRAIN_WELLS/TEST_WELLS；新增 TestGateFilesUseContractConstants 3 项静态回归扫描两个 Gate 文件）",
-    "L1_explicit_manifest": "fixed（显式 --manifest/$V4_DATA_MANIFEST 不存在 -> exit 4；manifest 缺 tarball.sha256 -> exit 3，不再打印 'tarball sha256 OK'）",
-    "L2_verify_only_and_dest": "fixed（--verify-only 不再 mkdir/复制任何文件；--dest 显式时先解到临时目录再搬运，真正生效，并在收尾提示里注明 check_env 默认读 $V4_DATA_ROOT/v4/data）",
-    "L3_platform_setup_stale_path": "fixed（docs/platform_setup.md 的示例改为 /data/v4_data.tar.gz，并注明放别处必须 --tarball）"
-   }
-  }
- },
- "status_semantics": "stage.status / P.status 是**执行状态**：代码已实现且本地链路/契约验证通过记为 in_progress；只有对应云端正式 Gate 跑完并落盘证据才记为 done。"
+  "status_semantics": "stage.status / P.status 是**执行状态**：代码已实现且本地链路/契约验证通过记为 in_progress；只有对应云端正式 Gate 跑完并落盘证据才记为 done。"
 }

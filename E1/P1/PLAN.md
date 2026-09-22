@@ -204,3 +204,7 @@ python3 v4/E0/code/run_all.py && python3 v4/tools/verify_reference.py
 > - 早停/选 epoch 由“连续头分数”改为 **gated 代理分（τ=0.5）**；日志同时输出
 >   `innerOOF_gated@0.5` 与 `innerOOF_cont`。
 > - 重跑验收：`oof_total ≥ 78` **且** `placeholder_min_acc ≥ 0.98`；否则不得进入 E3。
+
+> **P0 审计修复（2026-09）**：`placeholder_min_acc` 已从“容差带命中率”改为
+> **官方软 Acc**（POR/SW 用 `1-相对误差`，PERM 用 log10 得分，逐行均值）。
+> 旧 E1 记录 `0.9723` 是旧口径，必须重跑 E1 用真 Acc 判定 `min_placeholder_acc=0.98`。
