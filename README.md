@@ -23,6 +23,7 @@
 | [`versions/candidates.json`](versions/candidates.json) | **候选注册表**（唯一事实源，未登记不得提交） |
 | [`versions/registry.json`](versions/registry.json) | 可运行版本注册表（`predict.py` 的版本来源） |
 | [`versions/prereg_templates/`](versions/prereg_templates) | 33 份 Gate 预注册模板（全部通过 `gates.py` 校验） |
+| [`docs/SPWLA2021_REVIEW.md`](docs/SPWLA2021_REVIEW.md) | **SPWLA 2021 冠军方案复盘（类型井/数据适配/GBDT/Stacking 对 v4 的启示）** |
 | [`docs/SCORE_MAX_PLAN.md`](docs/SCORE_MAX_PLAN.md) | **冲分优化计划（WP0–WP7：校准/期望分数决策/原子分类/集成/PERM 不对称/自训练/stacking/SSL）** |
 | [`reports/V4_PLAN_REVIEW.md`](reports/V4_PLAN_REVIEW.md) | 一审报告（B1–B6/H1–H5/M1–M10 已逐条处置） |
 | [`reports/V4_PLAN_REVIEW_2.md`](reports/V4_PLAN_REVIEW_2.md) | 二审报告（R2-B1..B6 / H1..H6 / M1..M9 已逐条处置） |

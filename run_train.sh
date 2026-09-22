@@ -663,6 +663,8 @@ PY
             "${e8_args[@]+"${e8_args[@]}"}" 2>&1 | tee -a "$LOG"
         }
         if [[ "$e8_target" == "all" ]]; then
+          # WP8：类型井选择报告（只读输入曲线，先于所有模型）
+          run_e8_one type_well_report || return 1
           for s in train_mmoe well_branch pseudo_label ensemble; do run_e8_one "$s" || return 1; done
         elif [[ "$e8_target" == "mmoe" ]]; then run_e8_one train_mmoe
         elif [[ "$e8_target" == "well" ]]; then run_e8_one well_branch

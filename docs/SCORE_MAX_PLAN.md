@@ -280,3 +280,21 @@
 3. `git push origin HEAD:master HEAD:main`（若云端有任务在跑，先推 feature 分支，任务结束后再合并）；
 4. `python3 tools/pack_code_zip.py` 打包到 `/mnt/d/tmp/Petroleum-Competition/`；
 5. 在报告中记录 revision、zip sha256、实验结论。
+
+---
+
+## 13. 参考 SPWLA 2021 后的新增工作包（WP8–WP11）
+
+> 详细复盘见 [`SPWLA2021_REVIEW.md`](SPWLA2021_REVIEW.md)。
+> 结论：**数据适配 > 模型结构**；冠军用“类型井选择 + 井间自适应 + 线性/KNN”，
+> 第 2/4/5 名用 MICE/KS/特征工程/GBDT/Stacking。
+
+| WP | 名称 | 代码落点 | 预计算力 | 预期收益 |
+|---|---|---|---|---|
+| **WP8** | 类型井选择 + 井间输入分布匹配 | `src/data/type_well.py`、`src/data/well_adapt.py` | 3–8h | 高 |
+| **WP9** | MICE/KNN 插补 + 异常权重 + KS 代表 inner split | `src/data/impute.py`、`src/data/outliers.py`、`src/validation/representative.py` | 2–6h | 高 |
+| **WP10** | 岩石物理特征扩展（Sw/Vsh/φD/Klogh） | `src/features/physics_ext.py` | 2–4h | 中–高 |
+| **WP11** | 链式目标 + GBDT + Stacking | `src/training/chained.py`、`src/models/gbdt.py` | 5–15h | 高 |
+
+**与 WP0–WP7 的关系**：WP8/WP9/WP10 先做（便宜且是数据层），WP11 在 WP3 的集成框架上加入 GBDT/链式成员；WP1 的原子校准仍然优先，因为 66.7% 占位行是 SPWLA 没有的特殊结构。
+

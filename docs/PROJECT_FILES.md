@@ -353,3 +353,16 @@ $V4_LOCAL_ROOT/v4/{cache,runs,reports,logs,tb,state}/
 | WP6 | 二阶 stacking/树集成 | `src/ensemble/stacking.py` |
 | WP7 | 自监督 masked curve modeling | `src/training/ssl.py` |
 
+### 四之二、SPWLA 2021 启发的新增模块（WP8–WP11）
+
+| WP | 模块 | 用途 |
+|---|---|---|
+| WP8 | `src/data/type_well.py` | KL/DTW 类型井选择（冠军方案核心） |
+| WP8 | `src/data/well_adapt.py` | 井间输入分位/线性分布匹配 |
+| WP9 | `src/data/impute.py` | median / KNN / MICE 插值（训练折 fit） |
+| WP9 | `src/data/outliers.py` | IQR / IsolationForest 异常权重（不直接删测试行） |
+| WP9 | `src/validation/representative.py` | Kennard-Stone 代表采样（inner split） |
+| WP10 | `src/features/physics_ext.py` | Archie/Simandoux/Indonesia、多骨架 φD、Vsh 多公式、Klogh |
+| WP11 | `src/training/chained.py` | POR→PERM→SW 链式目标（OOF 前序预测） |
+| WP11 | `src/models/gbdt.py` | HistGB/LGBM/XGB/CatBoost 一阶成员（可选依赖） |
+

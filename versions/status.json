@@ -7,7 +7,8 @@
   "phase": "E0",
   "summary": "E0 本地契约 Gate 13/13 PASS（云端 Gate 待 P0 实机）；计划全部完成（46 份 / 6,877 行，由 tools/plan_stats.py 实测）；三审 R3-C1..C3/H1..H5/M1..M5、四审 R4-B1..B3/H1..H3/M1..M6、五审 R5-B1/H1/H2/M1/M2/L1..L3 与六审 R6-M1/M2/L1..L3 已修复并回归验证；改进 proposal 已落进 PLAN.md / E6 与 src/",
   "last_updated": "2026-09-19T21:10:00+00:00",
-  "score_max_plan": "docs/SCORE_MAX_PLAN.md（WP0–WP7 冲分优化执行计划）"
+  "score_max_plan": "docs/SCORE_MAX_PLAN.md（WP0–WP7 冲分优化执行计划）",
+  "spwla_review": "docs/SPWLA2021_REVIEW.md（SPWLA 2021 冠军/前五方案复盘与 v4 新 WP8–WP11）"
  },
  "stages": [
   {
