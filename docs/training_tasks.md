@@ -189,5 +189,6 @@ bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage
 | `--wp atom-decision` | `--through 10` + `E7/code/fit_atom_decision.py` | WP1 |
 | `--wp loss-full` / `--wp perm-asym` | `--through 10` + E7 loss 消融 | WP4 |
 | `--wp stacking` | `--through 11` + E8 ensemble `--strategy stacking` | WP6 |
+| `--wp self-training` / `--wp ssl` | 运行对应模块单测 | WP5/WP7（训练入口待接线） |
 
 `start.sh` 也可以 `--fresh` 清进度重跑、`--e1-rerun` 清旧 E1 预注册后重跑 E1。

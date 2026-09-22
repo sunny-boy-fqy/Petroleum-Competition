@@ -65,6 +65,12 @@ class TestStartSh(unittest.TestCase):
             self.assertIn("run_train.sh --mode all --through 3", p.stdout)
             self.assertIn(script, p.stdout)
 
+    def test_wp_self_training_and_ssl_module_checks(self):
+        for wp, test in (("self-training", "test_self_training"), ("ssl", "test_ssl")):
+            p = run_start("--wp", wp)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertIn(f"tests/run_all.py {test}", p.stdout)
+
     def test_stage_e5_prereq_e4(self):
         p = run_start("--stage", "E5")
         self.assertEqual(p.returncode, 0, p.stderr)

@@ -120,6 +120,8 @@ list_choices() {
   stacking        E8 集成使用 stacking 策略
   gbdt            WP11 GBDT 一阶成员（E8/code/tabular_member.py）
   chained         WP11 链式目标成员（E8/code/tabular_member.py）
+  self-training   WP5 模块级验证（训练入口待接线）
+  ssl             WP7 模块级验证（训练入口待接线）
   all            依次跑 data-quality/petro/type-well/atom-row/gbdt/chained/atom-decision/loss-full/stacking
 EOF
 }
@@ -355,6 +357,14 @@ if [[ -n "$WP" ]]; then
         --kind "$wp_norm" --folds all --spec F1 \
         --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
         --run-root "$RUN_ROOT" "${EXTRA[@]}"
+      ;;
+    self-training)
+      # WP5 目前是模块级实现；这里运行单测验证，不产出模型
+      run_cmd python3 "$HERE/tests/run_all.py" test_self_training
+      ;;
+    ssl)
+      # WP7 目前是模块级实现；这里运行单测验证，不产出模型
+      run_cmd python3 "$HERE/tests/run_all.py" test_ssl
       ;;
     all)
       # 分层补前置，每层完成后再跑对应实验；run_train.sh 会自动跳过已完成任务。
