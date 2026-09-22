@@ -315,3 +315,26 @@ Fu et al., *Well-Log-Based Reservoir Property Estimation With Machine Learning: 
 **我们的使用边界**：只参考方法与工程思路；未复制 Volve 数据、标签、代码或固定阈值。
 v4 的数据、标签、官方指标与 66.7% 原子占位结构不同，所有参数必须重新在 v4 的
 inner-OOF 上拟合。详见 [`SPWLA2021_REVIEW.md`](SPWLA2021_REVIEW.md)。
+
+
+## 15. start.sh 统一入口
+
+云端只启动一个命令：
+
+```bash
+bash "$(find /code/workspace -name start.sh | head -1)" --to all
+```
+
+或用参数限制范围：
+
+```bash
+start.sh --to E3-main
+start.sh --stage E8 --target all
+start.sh --wp data-quality
+start.sh --wp atom-decision
+start.sh --wp gbdt
+start.sh --e1-rerun --to E2
+```
+
+`start.sh` 自动补前置、复用 `run_train.sh` 的断点续跑与 `/data` mirror；
+全部可选值见 `start.sh --list`。

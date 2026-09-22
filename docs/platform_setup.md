@@ -355,3 +355,31 @@ with RunLogger(f"E3_unet_fold{fold}") as log:
 - 若希望启用 GBDT 成员（HistGB/LightGBM/XGBoost/CatBoost），在镜像可写层安装对应库；
   缺失时 WP11 只保留 numpy Ridge/sklearn HistGB，并显式报告 `available=false`。
 - 所有新增方法仍只使用测试输入；不得使用测试标签，类型井/分布匹配必须留审计记录。
+
+
+---
+
+## 七、云端统一入口 start.sh（推荐）
+
+把平台启动命令改成：
+
+```bash
+bash "$(find /code/workspace -name start.sh | head -1)" --to all
+```
+
+常用参数：
+
+| 参数 | 作用 |
+|---|---|
+| `--to STAGE` | 自动补前置，跑到 STAGE；STAGE 可为 env/data/e0/E1..E10/E3-main/E3-all/all/1..14 |
+| `--through N` | 直接透传 run_train.sh 任务号 1..14 |
+| `--stage STAGE` | 只跑单阶段；自动先补前置 |
+| `--phase/--target` | 传给对应阶段的子路由 |
+| `--wp NAME` | 跑 WP 实验：data-quality/petro/type-well/atom-row/atom-decision/loss-full/perm-asym/stacking/gbdt/chained/all |
+| `--fresh` | 清进度，从 env 重新开始 |
+| `--e1-rerun` | 清旧 E1 预注册/产物后重跑 E1（WP0 新 Gate） |
+| `--dry-run` | 只打印命令 |
+| `--list` | 列出全部可选值 |
+
+`start.sh` 复用 `run_train.sh` 的 env/data/e0/阶段路由、`/data/v4/mirror` 恢复与 5 分钟状态同步；
+它本身不重复实现训练逻辑。

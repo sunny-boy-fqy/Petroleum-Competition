@@ -315,7 +315,7 @@ $V4_LOCAL_ROOT/v4/{cache,runs,reports,logs,tb,state}/
 | 类别 | 已实现 | 说明 |
 |---|---|---|
 | `src/` | constants, portability, score, data/{parse,labels,dataset,disk_guard,row_dataset,seq_dataset,augment,type_well,well_adapt,impute,outliers}, features/{basic,physics,physics_ext,window,well,groups}, losses/{score_aligned,physics,atom_classifier}, models/{row_mlp,unet1d,tcn,patchtf,heads,mmoe,well_head,target_heads,atom_head,gbdt}, training/{loop,metrics,fold_runner,seq_loop,checkpoint,tb_logger,state_train,frozen,ema,recipe,atom_train,chained,self_training,ssl}, inference/{contract,atomic_gate,atom_decision,calibration,predictor,decode}, ensemble/{blend,stacking}, validation/{folds,gates,representative}, versioning/registry | 本地代码层无“未实现”项；WP1–WP11 模块已实现并有单测/端到端测试；正式云端消融结论待跑 |
-| 根目录 | predict.py（含 PD1 折集成）、train.py（阶段转发/配置默认值）、run_train.sh（E0–E10 全部阶段）、requirements.txt、configs/v4.yaml、configs/paths.yaml | — |
+| 根目录 | **start.sh（云端统一入口）**、predict.py（含 PD1 折集成）、train.py（阶段转发/配置默认值）、run_train.sh（E0–E10 全部阶段）、requirements.txt、configs/v4.yaml、configs/paths.yaml | — |
 | 产物 | reports/E0_*.json（13 份）——其中 E0_goal_audit.json / E0_pipeline_check.json / E0_final_acceptance.json 是自检证据；另有 `versions/{registry,candidates,status,folds_sha256}.json`、`versions/prereg_templates/`（33 份） | 各阶段 Gate/报告在**云端**产出（`$V4_REPORTS_DIR`），本仓库只保留 E0 口径证据快照 |
 | `run_train.sh` | `env` / `data` / `e0` / `smoke` / `data-health`；`--stage E1..E10`（E2/E3/E5/E6/E7/E8/E9/E10 带 `--phase`/`--target` 子路由） | `--mode all [--through 1..14] [--fresh]` = env→data→e0→E1…E10 共 14 个任务；已完成任务自动跳过，失败即停，进度写 `/data/v4/state/all_pipeline_progress.json` |
 
@@ -375,3 +375,14 @@ GBDT/Stacking 与后处理规则思想。**未复制其数据、标签或代码�
 
 详细映射见 [`docs/SPWLA2021_REVIEW.md`](SPWLA2021_REVIEW.md) 与
 [`docs/SCORE_MAX_PLAN.md`](SCORE_MAX_PLAN.md) §13–§14。
+
+
+### 四之三、start.sh 与 WP9–WP11 新入口
+
+| 文件 | 用途 |
+|---|---|
+| `start.sh` | 云端统一入口：`--to/--stage/--through/--wp/--fresh/--e1-rerun/--dry-run/--list`；自动补前置 |
+| `E2/code/report_data_quality.py` | WP9 缺失/插补/异常/KS 报告 |
+| `E2/code/report_petro.py` | WP10 扩展岩石物理特征报告 + 样例矩阵 |
+| `E8/code/tabular_member.py` | WP11 GBDT / Chained 一阶成员 OOF |
+

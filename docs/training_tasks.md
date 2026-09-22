@@ -172,3 +172,22 @@ bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage
 | WP11 链式/GBDT | `src/training/chained.py`、`src/models/gbdt.py` | 作为 E8 一阶成员候选；GBDT 库缺失时报告 available=false |
 
 **纪律**：以上新增模块的参数都必须在 inner-OOF 上拟合；outer/confirm 折只推理一次。
+
+
+## 十、start.sh 统一入口任务映射
+
+| start.sh 参数 | 底层动作 | 说明 |
+|---|---|---|
+| `--to all` | `run_train.sh --mode all --through 14` | 全链路 |
+| `--to E3-main` | `--through 6` | 只到 E3-main |
+| `--stage E3 --phase all` | 先 `--through 5`，再 `--mode stage --stage E3 --phase all` | 单阶段 |
+| `--wp data-quality` | `--through 3` + `E2/code/report_data_quality.py` | WP9 |
+| `--wp petro` | `--through 3` + `E2/code/report_petro.py` | WP10 |
+| `--wp type-well` | `--through 3` + `E8/code/type_well_report.py` | WP8 |
+| `--wp atom-row` | `--through 5` + `E3/code/train_atom.py` | WP2 |
+| `--wp gbdt` / `--wp chained` | `--through 5` + `E8/code/tabular_member.py` | WP11 |
+| `--wp atom-decision` | `--through 10` + `E7/code/fit_atom_decision.py` | WP1 |
+| `--wp loss-full` / `--wp perm-asym` | `--through 10` + E7 loss 消融 | WP4 |
+| `--wp stacking` | `--through 11` + E8 ensemble `--strategy stacking` | WP6 |
+
+`start.sh` 也可以 `--fresh` 清进度重跑、`--e1-rerun` 清旧 E1 预注册后重跑 E1。

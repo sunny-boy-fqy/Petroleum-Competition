@@ -16,6 +16,22 @@
 > 详见 [`docs/SPWLA2021_REVIEW.md`](docs/SPWLA2021_REVIEW.md) 与 [`资料引用索引.md`](资料引用索引.md)。
 
 
+## 云端一键启动（推荐）
+
+```bash
+# 平台启动命令：跑到所有阶段
+bash "$(find /code/workspace -name start.sh | head -1)" --to all
+
+# 只跑到 E3-main；自动补 env/data/e0/E1/E2
+bash "$(find /code/workspace -name start.sh | head -1)" --to E3-main
+
+# 只跑单个阶段/单个实验（自动补前置）
+bash "$(find /code/workspace -name start.sh | head -1)" --stage E8 --target all
+bash "$(find /code/workspace -name start.sh | head -1)" --wp atom-decision
+```
+
+`start.sh --help` 看全部参数；`start.sh --list` 看所有可用 `--to/--stage/--wp`。
+
 ## 快速导航
 
 | 文档 | 内容 |
