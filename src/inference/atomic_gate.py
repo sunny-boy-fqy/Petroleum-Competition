@@ -306,11 +306,12 @@ def select_tau_per_target(score_fn=None, cont=None, q_atom=None, y=None, mask=No
             constraint_feasible[name] = bool(feasible.any())
             constrained[name] = bool(feasible.any())
             if feasible.any():
-                # 在可行 τ 中选加权总分最高；分数并列时取更小的 τ，给占位行更大安全边际。
+                # 在可行 τ 中选加权总分最高；分数在平台内并列时取**最大的 τ**，
+                # 即“刚好满足占位约束、尽量少切原子”，避免把大量有效行误切成原子值。
                 best_obj = float(np.max(obj_curve[feasible]))
                 margin = float(tol) * max(1.0, abs(best_obj))
                 near = np.where(feasible & (obj_curve >= best_obj - margin))[0]
-                k = int(near[0]) if near.size else int(np.argmax(np.where(feasible, obj_curve, -np.inf)))
+                k = int(near[-1]) if near.size else int(np.argmax(np.where(feasible, obj_curve, -np.inf)))
                 taus[t] = float(grid[k])
                 accs[t] = float(acc_curve[k])
                 placeholder_accs[name] = float(ph_curve[k])

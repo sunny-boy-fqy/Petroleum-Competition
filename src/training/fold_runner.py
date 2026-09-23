@@ -220,12 +220,22 @@ def run_two_phase_fold(fold: int, folds: dict, cache: str | Path, cfg: L.TrainCo
 
     def inner_eval(m) -> dict:
         pred = L.predict_torch(m, va_in_t, cfg)
-        # WP0：早停/选 epoch 必须与最终 gated 目标对齐，而不是只看连续头分数。
-        # 这里用固定 τ=0.5 的 gated 代理分；最终 τ 仍在训练结束后单独在 inner-val 上搜。
-        ev = M.evaluate_predictions(y_in, m_in, pred, y_atom=a_in, tau=0.5)
+        # WP0/P0：早停/选 epoch 必须与最终 gated 目标对齐。
+        # 固定 τ=0.5 太粗糙；这里用**粗网格 τ 搜索**（19 点）得到接近最终口径的
+        # gated 分数，并优先满足占位约束。最终 τ 仍在训练结束后用 91 点全网格重选。
+        if opt.select_tau and not opt.smoke:
+            tau_use = AG.select_tau_per_target(
+                cont=M.decode_continuous(pred), q_atom=pred["q_atom"],
+                y=y_in, mask=m_in, y_atom=a_in,
+                grid=np.linspace(0.05, 0.95, 19),
+                min_placeholder_acc=opt.placeholder_tau_constraint)["tau"]
+        else:
+            tau_use = np.full(3, 0.5, dtype="float64")
+        ev = M.evaluate_predictions(y_in, m_in, pred, y_atom=a_in, tau=tau_use)
         out = dict(ev["gated"])
         out["cont_total"] = float(ev["cont"]["total"])
-        out["gated_proxy_tau"] = 0.5
+        out["gated_proxy_tau"] = float(np.mean(tau_use))
+        out["inner_tau"] = [float(x) for x in tau_use]
         return out
 
     def on_select(epoch: int, rec: dict) -> None:

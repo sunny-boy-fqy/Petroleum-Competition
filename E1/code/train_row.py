@@ -163,7 +163,7 @@ def run_fold(fold: int, folds: dict, cache: Path, run_dir: Path, scalers_dir: Pa
 
     opt = FR.FoldOptions(spec=None, max_wells=args.max_wells, smoke=args.smoke,
                          resume=args.resume, save_checkpoints=True, select_tau=True,
-                         placeholder_tau_constraint=0.99,
+                         placeholder_tau_constraint=0.985,
                          scaler_prefix="E1", run_dir=run_dir, scalers_dir=scalers_dir,
                          tb_run_name=f"E1_pd0_fold{fold}",
                          on_select_epoch=on_select, on_final_epoch=on_final)
