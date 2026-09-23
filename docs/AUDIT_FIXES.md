@@ -20,6 +20,12 @@
 **影响**：E1 旧记录 `placeholder_min_acc=0.9723` 是旧宽松口径；新口径需要**重跑 E1**
 重新计算。`E1/P1/PLAN.md` 的 Gate 仍是 `min_placeholder_acc=0.98`，但现在必须用真 Acc 判定。
 
+**配套修复（2026-09）**：
+- `select_tau_per_target` 新增可选 `y_atom` / `min_placeholder_acc`，支持在**inner-OOF**上
+  先筛出“占位 Acc ≥ 阈值”的 τ，再在其中选加权总分最高者；E1 使用 `min_placeholder_acc=0.99`
+  留安全边际。
+- E1 训练默认从 `epochs=40, patience=5` 提升为 `epochs=80, patience=10`，避免早期噪声早停。
+
 ## 2. P1：`expected_value_table` 单调后缀 + 增益门槛
 
 **问题**：旧实现只要求 atom 箱连续，低 q 箱全为 atom 时也能返回 `tau=0.0`；

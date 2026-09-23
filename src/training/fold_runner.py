@@ -41,6 +41,7 @@ class FoldOptions:
     resume: bool = False
     save_checkpoints: bool = True
     select_tau: bool = True
+    placeholder_tau_constraint: float | None = None
     scaler_prefix: str = "E1"
     run_dir: Path | None = None
     scalers_dir: Path | None = None
@@ -119,14 +120,22 @@ def inner_split(tr_wells: Sequence[str], seed: int,
 
 
 def pick_tau(model, va_in_t, y_in: "np.ndarray", m_in: "np.ndarray",
-             cfg: L.TrainConfig) -> dict[str, Any]:
-    """在 inner-OOF 预测上选逐目标 τ（**官方目标函数** + 平台中点规则）。"""
+             cfg: L.TrainConfig, y_atom: "np.ndarray | None" = None,
+             min_placeholder_acc: float | None = None) -> dict[str, Any]:
+    """在 inner-OOF 预测上选逐目标 τ（官方目标函数 + 平台中点规则/占位约束）。"""
     pred = L.predict_torch(model, va_in_t, cfg)
     sel = AG.select_tau_per_target(cont=M.decode_continuous(pred), q_atom=pred["q_atom"],
-                                   y=y_in, mask=m_in)
+                                   y=y_in, mask=m_in, y_atom=y_atom,
+                                   min_placeholder_acc=min_placeholder_acc)
+    plateau = {}
+    for k, v in (sel.get("plateau") or {}).items():
+        plateau[k] = None if v is None else [float(x) for x in v]
     return {"tau": [float(v) for v in sel["tau"]], "objective": float(sel["objective"]),
-            "plateau": {k: [float(x) for x in v] for k, v in sel["plateau"].items()},
-            "score_fn": sel["score_fn"]}
+            "plateau": plateau, "score_fn": sel["score_fn"],
+            "placeholder_acc": sel.get("placeholder_acc"),
+            "constraint_feasible": sel.get("constraint_feasible"),
+            "constrained": sel.get("constrained"),
+            "min_placeholder_acc": sel.get("min_placeholder_acc")}
 
 
 def run_two_phase_fold(fold: int, folds: dict, cache: str | Path, cfg: L.TrainConfig,
@@ -317,7 +326,8 @@ def run_two_phase_fold(fold: int, folds: dict, cache: str | Path, cfg: L.TrainCo
     tau_info: dict[str, Any] = {"tau": [0.5, 0.5, 0.5], "objective": None, "plateau": {},
                                 "score_fn": "skipped"}
     if opt.select_tau and not opt.smoke:
-        tau_info = pick_tau(model, va_in_t, y_in, m_in, cfg)
+        tau_info = pick_tau(model, va_in_t, y_in, m_in, cfg, y_atom=a_in,
+                            min_placeholder_acc=opt.placeholder_tau_constraint)
     del tr_in_t, va_in_t, va_in
 
     # ---- 阶段 2：全部 outer-train 重训 best_epoch，outer-val 只推理一次

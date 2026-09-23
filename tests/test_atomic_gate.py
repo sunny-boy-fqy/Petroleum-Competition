@@ -296,6 +296,34 @@ class TestSelectTau(unittest.TestCase):
         self.assertGreater(float(res["tau"][0]), lo)
         self.assertLess(float(res["tau"][0]), hi)
 
+    def test_placeholder_constraint_selects_feasible_tau(self):
+        """P0 审计回归：给定 y_atom + min_placeholder_acc 时，必须选出满足占位 Acc 的 τ。"""
+        n = 200
+        cont = np.empty((n, 3))
+        y = np.empty((n, 3))
+        q = np.full((n, 3), 0.5)
+        mask = np.ones((n, 3))
+        y_atom = np.zeros((n, 3))
+        # POR：前 100 行是占位原子行（q=0.5），后 100 行是连续有效行（q=0.95）
+        y[: n // 2, 0] = C.ATOM_VALUES["POR"]
+        cont[: n // 2, 0] = 11.0
+        y_atom[: n // 2, 0] = 1.0
+        y[n // 2:, 0] = 20.0
+        cont[n // 2:, 0] = 20.0
+        q[n // 2:, 0] = 0.95
+        # 其它目标保持“连续头完美、无占位”
+        for j, good in enumerate((1.0, 80.0), start=1):
+            y[:, j] = good
+            cont[:, j] = good
+            q[:, j] = 0.01
+        res = select_tau_per_target(_BINARY_SCORES, cont, q, y, mask,
+                                    y_atom=y_atom, min_placeholder_acc=0.99)
+        self.assertTrue(res["constraint_feasible"]["POR"])
+        self.assertTrue(res["constrained"]["POR"])
+        self.assertGreaterEqual(res["placeholder_acc"]["POR"], 0.99)
+        tau_por = float(res["tau"][0])
+        self.assertLess(tau_por, 0.5)   # 必须把 q=0.5 的占位行切到原子值
+
     def test_extreme_probability_reproduces_atom(self):
         n = 50
         cont = np.full((n, 3), 5.0)

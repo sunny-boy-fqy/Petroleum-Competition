@@ -163,6 +163,7 @@ def run_fold(fold: int, folds: dict, cache: Path, run_dir: Path, scalers_dir: Pa
 
     opt = FR.FoldOptions(spec=None, max_wells=args.max_wells, smoke=args.smoke,
                          resume=args.resume, save_checkpoints=True, select_tau=True,
+                         placeholder_tau_constraint=0.99,
                          scaler_prefix="E1", run_dir=run_dir, scalers_dir=scalers_dir,
                          tb_run_name=f"E1_pd0_fold{fold}",
                          on_select_epoch=on_select, on_final_epoch=on_final)
@@ -246,14 +247,14 @@ def main(argv: list[str] | None = None) -> int:
                     help="候选注册表路径（测试必须指向 tmp，避免污染仓库）")
     ap.add_argument("--folds", default="all", help="all | 0 | 0,3")
     ap.add_argument("--max-wells", type=int, default=None)
-    ap.add_argument("--epochs", type=int, default=40)
+    ap.add_argument("--epochs", type=int, default=80)
     ap.add_argument("--hidden", type=int, default=256)
     ap.add_argument("--layers", type=int, default=2)
     ap.add_argument("--dropout", type=float, default=0.1)
     ap.add_argument("--lr", type=float, default=2e-3)
     ap.add_argument("--weight-decay", type=float, default=1e-4)
     ap.add_argument("--batch-size", type=int, default=4096)
-    ap.add_argument("--patience", type=int, default=5)
+    ap.add_argument("--patience", type=int, default=10)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--device", default="auto")
     ap.add_argument("--amp-dtype", default="bf16", choices=("bf16", "fp32"))

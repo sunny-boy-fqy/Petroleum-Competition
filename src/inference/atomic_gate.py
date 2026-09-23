@@ -211,7 +211,8 @@ def _longest_plateau_midpoint(taus: np.ndarray, objs: np.ndarray, tol: float) ->
 
 
 def select_tau_per_target(score_fn=None, cont=None, q_atom=None, y=None, mask=None,
-                          grid=None, tol: float = DEFAULT_PLATEAU_TOL) -> dict:
+                          grid=None, tol: float = DEFAULT_PLATEAU_TOL,
+                          y_atom=None, min_placeholder_acc: float | None = None) -> dict:
     """逐目标独立搜索硬切换阈值 τ（目标 = 官方加权总分贡献）。
 
     score_fn(y_t, pred_t, mask_t) -> float
@@ -224,6 +225,12 @@ def select_tau_per_target(score_fn=None, cont=None, q_atom=None, y=None, mask=No
 
     grid : 默认 `[0.05, 0.95]` 步长 `0.01`（91 点），与 `E6/P1/PLAN.md` 一致（R4-M2）。
     tol  : 平台判定的**相对**容差（默认 1e-3），见模块 docstring 的"平台中点规则"。
+
+    y_atom / min_placeholder_acc（可选，WP0/P0 审计修复）：
+        给出 ``y_atom`` 且指定 ``min_placeholder_acc`` 时，改为**约束选择**：
+        在满足“占位行官方软 Acc ≥ min_placeholder_acc”的 τ 中，选加权总分最高者；
+        若满足约束的 τ 不存在，则明确报告 ``constraint_feasible=False`` 并回退无约束选择。
+        这避免为了总分把 τ 定得过高，导致占位行 Acc 不达标。
 
     返回::
 
@@ -263,6 +270,15 @@ def select_tau_per_target(score_fn=None, cont=None, q_atom=None, y=None, mask=No
     plateau: dict[str, list] = {}
     taus = np.empty(3, dtype="float64")
     accs = np.empty(3, dtype="float64")
+    placeholder_accs: dict[str, float | None] = {}
+    constraint_feasible: dict[str, bool | None] = {}
+    constrained: dict[str, bool] = {}
+    ya_all = None
+    if y_atom is not None:
+        ya_all = np.asarray(y_atom, dtype="float64")
+        if ya_all.shape != (yy.shape if 'yy' in locals() else np.asarray(y).shape):
+            # 形状检查放在 y/mask 解析后更准确；这里先记录，循环内再逐列检查
+            pass
 
     for t, name in enumerate(C.TARGETS):
         obs = m[:, t] > 0
@@ -275,6 +291,38 @@ def select_tau_per_target(score_fn=None, cont=None, q_atom=None, y=None, mask=No
                 continue
             acc_curve[gi] = float(fn(yy[obs, t], pred[obs], m[obs, t]))
         obj_curve = float(C.TARGET_WEIGHTS[t]) * acc_curve
+        ph_curve = None
+        if ya_all is not None and min_placeholder_acc is not None:
+            if ya_all.shape != yy.shape:
+                raise ValueError(f"y_atom 形状 {ya_all.shape} != y 形状 {yy.shape}")
+            atom_sel = obs & (ya_all[:, t] > 0.5)
+            if atom_sel.any():
+                ph_curve = np.empty(grid.size, dtype="float64")
+                for gi, tau in enumerate(grid):
+                    pred = np.where(q[:, t] > tau, av[t], c[:, t])
+                    ph_curve[gi] = float(fn(yy[atom_sel, t], pred[atom_sel], m[atom_sel, t]))
+        if ph_curve is not None:
+            feasible = ph_curve >= float(min_placeholder_acc) - 1e-12
+            constraint_feasible[name] = bool(feasible.any())
+            constrained[name] = bool(feasible.any())
+            if feasible.any():
+                # 在可行 τ 中选加权总分最高；分数并列时取更小的 τ，给占位行更大安全边际。
+                best_obj = float(np.max(obj_curve[feasible]))
+                margin = float(tol) * max(1.0, abs(best_obj))
+                near = np.where(feasible & (obj_curve >= best_obj - margin))[0]
+                k = int(near[0]) if near.size else int(np.argmax(np.where(feasible, obj_curve, -np.inf)))
+                taus[t] = float(grid[k])
+                accs[t] = float(acc_curve[k])
+                placeholder_accs[name] = float(ph_curve[k])
+                curve[name] = [(float(g), float(a), float(p)) for g, a, p in
+                               zip(grid, acc_curve, ph_curve)]
+                plateau[name] = None
+                continue
+            else:
+                placeholder_accs[name] = float(np.nanmax(ph_curve))
+        else:
+            constraint_feasible[name] = None
+            constrained[name] = False
         mid, (lo, hi) = _longest_plateau_midpoint(grid, obj_curve, float(tol))
         taus[t] = mid
         # 选中的 τ 必须能通过格点重建（平台中点可能不是格点，但必须在平台内）：
@@ -294,6 +342,10 @@ def select_tau_per_target(score_fn=None, cont=None, q_atom=None, y=None, mask=No
         "objective": float(np.sum(np.asarray(C.TARGET_WEIGHTS, dtype="float64") * accs)),
         "plateau": plateau,
         "score_fn": score_fn_src,
+        "placeholder_acc": placeholder_accs,
+        "constraint_feasible": constraint_feasible,
+        "constrained": constrained,
+        "min_placeholder_acc": (None if min_placeholder_acc is None else float(min_placeholder_acc)),
     }
 
 
