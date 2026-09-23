@@ -27,6 +27,7 @@ from typing import Any
 
 from ..portability import HAS_TORCH, require
 from .heads import SeqHead, count_parameters, init_head_from_stats
+from .padding import replicate_pad1d
 
 if HAS_TORCH:
     import torch
@@ -52,9 +53,9 @@ if HAS_TORCH:
             self.drop = nn.Dropout(dropout)
 
         def forward(self, x):                          # (B,C,L)
-            h = F.pad(x, (self.pad, self.pad), mode="replicate")
+            h = replicate_pad1d(x, self.pad)
             h = F.gelu(self.conv1(h))
-            h = F.pad(h, (self.pad, self.pad), mode="replicate")
+            h = replicate_pad1d(h, self.pad)
             h = self.drop(self.conv2(h))
             return x + h                               # 残差（保长）
 

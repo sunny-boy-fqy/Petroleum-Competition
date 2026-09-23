@@ -71,6 +71,39 @@ class TestSeqHeads(unittest.TestCase):
 
 
 @unittest.skipUnless(HAS_TORCH, "torch not installed")
+class TestNpuSafePadding(unittest.TestCase):
+    """NPU 不支持 bf16 replicate_pad1d；用手工 expand+cat 复现其语义。"""
+
+    def test_replicate_pad_matches_torch_float32(self):
+        import torch.nn.functional as F
+        from src.models.padding import replicate_pad1d
+        x = torch.randn(2, 3, 17)
+        ref = F.pad(x, (2, 2), mode="replicate")
+        got = replicate_pad1d(x, 2)
+        self.assertEqual(tuple(got.shape), tuple(ref.shape))
+        self.assertTrue(torch.allclose(got, ref))
+
+    def test_replicate_pad_bf16_cpu(self):
+        import torch.nn.functional as F
+        from src.models.padding import replicate_pad1d
+        x = torch.randn(2, 3, 17).to(torch.bfloat16)
+        ref = F.pad(x.float(), (3, 3), mode="replicate").to(torch.bfloat16)
+        got = replicate_pad1d(x, 3)
+        self.assertEqual(got.dtype, torch.bfloat16)
+        self.assertTrue(torch.equal(got, ref))
+
+    def test_nearest_upsample_bf16_cpu(self):
+        import torch.nn.functional as F
+        from src.models.padding import nearest_upsample1d
+        x = torch.randn(2, 3, 5).to(torch.bfloat16)
+        got = nearest_upsample1d(x, 11)
+        ref = F.interpolate(x.float(), size=11, mode="nearest").to(torch.bfloat16)
+        self.assertEqual(tuple(got.shape), (2, 3, 11))
+        self.assertEqual(got.dtype, torch.bfloat16)
+        self.assertTrue(torch.equal(got, ref))
+
+
+@unittest.skipUnless(HAS_TORCH, "torch not installed")
 class TestSeqBackbones(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

@@ -22,6 +22,7 @@ from typing import Any
 
 from ..portability import HAS_TORCH, require
 from .heads import SeqHead, count_parameters, init_head_from_stats
+from .padding import nearest_upsample1d, replicate_pad1d
 
 if HAS_TORCH:
     import torch
@@ -44,7 +45,7 @@ if HAS_TORCH:
             self.drop = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
 
         def forward(self, x):                              # (B,C,L)
-            x = F.pad(x, (self.pad, self.pad), mode="replicate")
+            x = replicate_pad1d(x, self.pad)
             return self.drop(self.bn(self.pw(F.gelu(self.dw(x)))))
 
 
@@ -76,7 +77,7 @@ if HAS_TORCH:
             self.proj = nn.Conv1d(ch_in + ch_skip, ch_out, 1)
 
         def forward(self, x, skip):
-            x = F.interpolate(x, size=skip.shape[-1], mode="nearest")
+            x = nearest_upsample1d(x, skip.shape[-1])
             x = torch.cat([x, skip], dim=1)
             return self.proj(self.b2(self.b1(x)))
 
