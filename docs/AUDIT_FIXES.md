@@ -125,3 +125,18 @@ python3 tools/final_acceptance.py --quick
 bash "$(find /code/workspace -name start.sh | head -1)" --stage env
 bash "$(find /code/workspace -name start.sh | head -1)" --stage smoke
 ```
+
+
+## 10. 云端 env 卡死补丁（2026-09）
+
+**现象**：`--to E3-main` 走到 `setup_deps.sh` 末尾的 `df` 后不再输出，任务停在 env。
+
+**原因**：`setup_deps.sh` 最后一行 `df -h "$DATA_ROOT" / | tail -n +1` 在个别挂载/容器环境下
+可能不返回；`run_train.sh` 的 env 任务因此永远不退出，task 2 data 不会开始。
+
+**修复**：
+- `E0/code/setup_deps.sh`：最后的 `df` 改为 `timeout 15 df ... || true`；
+- `run_train.sh`：
+  - `setup_deps.sh` 整个用 `timeout 900` 包裹；
+  - 新增 `V4_SKIP_SETUP_DEPS=1`：依赖已由镜像提供时跳过 setup_deps，
+    env 仍会执行 `check_env.py --profile base` 与磁盘检查。

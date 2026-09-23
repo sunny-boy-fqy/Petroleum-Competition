@@ -234,9 +234,16 @@ check_env_profile() {
 
 run_env() {
   # R2-B1 修复：先装依赖，再做硬校验（此前顺序相反导致首次必失败）
-  log "--- [env] 1/3 额外轻量依赖（--no-cache-dir，绝不触碰 torch）"
-  bash "$HERE/E0/code/setup_deps.sh" 2>&1 | tee -a "$LOG" \
-    || { log "!! setup_deps 失败：依赖/磁盘预检未通过，停止"; return 1; }
+  if [[ "${V4_SKIP_SETUP_DEPS:-0}" == "1" ]]; then
+    log "--- [env] 1/3 跳过 setup_deps（V4_SKIP_SETUP_DEPS=1；依赖由镜像自带）"
+  else
+    log "--- [env] 1/3 额外轻量依赖（--no-cache-dir，绝不触碰 torch）"
+    # 2026-09 审查修复：setup_deps 内部调用 df 等外部命令，在个别挂载环境可能挂起；
+    # 用 timeout 兜底，绝不让 env 任务无限卡住。依赖已由镜像提供时可用
+    # V4_SKIP_SETUP_DEPS=1 直接跳过本步。
+    timeout 900 bash "$HERE/E0/code/setup_deps.sh" 2>&1 | tee -a "$LOG" \
+      || { log "!! setup_deps 失败或超时（900s）：依赖/磁盘预检未通过，停止"; return 1; }
+  fi
 
   log "--- [env] 2/3 基础环境自检（profile=base：数据未就绪只告警）"
   if check_env_profile base; then

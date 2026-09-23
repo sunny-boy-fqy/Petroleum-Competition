@@ -149,4 +149,4 @@ python3 src/data/disk_guard.py --min-free-gb 8 \
         --json "$REPORTS_DIR/E0_disk_budget.json" || true
 
 echo "== done =="
-df -h "$DATA_ROOT" / 2>/dev/null | tail -n +1 || true
+timeout 15 df -h "$DATA_ROOT" / 2>/dev/null | tail -n +1 || true
