@@ -134,23 +134,29 @@ def clean_old_zips(out_dir: str | Path, pattern: str = "*.zip") -> list[Path]:
     return removed
 
 
-def _clean_windows_zips(win_dir: str) -> bool:
-    """WSL `/mnt/d` 只读回退时，在 Windows 侧删除旧 zip。"""
+def _clean_windows_zips(win_dir: str) -> int:
+    """WSL `/mnt/d` 只读回退时，在 Windows 侧删除旧 zip。
+
+    返回删除数量；失败返回 -1。
+    """
     ps = _powershell()
     if not ps:
-        return False
+        return -1
     cmd = (
         f"$d = '{win_dir}'; "
         f"New-Item -ItemType Directory -Force -Path $d | Out-Null; "
-        f"Get-ChildItem -LiteralPath $d -Filter '*.zip' -File -ErrorAction SilentlyContinue | "
-        f"Remove-Item -Force -ErrorAction SilentlyContinue; exit 0"
+        f"$old = @(Get-ChildItem -LiteralPath $d -Filter '*.zip' -File "
+        f"-ErrorAction SilentlyContinue); "
+        f"$n = @($old).Count; "
+        f"$old | Remove-Item -Force -ErrorAction SilentlyContinue; "
+        f"Write-Output $n; exit 0"
     )
     try:
-        subprocess.run([ps, "-NoProfile", "-Command", cmd],
-                       check=True, capture_output=True, text=True)
-        return True
+        r = subprocess.run([ps, "-NoProfile", "-Command", cmd],
+                           check=True, capture_output=True, text=True)
+        return int((r.stdout or "0").strip().splitlines()[-1])
     except Exception:
-        return False
+        return -1
 
 
 def _is_writable_dir(path: Path) -> bool:
@@ -199,14 +205,16 @@ def _copy_to_windows_via_powershell(src: Path, dst_win: str) -> bool:
 
 
 def _print_summary(repo: Path, final_display: str, files: list[str],
-                   archive_for_stats: Path, removed: list[Path] | None = None) -> None:
+                   archive_for_stats: Path, removed: list[Path] | None = None,
+                   removed_count: int | None = None) -> None:
     size_mb = archive_for_stats.stat().st_size / 1024 ** 2
     print(f"[pack] root      : {repo}")
     print(f"[pack] zip       : {final_display}")
     print(f"[pack] files     : {len(files)}")
     print(f"[pack] size      : {size_mb:.2f} MiB")
     print(f"[pack] sha256    : {sha256_file(archive_for_stats)}")
-    print(f"[pack] old zip   : {len(removed or [])} removed"
+    n_removed = len(removed or []) if removed_count is None else removed_count
+    print(f"[pack] old zip   : {n_removed} removed"
           + (f" ({', '.join(p.name for p in removed)})" if removed else ""))
     print(f"[pack] git rev   : {git_rev(repo)}{' (dirty)' if git_dirty(repo) else ''}")
 
@@ -264,8 +272,10 @@ def main(argv: list[str] | None = None) -> int:
     tmpdir = Path(tmpdir_obj.name)
     try:
         removed_win: list[Path] = []
+        removed_win_count = 0
         if not args.keep_old:
-            if not _clean_windows_zips(win_dir):
+            removed_win_count = _clean_windows_zips(win_dir)
+            if removed_win_count < 0:
                 print("!! 无法清除 Windows 目标目录旧 zip", file=sys.stderr)
                 return 6
         tmp_zip = tmpdir / name
@@ -275,7 +285,7 @@ def main(argv: list[str] | None = None) -> int:
             print("!! powershell.exe 复制到 Windows D: 失败", file=sys.stderr)
             return 5
         _print_summary(repo, win_target + "  (Windows)", files, tmp_zip,
-                       removed=removed_win)
+                       removed=removed_win, removed_count=removed_win_count)
     finally:
         tmpdir_obj.cleanup()
     return 0
