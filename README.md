@@ -36,7 +36,7 @@
 
 | 项目 | 状态 |
 |---|---|
-| 代码实现 | E1–E10 模型/训练/推理/打包代码已实现；本次重构后全量测试 **876 项通过（跳过 3）** |
+| 代码实现 | E1–E10 模型/训练/推理/打包代码已实现；本次重构后全量测试 **881 项通过（跳过 3）** |
 | 本地口径层 | E0 数据契约、评分复算、折指纹、提交契约已通过 |
 | 云端训练 | **未完成**：正式 5 折 OOF、E1–E10 数值 Gate、Ascend 实机验证仍需平台任务 |
 | 最终提交 | **未生成**：需先完成云端训练与 E10 打包，且以官方 `result.zip` 为准 |
@@ -211,6 +211,8 @@ E0 契约 → E1 行级基线 → E2 特征 → E3 序列主干 → E4 多尺度
 - [x] **E1–E10 模型与训练代码已全部实现**（`E1/code` … `E10/code` + `src/`；本地链路/契约测试通过）
 - [ ] E1–E10 正式 5 折 OOF 与数值 Gate —— 待云端运行；不要把“代码已实现”误读为“成绩已达标”
 - [ ] E10 最终提交包与官方干净目录复现 —— 待云端训练完成后生成并验证
+- [x] **可复用成果跨任务持久化**：`tools/artifact_store.py` 自动把 `cache/raw`、`cache/feat`、
+      `runs/**/*.pkl`、提交包、候选/注册表写入 `/data/v4/artifacts`，新机器启动时自动恢复
 
 **审查闭环**：原始审查发现 1 个严重交付缺陷、7 个高优先级、8 个中优先级问题；其中绝大多数已由
 `6b2a580`、`5faf4e1`、`fafaf7c` 等提交修复。当前仍需特别关注的遗留项见
@@ -246,6 +248,7 @@ E0 契约 → E1 行级基线 → E2 特征 → E3 序列主干 → E4 多尺度
 | [`docs/dependencies.md`](docs/dependencies.md) | 依赖声明与版本锁定策略 |
 | [`docs/training_tasks.md`](docs/training_tasks.md) | 训练任务配置表（逐字段照抄） |
 | [`docs/gate_template.md`](docs/gate_template.md) | Gate 预注册模板与判定逻辑 |
+| [`docs/artifact_reuse.md`](docs/artifact_reuse.md) | 跨任务复用：cache / 折结果 / 提交包 / 状态自动持久化与恢复 |
 | [`docs/PROJECT_FILES.md`](docs/PROJECT_FILES.md) | 目录树、文件用途、进不进 git、云端边界 |
 | [`docs/SCORE_MAX_PLAN.md`](docs/SCORE_MAX_PLAN.md) | 冲分优化计划 WP0–WP11 |
 | [`docs/SPWLA2021_REVIEW.md`](docs/SPWLA2021_REVIEW.md) | SPWLA 2021 复盘与 v4 启示 |

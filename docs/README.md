@@ -75,6 +75,7 @@
 | 文档 | 说明 |
 |---|---|
 | [`platform_setup.md`](platform_setup.md) | `/code/workspace` vs `/data`、任务字段、续训、故障排查 |
+| [`artifact_reuse.md`](artifact_reuse.md) | **跨任务复用**：小状态/大成果两层持久化、`artifact_store.py`、恢复与预算 |
 | [`training_tasks.md`](training_tasks.md) | 可直接照抄的训练任务配置表 |
 | [`image_requirements.md`](image_requirements.md) | 基础镜像、轻量依赖白名单、禁装清单 |
 | [`dependencies.md`](dependencies.md) | 依赖声明、版本锁定、降级策略 |

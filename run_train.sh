@@ -375,15 +375,33 @@ REMOTE_SCALER_MIRROR="$MIRROR_ROOT/scalers"
 REMOTE_REPORTS_MIRROR="$MIRROR_ROOT/reports"
 LOCAL_SCALER_ROOT="$DATA_ROOT/v4/scalers"
 MIRROR_PIDS=()
+ARTIFACT_STORE="$HERE/tools/artifact_store.py"
+ARTIFACT_ROOT="$NETWORK_ROOT/v4/artifacts"
+ARTIFACT_STORE_ENABLED=1
+[[ -f "$ARTIFACT_STORE" ]] || ARTIFACT_STORE_ENABLED=0
 
 restore_state_from_network() {
-  # 新任务本地盘为空时，从 /data/v4/mirror 恢复 checkpoint / OOF / scaler / 报告。
+  # 小状态层：从 /data/v4/mirror 恢复 checkpoint / OOF / scaler / 报告。
+  # 旧镜像仍保留为向后兼容读取；新任务优先使用 /data/v4/artifacts。
   python3 "$HERE/tools/sync_state.py" --src "$REMOTE_RUN_MIRROR" --dst "$RUN_ROOT" --once >/dev/null 2>&1 || true
   python3 "$HERE/tools/sync_state.py" --src "$REMOTE_SCALER_MIRROR" --dst "$LOCAL_SCALER_ROOT" --once >/dev/null 2>&1 || true
   python3 "$HERE/tools/sync_state.py" --src "$REMOTE_REPORTS_MIRROR" --dst "$REPORTS_DIR" --once >/dev/null 2>&1 || true
 }
 
+restore_artifacts_from_network() {
+  # 大成果层：恢复 cache/raw、cache/feat、折结果 .pkl、提交包、候选注册表。
+  [[ "${V4_DISABLE_ARTIFACT_STORE:-0}" == "1" || "$ARTIFACT_STORE_ENABLED" == "0" ]] && return 0
+  python3 "$ARTIFACT_STORE" restore --local-root "$DATA_ROOT" --remote-root "$NETWORK_ROOT" --quiet
+}
+
+publish_artifacts_to_network() {
+  # 大成果层：把可复用的 cache/折结果/提交包/候选状态写入 /data/v4/artifacts。
+  [[ "${V4_DISABLE_ARTIFACT_STORE:-0}" == "1" || "$ARTIFACT_STORE_ENABLED" == "0" ]] && return 0
+  python3 "$ARTIFACT_STORE" publish --local-root "$DATA_ROOT" --remote-root "$NETWORK_ROOT"     --max-gb "${V4_ARTIFACT_MAX_GB:-24}" --quiet
+}
+
 sync_state_to_network() {
+  # 小状态层：checkpoint / OOF / report / scaler -> /data/v4/mirror。
   python3 "$HERE/tools/sync_state.py" --src "$RUN_ROOT" --dst "$REMOTE_RUN_MIRROR" --once >/dev/null 2>&1 || true
   python3 "$HERE/tools/sync_state.py" --src "$LOCAL_SCALER_ROOT" --dst "$REMOTE_SCALER_MIRROR" --once >/dev/null 2>&1 || true
   python3 "$HERE/tools/sync_state.py" --src "$REPORTS_DIR" --dst "$REMOTE_REPORTS_MIRROR" --once >/dev/null 2>&1 || true
@@ -406,6 +424,7 @@ cleanup_state_mirror() {
     kill "${MIRROR_PIDS[@]}" 2>/dev/null || true
   fi
   sync_state_to_network || true
+  publish_artifacts_to_network || log "[artifact_store] 退出时持久化失败（不阻塞进程退出）"
 }
 
 trap cleanup_state_mirror EXIT
@@ -813,6 +832,15 @@ case "$MODE" in
   smoke) run_smoke ;;
   data-health) check_env_profile full ;;
   stage) run_stage ;;
+  publish)
+    publish_progress_to_network || true
+    sync_state_to_network || true
+    publish_artifacts_to_network || exit $?
+    ;;
+  restore)
+    restore_state_from_network || true
+    restore_artifacts_from_network || exit $?
+    ;;
   all)
     if ! [[ "$ALL_THROUGH" =~ ^[0-9]+$ ]] || (( ALL_THROUGH < 1 || ALL_THROUGH > 14 )); then
       log "!! --through/--all-to 只支持 1..14，got $ALL_THROUGH"
@@ -834,6 +862,7 @@ case "$MODE" in
       log "!! [all] 全链路模式忽略额外参数，请用 --through N 控制范围：${EXTRA_ARGS[*]}"
     fi
     restore_state_from_network || log "[all] 从 /data 恢复 checkpoint/OOF/report 失败（将按本地现有文件继续）"
+    restore_artifacts_from_network || log "[all] 从 /data/v4/artifacts 恢复可复用成果失败（将按本地现有文件继续）"
     log "--- [all] 运行任务 1..$ALL_THROUGH（共 14 个）；进度 done 且本地产物齐备才跳过"
     for ((_n=1; _n<=ALL_THROUGH; _n++)); do
       _name="${ALL_TASK_NAMES[$_n]}"
@@ -865,6 +894,7 @@ case "$MODE" in
       }
       mark_progress "$_n" "$_name" done
       publish_progress_to_network || log "[all] 进度同步 /data 失败（不阻塞当前任务）"
+      publish_artifacts_to_network || log "[all] 可复用成果同步 /data/v4/artifacts 失败（不阻塞当前任务）"
       log "=== [all] task $_n/$_name 完成 ==="
     done
     publish_final_to_network || { log "!! [all] 最终模型复制到 /data 失败（exit 22）"; exit 22; }
