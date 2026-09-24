@@ -107,13 +107,27 @@ export V4_ARTIFACT_MAX_GB=24
 
 ## 6. 新开发机恢复判断
 
-在新开发机上先看：
+一条命令检查 E0/E1/E2 是否已经缓存到 `/data`：
+
+```bash
+python3 tools/check_reuse_cache.py --remote-root /data
+```
+
+它会检查：
+
+- E0 raw cache：`/data/v4/artifacts/cache/raw/{train,test}`（80/10 口）
+- E1 OOF/checkpoint：`/data/v4/mirror/run_root/E1/`
+- E2 feature cache：`/data/v4/artifacts/cache/feat/`
+- E2 报告：`E2_ablation.json`、`E2_gate.json`、`E2_best_spec.json`
+- 进度：`/data/v4/state/all_pipeline_progress.json` 的 task 1–5
+
+也可以手动看：
 
 ```bash
 ls -la /data/v4/state/
 python3 tools/artifact_store.py status --remote-root /data
-ls -la /data/v4/mirror/run_root/
+ls -la /data/v4/mirror/run_root/E1/
+du -sh /data/v4/artifacts/cache/*
 ```
 
-若 `artifact_store status` 能看到 `cache`、`run_root`，并且 `/data/v4/mirror/run_root/E1/oof.npz` 存在，
-则 E1 及部分 E2 成果可复用；若看不到，说明上一任务未发布过，只能重新训练。
+若命令输出 `RESULT: OK`，则 E0/E1/E2 可复用；若 `INCOMPLETE`，缺什么会逐项列出。

@@ -400,7 +400,43 @@ publish_artifacts_to_network() {
   python3 "$ARTIFACT_STORE" publish --local-root "$DATA_ROOT" --remote-root "$NETWORK_ROOT"     --max-gb "${V4_ARTIFACT_MAX_GB:-24}" --quiet
 }
 
+resolve_feature_spec() {
+  # 自动读取 E2 的唯一 ADOPT 结论；显式 V4_FEATURE_SPEC 优先。
+  if [[ -n "${V4_FEATURE_SPEC:-}" ]]; then
+    printf '%s\n' "$V4_FEATURE_SPEC"
+    return 0
+  fi
+  local spec=""
+  if [[ -f "$HERE/tools/select_feature_spec.py" ]]; then
+    spec="$(python3 "$HERE/tools/select_feature_spec.py" --reports-dir "$REPORTS_DIR" --print 2>/dev/null || true)"
+  fi
+  if [[ -n "$spec" ]]; then
+    printf '%s\n' "$spec"
+  else
+    printf 'F1\n'
+  fi
+}
+
+resolve_feature_spec_key() {
+  # 返回 E2 adopted 候选的 spec_key（用于找 E2_work/oof_<key>.npz 作为同特征行级基线）。
+  if [[ -n "${V4_FEATURE_SPEC_KEY:-}" ]]; then
+    printf '%s\n' "$V4_FEATURE_SPEC_KEY"
+    return 0
+  fi
+  local key=""
+  if [[ -f "$HERE/tools/select_feature_spec.py" ]]; then
+    key="$(python3 "$HERE/tools/select_feature_spec.py" --reports-dir "$REPORTS_DIR" --print-key 2>/dev/null || true)"
+  fi
+  printf '%s\n' "${key:-F1}"
+}
+
+FEATURE_SPEC="${V4_FEATURE_SPEC:-}"
+
 sync_state_to_network() {
+  # E2 若已完成，先固化自动特征选择结果，保证 E2_best_spec.json 一起被镜像。
+  if [[ -f "$REPORTS_DIR/E2_ablation.json" && -f "$HERE/tools/select_feature_spec.py" ]]; then
+    python3 "$HERE/tools/select_feature_spec.py" --reports-dir "$REPORTS_DIR" >/dev/null 2>&1 || true
+  fi
   # 小状态层：checkpoint / OOF / report / scaler -> /data/v4/mirror。
   python3 "$HERE/tools/sync_state.py" --src "$RUN_ROOT" --dst "$REMOTE_RUN_MIRROR" --once >/dev/null 2>&1 || true
   python3 "$HERE/tools/sync_state.py" --src "$LOCAL_SCALER_ROOT" --dst "$REMOTE_SCALER_MIRROR" --once >/dev/null 2>&1 || true
@@ -443,6 +479,10 @@ run_smoke() {
 
 run_stage() {
   log "--- [stage] $STAGE"
+  if [[ "$STAGE" =~ ^E(3|4|5|6|7|8|9|10)$ ]]; then
+    FEATURE_SPEC="$(resolve_feature_spec)"
+    log "[spec] 自动选择特征版本: $FEATURE_SPEC（E2 ADOPT 优先；显式 V4_FEATURE_SPEC 可覆盖）"
+  fi
   case "$STAGE" in
     E0) run_e0 ;;
     E1) python3 "$HERE/E1/code/train_row.py" \
@@ -483,7 +523,7 @@ run_stage() {
         done
         if [[ "$e3_expect" == "phase" ]]; then log "!! E3 --phase 缺少取值"; return 1; fi
         e3_common=(--cache-root "$CACHE_ROOT" --run-root "$RUN_ROOT" \
-                   --reports-dir "$REPORTS_DIR")
+                   --reports-dir "$REPORTS_DIR" --spec "$FEATURE_SPEC")
         if [[ "$e3_phase" == "main" || "$e3_phase" == "all" ]]; then
           if [[ "$e3_phase" == "all" ]]; then
             # 最后跑 U-Net，使 E3_gate.json 对应默认主干。
@@ -520,13 +560,24 @@ for tag in ("unet", "tcn"):
 print(run_dir / f"oof_{best[1]}.npz" if best else "")
 PY
 )"
-          e3_row_oof="$RUN_ROOT/E1/oof.npz"
+          if [[ "$FEATURE_SPEC" == "F1" ]]; then
+            e3_row_oof="$RUN_ROOT/E1/oof.npz"
+          else
+            e3_row_key="$(resolve_feature_spec_key)"
+            e3_row_oof="$REPORTS_DIR/E2_work/oof_${e3_row_key}.npz"
+            if [[ ! -f "$e3_row_oof" ]]; then
+              log "!! [E3] 找不到同特征行级 OOF（$e3_row_oof）。"
+              log "    自动选中的 spec=$FEATURE_SPEC 不能用 F1/E1 基线做受控对照；"
+              log "    请检查 E2_work 是否已同步到 /data，或显式 V4_FEATURE_SPEC=F1 回退对照口径。"
+              return 1
+            fi
+          fi
           if [[ -z "$e3_seq_oof" || ! -f "$e3_seq_oof" ]]; then
             log "!! [E3] 找不到序列 OOF（$e3_seq_oof）；先跑 --phase main"
             return 1
           fi
           if [[ ! -f "$e3_row_oof" ]]; then
-            log "!! [E3] 找不到行级 OOF（$e3_row_oof）；先跑 E1"
+            log "!! [E3] 找不到行级 OOF（$e3_row_oof）；先跑 E1 或 E2"
             return 1
           fi
           python3 "$HERE/E3/code/compare_row_vs_seq.py" \
@@ -535,11 +586,12 @@ PY
         fi ;;
     E4) python3 "$HERE/E4/code/train_patchtf.py" \
           --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
-          --run-root "$RUN_ROOT" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1 | tee -a "$LOG" ;;
+          --run-root "$RUN_ROOT" --spec "$FEATURE_SPEC" \
+          "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1 | tee -a "$LOG" ;;
     E5)
         # 目标路由：`--target por|perm|sw` 决定跑哪个逐目标头（其余参数原样透传）
         e5_script="$HERE/E5/code/head_por.py"
-        e5_args=()
+        e5_args=(--spec "$FEATURE_SPEC")
         e5_expect=""
         e5_all=0
         for a in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
@@ -607,7 +659,8 @@ PY
           log "--- [E6] P0 原子状态头两阶段训练"
           python3 "$HERE/E6/code/train_state.py" \
             --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
-            --run-root "$RUN_ROOT" "${e6_resume[@]+"${e6_resume[@]}"}" \
+            --run-root "$RUN_ROOT" --spec "$FEATURE_SPEC" \
+            "${e6_resume[@]+"${e6_resume[@]}"}" \
             "${e6_args[@]+"${e6_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
         fi
         if [[ "$e6_phase" == "p1" || "$e6_phase" == "all" ]]; then
@@ -644,7 +697,8 @@ PY
         if [[ "$e7_phase" == "loss" || "$e7_phase" == "all" ]]; then
           log "--- [E7] P0 损失消融"
           python3 "$HERE/E7/code/ablate_loss.py" --reports-dir "$REPORTS_DIR" \
-            --cache-root "$CACHE_ROOT" "${e7_args[@]+"${e7_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
+            --cache-root "$CACHE_ROOT" --spec "$FEATURE_SPEC" \
+            "${e7_args[@]+"${e7_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
         fi
         if [[ "$e7_phase" == "decode" || "$e7_phase" == "all" ]]; then
           log "--- [E7] P1 解码搜索"
@@ -688,9 +742,10 @@ PY
           # pseudo_label / ensemble 只读 OOF，不直接读 cache；传 --cache-root 会触发 argparse 错误。
           case "$name" in
             train_mmoe) extra+=(--cache-root "$CACHE_ROOT"
+                                --spec "$FEATURE_SPEC"
                                 --save-dir "$RUN_ROOT/E8/weights"
                                 "${e8_resume[@]+"${e8_resume[@]}"}") ;;
-            well_branch) extra+=(--cache-root "$CACHE_ROOT") ;;
+            well_branch) extra+=(--cache-root "$CACHE_ROOT" --spec "$FEATURE_SPEC") ;;
           esac
           log "--- [E8] $name"
           python3 "$HERE/E8/code/$name.py" --reports-dir "$REPORTS_DIR" \
@@ -757,7 +812,11 @@ PY
             "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG"
         }
         e10_sub="$RUN_ROOT/E10/submission"
-        if [[ "$e10_phase" == "all" || "$e10_phase" == "final" ]]; then e10_run final_train --out-dir "$RUN_ROOT/v4/final" || return 1; fi
+        if [[ "$e10_phase" == "all" || "$e10_phase" == "final" ]]; then
+          python3 "$HERE/E10/code/final_train.py" --reports-dir "$REPORTS_DIR" \
+            --out-dir "$RUN_ROOT/v4/final" --spec "$FEATURE_SPEC" \
+            "${e10_args[@]+"${e10_args[@]}"}" 2>&1 | tee -a "$LOG" || return 1
+        fi
         if [[ "$e10_phase" == "all" || "$e10_phase" == "export" ]]; then
           e10_ckpt="$(ls -1 "$RUN_ROOT/v4/final"/*.fp32.pt 2>/dev/null | head -1)"
           if [[ -z "$e10_ckpt" ]]; then e10_ckpt="$(ls -1 "$RUN_ROOT/v4/final"/*.pt 2>/dev/null | head -1)"; fi

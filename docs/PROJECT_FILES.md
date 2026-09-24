@@ -39,6 +39,7 @@ v4/
 │   ├── README.md                v4 文档中心（阅读顺序/事实源/维护规则）
 │   ├── platform_setup.md        平台落地（/code vs /data、任务配置、续训）
 │   ├── artifact_reuse.md        跨任务复用（小状态 + 大成果两层持久化）
+│   ├── feature_spec_auto_select.md  E2→E3+ 自动特征版本选择规则
 │   ├── image_requirements.md    镜像需求（基础镜像 + pip 清单 + 禁装清单）
 │   ├── dependencies.md          依赖声明与版本锁定策略
 │   ├── training_tasks.md        训练任务配置表（逐字段照抄）
@@ -284,6 +285,8 @@ v4/
 │   ├── plan_stats.py             计划行数统计（唯一事实源；`--check` 逐条断言阶段/P/平均/总量）
 │   ├── sync_state.py             小状态持久化（checkpoint/OOF/report/scaler -> /data/v4/mirror）
 │   ├── artifact_store.py         **大成果持久化**（cache/pkl/zip/state -> /data/v4/artifacts）
+│   ├── select_feature_spec.py    从 E2_ablation.json 自动选择下游最优特征版本
+│   ├── check_reuse_cache.py      检查 /data 上 E0/E1/E2 复用缓存是否齐备
 │   ├── sync_plan_stats.py        把实测行数同步进文档（**复用 plan_stats 的同一份正则**）
 │   ├── sync_prereg_templates.py  由 P 级计划的 ```json 块重建 33 份预注册模板（防手工副本漂移）
 │   └── gen_data_card_md.py       由 JSON 生成数据卡统计表
@@ -419,5 +422,7 @@ GBDT/Stacking 与后处理规则思想。**未复制其数据、标签或代码�
 | `E8/code/type_well_member.py` | **WP8 完成**：类型井选择 + 井间输入适配的一阶成员 |
 | `docs/README.md` | v4 文档中心（阅读顺序、事实源、维护规则） |
 | `docs/artifact_reuse.md` | 跨任务复用：`sync_state.py` + `artifact_store.py` 两层持久化 |
+| `docs/feature_spec_auto_select.md` | E2→E3+ 自动选择 `F1+win` 等最优特征版本 |
+| `tools/check_reuse_cache.py` | 检查 `/data` 上 E0/E1/E2 复用缓存是否齐备 |
 | `docs/CODE_REVIEW_STATUS.md` | 项目级代码审查发现处置状态 |
 | `docs/AUDIT_FIXES.md` | 本轮全部审计项与修复映射 |

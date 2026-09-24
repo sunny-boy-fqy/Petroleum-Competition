@@ -174,9 +174,15 @@ def run_arch(args) -> int:
     base_rss = None
     for k in fold_list:
         cache_file = fold_cache / f"fold{k}.pkl"
+        resume_stamp = {"spec": spec.as_dict(), "arch": args.arch, "arch_kwargs": kwargs}
         if args.resume and cache_file.is_file():
             try:
-                r = pickle.loads(cache_file.read_bytes())
+                payload = pickle.loads(cache_file.read_bytes())
+                if not (isinstance(payload, dict)
+                        and payload.get("_resume_stamp") == resume_stamp
+                        and "result" in payload):
+                    raise ValueError("fold cache 的 feature_spec/arch 与本次运行不一致")
+                r = payload["result"]
                 results.append(r)
                 tracker.add_fold(k, r.seconds,
                                  r.hist1["n_epochs_run"] + r.hist2["n_epochs_run"],
@@ -185,7 +191,7 @@ def run_arch(args) -> int:
                                         "arch": args.arch, "resumed_fold": True})
                 print(f"[E3/{args.arch}] fold{k} 从 {cache_file.name} 恢复，跳过训练", flush=True)
                 continue
-            except Exception as exc:                     # 缓存损坏/版本不匹配 -> 重跑该折
+            except Exception as exc:                     # 缓存损坏/版本/特征不一致 -> 重跑该折
                 print(f"[E3/{args.arch}] fold{k} 缓存不可用（{exc}），重跑", file=sys.stderr,
                       flush=True)
         opt = SL.SeqOptions(spec=spec, chunk=args.chunk, overlap=args.overlap,
@@ -197,8 +203,12 @@ def run_arch(args) -> int:
                             tb_run_name=f"E3_{args.arch}_fold{k}")
         r = SL.run_two_phase_seq_fold(k, folds, cache, cfg, opt, arch_kwargs=kwargs)
         # 折完成即原子落盘，平台任务中断也能 fold 级 resume。
+        # 写入 feature_spec/arch 指纹，防止切换 F1/F1+win 后错用旧折结果。
         tmp = cache_file.with_suffix(".pkl.tmp")
-        tmp.write_bytes(pickle.dumps(r, protocol=pickle.HIGHEST_PROTOCOL))
+        tmp.write_bytes(pickle.dumps(
+            {"_resume_stamp": resume_stamp, "result": r},
+            protocol=pickle.HIGHEST_PROTOCOL,
+        ))
         tmp.replace(cache_file)
         tracker.add_fold(k, r.seconds, r.hist1["n_epochs_run"] + r.hist2["n_epochs_run"],
                          extra={"best_epoch": r.best_epoch, "tau": r.tau["tau"],

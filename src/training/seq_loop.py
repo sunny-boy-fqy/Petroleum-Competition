@@ -224,8 +224,11 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
 
     def _compatible(man: dict[str, Any]) -> bool:
         # 同一 run_dir/tag 可能在不同搜索/消融配置间复用；配置不一致绝不能 resume。
+        # feature_spec 必须一致：F1 与 F1+win 的输入维度不同，错用旧 checkpoint 会直接崩。
+        want_spec = opt.spec.as_dict() if opt.spec else None
         return (man.get("arch") == opt.arch
-                and man.get("arch_kwargs") == arch_kwargs)
+                and man.get("arch_kwargs") == arch_kwargs
+                and man.get("feature_spec") == want_spec)
 
     if select_dir is not None and opt.resume and (select_dir / "last.pt").is_file():
         try:

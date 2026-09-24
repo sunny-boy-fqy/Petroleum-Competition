@@ -90,6 +90,7 @@
 | 文档 | 说明 |
 |---|---|
 | [`SCORE_MAX_PLAN.md`](SCORE_MAX_PLAN.md) | WP0–WP11 冲分/数据适配计划 |
+| [`feature_spec_auto_select.md`](feature_spec_auto_select.md) | **E2→E3+ 自动特征选择**：ADOPT 优先、行级同特征基线、防混 spec |
 | [`SPWLA2021_REVIEW.md`](SPWLA2021_REVIEW.md) | SPWLA 2021 前五名复盘与 v4 启示 |
 | [`../资料引用索引.md`](../资料引用索引.md) | 外部引用定位 |
 | `../src/`、`../E*/code/` | 真正的模型、损失、特征、训练与推理实现 |
