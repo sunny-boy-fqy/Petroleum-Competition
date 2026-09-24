@@ -6,6 +6,7 @@
       └─ 输入投影 Conv1d(F→base_ch)
       └─ depth 级下采样（stride 2）：每级 2×[depthwise-separable Conv1d(k=5) → BN → GELU]
       └─ bottleneck：插入**空洞卷积**（dilation 递增）扩大有效感受野
+         （Ascend 反传 pad 约束下，实际 dilation 由 `ascend_safe_dilation` 自动截断）
       └─ depth 级上采样（nearest 到 skip 长度）→ 拼接 skip → 同样的 separable 块
       └─ SeqHead：(B,L,base_ch) → 与 RowMLP 同键的多任务输出
 
@@ -22,7 +23,7 @@ from typing import Any
 
 from ..portability import HAS_TORCH, require
 from .heads import SeqHead, count_parameters, init_head_from_stats
-from .padding import nearest_upsample1d, replicate_pad1d
+from .padding import ascend_safe_dilation, nearest_upsample1d, replicate_pad1d
 
 if HAS_TORCH:
     import torch
@@ -35,13 +36,12 @@ if HAS_TORCH:
     class SeparableBlock(nn.Module):
         """depthwise (k=5, groups=C) + pointwise + BN + GELU，可选空洞。"""
 
-        # Ascend aclnn conv 的 dilation 合法范围是 [1, 255]；超过 255 会
-        # 在 Conv2DBackpropInput 上报 "dilation is invalid"。这里统一截断。
-        ASCEND_MAX_DILATION = 255
-
+        # 不能只把 dilation 卡到 255：反传输入卷积的 pad 随 (k-1)*dilation 增长，
+        # U-Net k=5、dilation=255 时 pad 量级 1020，会报 Conv2DBackpropInput
+        # "backprop pad value invalid"。这里按 kernel 反推安全上限。
         def __init__(self, ch: int, k: int = 5, dilation: int = 1, dropout: float = 0.0):
             super().__init__()
-            self.dilation = min(max(int(dilation), 1), int(self.ASCEND_MAX_DILATION))
+            self.dilation = ascend_safe_dilation(k, dilation)
             pad = (k - 1) * self.dilation // 2            # 居中（非因果）
             self.pad = pad
             self.dw = nn.Conv1d(ch, ch, k, padding=0, dilation=self.dilation, groups=ch)

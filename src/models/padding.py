@@ -41,3 +41,24 @@ def nearest_upsample1d(x: Any, size: int):
     if x.dtype == torch.bfloat16:
         return F.interpolate(x.float(), size=size, mode="nearest").to(dtype=x.dtype)
     return F.interpolate(x, size=size, mode="nearest")
+
+
+# Ascend aclnn Conv2DBackpropInput（Conv1d 在 NPU 上通常落到 Conv2D 反传）对
+# 反传输入卷积的 pad 有上限。对 kernel k、dilation d、forward padding=0 的卷积，
+# 其反传输入卷积的有效 pad 量级为 (k-1)*d；实测 d=255/k=5 时该值 1020，
+# 会触发 `backprop pad value invalid[conv2d_backprop_input.cc]`。
+# 因此不能只把 dilation clamp 到 255，还必须保证 (k-1)*dilation <= 255。
+ASCEND_BACKPROP_PAD_MAX = 255
+
+
+def ascend_safe_dilation(kernel_size: int, dilation: int) -> int:
+    """返回 Ascend Conv2DBackpropInput 反传 pad 约束下的安全 dilation。
+
+    约束：``(kernel_size - 1) * dilation <= ASCEND_BACKPROP_PAD_MAX``。
+    例：k=5 -> 最大 63；k=3 -> 最大 127。k=1 时不受该约束。
+    """
+    span = int(kernel_size) - 1
+    if span <= 0:
+        return max(int(dilation), 1)
+    cap = max(int(ASCEND_BACKPROP_PAD_MAX) // span, 1)
+    return min(max(int(dilation), 1), cap)
