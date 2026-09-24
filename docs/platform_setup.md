@@ -1,5 +1,9 @@
 # v4 在 Intern InkStone（discovery）平台上的落地
 
+> **文档导航**：[v4 文档中心](README.md) · [v4 README](../README.md) · [总计划](../PLAN.md) · [代码审查状态](CODE_REVIEW_STATUS.md)
+> **文档类型**：平台落地运行手册。云端目录、任务字段与故障排查；运行入口以 `run_train.sh` / `start.sh` 为准。
+
+
 > 依据平台官方文档：
 > [训练任务](http://discovery-staging.intern-ai.org.cn/docs/workbench/training)、
 > [镜像](http://discovery-staging.intern-ai.org.cn/docs/workbench/images)、
@@ -7,11 +11,17 @@
 > [为开发机准备数据](http://discovery-staging.intern-ai.org.cn/docs/workbench/data-prepare)。
 > 本文把这些约定落到 v4 的具体配置上。**平台文档若与本文件冲突，以平台文档为准。**
 
-> **交付纪律（每次任务完成后必须执行，缺一不可）**：先更新文档（README/PLAN/status/
-> 阶段报告等）→ `git add -A` → `git commit` → `git push origin HEAD:master HEAD:main`
-> → 运行 `python3 tools/pack_code_zip.py` 把**整个项目代码**打包到
-> `/mnt/d/tmp/Petroleum-Competition/`（WSL 路径，对应 Windows `D:\tmp\Petroleum-Competition\`）。
-> **没有完成“更新文档 + add + commit + push + 打包”这五步，任务不算完成。**
+> **交付纪律（每次任务完成后必须执行，缺一不可）**：
+> 1. 先更新文档（README/PLAN/status/阶段报告等）；
+> 2. `git add -A`；
+> 3. `git commit`；
+> 4. `git push origin HEAD:master HEAD:main`；
+> 5. **清除 `/mnt/d/tmp/Petroleum-Competition/` 下的旧 zip**（例如 `rm -f /mnt/d/tmp/Petroleum-Competition/*.zip`；`tools/pack_code_zip.py` 默认也会清旧包）；
+> 6. 运行 `python3 tools/pack_code_zip.py` 生成新的完整代码 zip 到
+>    `/mnt/d/tmp/Petroleum-Competition/`（WSL 路径，对应 Windows `D:\tmp\Petroleum-Competition\`）。
+>
+> **没有完成“更新文档 + add + commit + push + 清旧 zip + 打包新 zip”这六步，任务不算完成。**
+> **交付目录必须只有本次最新 zip；旧 zip 不清理视为任务未完成。**
 
 ---
 

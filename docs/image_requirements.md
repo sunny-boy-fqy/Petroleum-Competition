@@ -1,5 +1,9 @@
 # 训练镜像需求（平台「镜像」功能）
 
+> **文档导航**：[v4 文档中心](README.md) · [v4 README](../README.md) · [总计划](../PLAN.md) · [代码审查状态](CODE_REVIEW_STATUS.md)
+> **文档类型**：镜像需求手册。平台镜像与硬件事实以 `src/hardware.py` 为唯一事实源。
+
+
 > 依据平台文档：[镜像](http://discovery-staging.intern-ai.org.cn/docs/workbench/images)。
 > 平台镜像用**快捷安装**（apt / pip）或 **Dockerfile 编辑**构建；
 > **使用场景必须选「训练任务」**（选错后训练任务里看不到该镜像）；

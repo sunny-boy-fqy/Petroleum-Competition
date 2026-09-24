@@ -1,14 +1,24 @@
 # v4 项目文件与目录总览
 
+> **文档导航**：[v4 文档中心](README.md) · [v4 README](../README.md) · [总计划](../PLAN.md) · [代码审查状态](CODE_REVIEW_STATUS.md)
+> **文档类型**：目录与文件索引。用于定位“什么东西在哪里、是否进 git”；代码引用以仓库实物为准。
+
+
 > 用途：跨机协作（本机写代码 / 云端训练）时快速定位"什么东西在哪里、是否进 git、是否需要带到云端"。
 > 自动核对：`python3 v4/tools/verify_reference.py` 校验冻结引用件；
 > 文件数可用 `git ls-files | wc -l` 与 `find v4 -type f | wc -l` 对照本文档。
 
-> **交付纪律（每次任务完成后必须执行，缺一不可）**：先更新文档（README/PLAN/status/
-> 阶段报告等）→ `git add -A` → `git commit` → `git push origin HEAD:master HEAD:main`
-> → 运行 `python3 tools/pack_code_zip.py` 把**整个项目代码**打包到
-> `/mnt/d/tmp/Petroleum-Competition/`（WSL 路径，对应 Windows `D:\tmp\Petroleum-Competition\`）。
-> **没有完成“更新文档 + add + commit + push + 打包”这五步，任务不算完成。**
+> **交付纪律（每次任务完成后必须执行，缺一不可）**：
+> 1. 先更新文档（README/PLAN/status/阶段报告等）；
+> 2. `git add -A`；
+> 3. `git commit`；
+> 4. `git push origin HEAD:master HEAD:main`；
+> 5. **清除 `/mnt/d/tmp/Petroleum-Competition/` 下的旧 zip**（例如 `rm -f /mnt/d/tmp/Petroleum-Competition/*.zip`；`tools/pack_code_zip.py` 默认也会清旧包）；
+> 6. 运行 `python3 tools/pack_code_zip.py` 生成新的完整代码 zip 到
+>    `/mnt/d/tmp/Petroleum-Competition/`（WSL 路径，对应 Windows `D:\tmp\Petroleum-Competition\`）。
+>
+> **没有完成“更新文档 + add + commit + push + 清旧 zip + 打包新 zip”这六步，任务不算完成。**
+> **交付目录必须只有本次最新 zip；旧 zip 不清理视为任务未完成。**
 
 ---
 
@@ -26,10 +36,16 @@ v4/
 ├── .gitignore                排除数据包/权重/缓存/运行时产物
 │
 ├── docs/                     项目级文档
+│   ├── README.md                v4 文档中心（阅读顺序/事实源/维护规则）
 │   ├── platform_setup.md        平台落地（/code vs /data、任务配置、续训）
 │   ├── image_requirements.md    镜像需求（基础镜像 + pip 清单 + 禁装清单）
+│   ├── dependencies.md          依赖声明与版本锁定策略
 │   ├── training_tasks.md        训练任务配置表（逐字段照抄）
 │   ├── gate_template.md         Gate 预注册模板与判定逻辑
+│   ├── CODE_REVIEW_STATUS.md    代码审查发现逐条处置/遗留状态
+│   ├── AUDIT_FIXES.md           第二轮审查修复清单（历史记录）
+│   ├── SCORE_MAX_PLAN.md        冲分优化计划（WP0–WP11）
+│   ├── SPWLA2021_REVIEW.md      SPWLA 2021 复盘与启示
 │   ├── PROJECT_FILES.md         本文件
 │   ├── gen_plans.py             [生成器] E 层与 P 层骨架（已被 gen_p_details 取代）
 │   └── gen_p_details.py         [生成器] P 级详细子计划（当前有效）
@@ -398,4 +414,6 @@ GBDT/Stacking 与后处理规则思想。**未复制其数据、标签或代码�
 | `run_train.sh` | E6/E8 的 `--resume` 分离透传，不再污染其他子脚本 |
 | `src/losses/score_aligned.py` | boundary_focus 兼容 `(B,L,3)` 序列模式 |
 | `E8/code/type_well_member.py` | **WP8 完成**：类型井选择 + 井间输入适配的一阶成员 |
+| `docs/README.md` | v4 文档中心（阅读顺序、事实源、维护规则） |
+| `docs/CODE_REVIEW_STATUS.md` | 项目级代码审查发现处置状态 |
 | `docs/AUDIT_FIXES.md` | 本轮全部审计项与修复映射 |

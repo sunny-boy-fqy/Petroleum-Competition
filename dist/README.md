@@ -1,5 +1,9 @@
 # dist/ 说明（数据分发包目录）
 
+> **文档导航**：[v4 文档中心](../docs/README.md) · [v4 README](../README.md) · [总计划](../PLAN.md) · [代码审查状态](../docs/CODE_REVIEW_STATUS.md)
+> **文档类型**：数据分发包说明。`dist/*.tar.gz` 不进 git；云端部署字段以 `run_train.sh --mode data` 为准。
+
+
 本目录**不进 git**（`*.tar.gz` 被 `.gitignore` 忽略），只作为本机/云盘之间的数据交换件。
 
 ## 生成

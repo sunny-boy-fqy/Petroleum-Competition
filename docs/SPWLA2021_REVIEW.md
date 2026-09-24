@@ -1,5 +1,9 @@
 # 参考复盘：SPWLA 2021 PDDA 测井竞赛（Volve）对 v4 的启示
 
+> **文档导航**：[v4 文档中心](README.md) · [v4 README](../README.md) · [总计划](../PLAN.md) · [代码审查状态](CODE_REVIEW_STATUS.md)
+> **文档类型**：外部方案复盘。只参考方法与工程思路；不复制外部数据/代码/阈值。
+
+
 > 参考仓库：`Machine-Learning-Competition-2021`（作者已部署到本机）。
 > 参考论文：Fu et al., *Well-Log-Based Reservoir Property Estimation With Machine Learning:
 > A Contest Summary*, Petrophysics 65(01), 2024。

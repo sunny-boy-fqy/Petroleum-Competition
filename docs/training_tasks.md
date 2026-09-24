@@ -1,5 +1,9 @@
 # 训练任务配置表（逐字段照抄）
 
+> **文档导航**：[v4 文档中心](README.md) · [v4 README](../README.md) · [总计划](../PLAN.md) · [代码审查状态](CODE_REVIEW_STATUS.md)
+> **文档类型**：平台训练任务配置表。任务字段逐项照抄；启动前必须完成推送协议。
+
+
 > 平台字段见 [训练任务文档](http://discovery-staging.intern-ai.org.cn/docs/workbench/training)。
 > 启动命令上限 **500 字符**，本表全部命令都远低于该限制。
 

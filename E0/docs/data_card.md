@@ -1,5 +1,9 @@
 # E0 数据卡与口径冻结（E0-R2）
 
+> **文档导航**：[v4 文档中心](../../docs/README.md) · [v4 README](../../README.md) · [总计划](../../PLAN.md) · [代码审查状态](../../docs/CODE_REVIEW_STATUS.md)
+> **文档类型**：阶段数据事实卡。E0 冻结口径与硬事实；后续阶段不得静默改口径。
+
+
 > 复算命令：`python3 v4/E0/code/run_all.py`（本机可跑，**不需要 torch**）
 > 事实源：`reports/E0_data_card.json`、`reports/E0_score_check.json`、
 > `reports/E0_local_contract_gate.json`、`reports/E0_cloud_gate.json`

@@ -1,5 +1,9 @@
 # 依赖声明与环境约束（v4）
 
+> **文档导航**：[v4 文档中心](README.md) · [v4 README](../README.md) · [总计划](../PLAN.md) · [代码审查状态](CODE_REVIEW_STATUS.md)
+> **文档类型**：依赖与环境约束。依赖声明的权威源为代码与 `versions/locks/`；本文件解释策略。
+
+
 > **可执行的 pip 清单见 [`requirements.txt`](../requirements.txt)**（纯 pip 格式，一行一个包）。
 > 本文档说明**为什么**是这些包，以及**不能装**什么。
 

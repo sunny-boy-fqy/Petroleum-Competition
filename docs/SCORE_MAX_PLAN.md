@@ -1,8 +1,12 @@
 # v4 冲分优化详细计划（Score-Max Plan）
 
+> **文档导航**：[v4 文档中心](README.md) · [v4 README](../README.md) · [总计划](../PLAN.md) · [代码审查状态](CODE_REVIEW_STATUS.md)
+> **文档类型**：策略/冲分计划。冲分路线与工作包；不代替总计划的 Gate 与冻结契约。
+
+
 > 目标：在**规则允许、可复算、无标签泄漏**的前提下，按收益/代价排序把 OOF 与提交分数推到尽可能高。
 > 本文是执行顺序的**唯一计划源**；每个 WP 必须有 inner-OOF 证据、配对 CI 与 Gate 收据才能进入下一步。
-> 交付纪律：每次任务完成必须 **更新文档 → git add/commit/push → `tools/pack_code_zip.py` 打包到 `/mnt/d/tmp/Petroleum-Competition/`**。
+> 交付纪律：每次任务完成必须 **更新文档 → git add/commit/push → 清除 `/mnt/d/tmp/Petroleum-Competition/` 旧 zip → `tools/pack_code_zip.py` 打包新包到该目录**。交付目录只保留最新 zip。
 
 ---
 
@@ -278,8 +282,9 @@
 1. 更新本文档 / README / status / 相关 PLAN；
 2. `git add -A && git commit -m "..."`；
 3. `git push origin HEAD:master HEAD:main`（若云端有任务在跑，先推 feature 分支，任务结束后再合并）；
-4. `python3 tools/pack_code_zip.py` 打包到 `/mnt/d/tmp/Petroleum-Competition/`；
-5. 在报告中记录 revision、zip sha256、实验结论。
+4. **清除 `/mnt/d/tmp/Petroleum-Competition/` 下的旧 zip**（`rm -f /mnt/d/tmp/Petroleum-Competition/*.zip`）；
+5. `python3 tools/pack_code_zip.py` 打包新包到 `/mnt/d/tmp/Petroleum-Competition/`；
+6. 在报告中记录 revision、zip sha256、实验结论。
 
 ---
 

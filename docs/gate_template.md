@@ -1,5 +1,9 @@
 # v4 Gate 预注册模板
 
+> **文档导航**：[v4 文档中心](README.md) · [v4 README](../README.md) · [总计划](../PLAN.md) · [代码审查状态](CODE_REVIEW_STATUS.md)
+> **文档类型**：Gate 预注册模板。Gate 模板必须与 `src/validation/gates.py` 和 33 份 `versions/prereg_templates/` 一致。
+
+
 > 所有 P 级 Gate 必须**在实验前**产出 `v4/reports/<GATE_ID>_gate_prereg.json`，字段按本模板。预注册后不得修改阈值，只能新建修订号（`<GATE_ID>_r2`）。
 >
 > 校验器：`v4/src/validation/gates.py`（`validate_prereg` / `effective_threshold` / `aggregate_gate`）。

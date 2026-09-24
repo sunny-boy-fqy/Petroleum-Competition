@@ -1,5 +1,9 @@
 # 第二轮审查修复清单（含 WP8 完成）
 
+> **文档导航**：[v4 文档中心](README.md) · [v4 README](../README.md) · [总计划](../PLAN.md) · [代码审查状态](CODE_REVIEW_STATUS.md)
+> **文档类型**：历史修复记录。第二轮审查修复清单；当前审查处置以《代码审查发现处置状态》为准。
+
+
 > 对应审查报告：`placeholder_min_acc` 口径、`expected_value_table` τ=0 事故、
 > `MatrixImputer` 静默不插补、`assert_atom_priority` 恒真、`--resume` 覆盖、
 > P3 小问题，以及 WP8 的完整落地。

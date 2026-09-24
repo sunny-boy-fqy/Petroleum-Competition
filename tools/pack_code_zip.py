@@ -6,7 +6,9 @@
 - 只打包 git 跟踪 + 未被 .gitignore 忽略的新增文件；
 - 包内路径以仓库根为根（run_train.sh 在 zip 根目录，不套一层 v4/）；
 - 排除 .git / .venv / .v4cache / __pycache__ / 大产物等；
-- 默认输出到 /mnt/d/tmp/Petroleum-Competition/。
+- 默认输出到 /mnt/d/tmp/Petroleum-Competition/；
+- **默认先清除目标目录中的旧 zip**，保证交付目录只保留本次最新包；
+  如需保留旧包，显式传 `--keep-old`。
 
 WSL 兼容
 --------
@@ -19,6 +21,7 @@ WSL 兼容
     python3 tools/pack_code_zip.py
     python3 tools/pack_code_zip.py --out-dir /mnt/d/tmp/Petroleum-Competition
     python3 tools/pack_code_zip.py --name v4_code_src.zip
+    python3 tools/pack_code_zip.py --keep-old     # 调试用，不推荐交付时使用
 """
 from __future__ import annotations
 
@@ -118,6 +121,38 @@ def build_zip(repo: Path, out_path: Path, files: list[str]) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def clean_old_zips(out_dir: str | Path, pattern: str = "*.zip") -> list[Path]:
+    """删除目标目录中的旧 zip（默认交付纪律：一个目录只留最新包）。"""
+    d = Path(out_dir)
+    removed: list[Path] = []
+    if not d.is_dir():
+        return removed
+    for p in sorted(d.glob(pattern)):
+        if p.is_file():
+            p.unlink()
+            removed.append(p)
+    return removed
+
+
+def _clean_windows_zips(win_dir: str) -> bool:
+    """WSL `/mnt/d` 只读回退时，在 Windows 侧删除旧 zip。"""
+    ps = _powershell()
+    if not ps:
+        return False
+    cmd = (
+        f"$d = '{win_dir}'; "
+        f"New-Item -ItemType Directory -Force -Path $d | Out-Null; "
+        f"Get-ChildItem -LiteralPath $d -Filter '*.zip' -File -ErrorAction SilentlyContinue | "
+        f"Remove-Item -Force -ErrorAction SilentlyContinue; exit 0"
+    )
+    try:
+        subprocess.run([ps, "-NoProfile", "-Command", cmd],
+                       check=True, capture_output=True, text=True)
+        return True
+    except Exception:
+        return False
+
+
 def _is_writable_dir(path: Path) -> bool:
     try:
         path.mkdir(parents=True, exist_ok=True)
@@ -164,13 +199,15 @@ def _copy_to_windows_via_powershell(src: Path, dst_win: str) -> bool:
 
 
 def _print_summary(repo: Path, final_display: str, files: list[str],
-                   archive_for_stats: Path) -> None:
+                   archive_for_stats: Path, removed: list[Path] | None = None) -> None:
     size_mb = archive_for_stats.stat().st_size / 1024 ** 2
     print(f"[pack] root      : {repo}")
     print(f"[pack] zip       : {final_display}")
     print(f"[pack] files     : {len(files)}")
     print(f"[pack] size      : {size_mb:.2f} MiB")
     print(f"[pack] sha256    : {sha256_file(archive_for_stats)}")
+    print(f"[pack] old zip   : {len(removed or [])} removed"
+          + (f" ({', '.join(p.name for p in removed)})" if removed else ""))
     print(f"[pack] git rev   : {git_rev(repo)}{' (dirty)' if git_dirty(repo) else ''}")
 
 
@@ -182,6 +219,8 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"输出目录（默认 {DEFAULT_OUT_DIR}）")
     ap.add_argument("--name", default=None,
                     help="zip 文件名；缺省带 git short sha 与 dirty 标记")
+    ap.add_argument("--keep-old", action="store_true",
+                    help="保留目标目录旧 zip；默认删除（交付纪律要求清旧包）")
     args = ap.parse_args(argv)
 
     repo = Path(args.repo).expanduser().resolve()
@@ -204,10 +243,11 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = Path(args.out_dir).expanduser().resolve()
     out_path = out_dir / name
 
-    # 正常 Linux / 可写挂载：直接写目标目录。
+    # 正常 Linux / 可写挂载：先清旧 zip，再原子写新包。
     if _is_writable_dir(out_dir):
+        removed = [] if args.keep_old else clean_old_zips(out_dir)
         build_zip(repo, out_path, files)
-        _print_summary(repo, str(out_path), files, out_path)
+        _print_summary(repo, str(out_path), files, out_path, removed=removed)
         return 0
 
     # WSL 的 /mnt/d 只读：先在 WSL 临时目录打包，再走 powershell.exe 复制到 D:。
@@ -223,13 +263,19 @@ def main(argv: list[str] | None = None) -> int:
     tmpdir_obj = tempfile.TemporaryDirectory(prefix="pack_zip_", dir=str(tmp_base))
     tmpdir = Path(tmpdir_obj.name)
     try:
+        removed_win: list[Path] = []
+        if not args.keep_old:
+            if not _clean_windows_zips(win_dir):
+                print("!! 无法清除 Windows 目标目录旧 zip", file=sys.stderr)
+                return 6
         tmp_zip = tmpdir / name
         build_zip(repo, tmp_zip, files)
         win_target = win_dir + "\\" + name
         if not _copy_to_windows_via_powershell(tmp_zip, win_target):
             print("!! powershell.exe 复制到 Windows D: 失败", file=sys.stderr)
             return 5
-        _print_summary(repo, win_target + "  (Windows)", files, tmp_zip)
+        _print_summary(repo, win_target + "  (Windows)", files, tmp_zip,
+                       removed=removed_win)
     finally:
         tmpdir_obj.cleanup()
     return 0
