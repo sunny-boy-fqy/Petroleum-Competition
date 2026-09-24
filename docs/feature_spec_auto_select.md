@@ -66,10 +66,8 @@ python3 tools/select_feature_spec.py --reports-dir "$V4_REPORTS_DIR" --print-key
 - E3 的 `row-vs-seq` 对照：
   - 若选中的是 `F1`：使用 `runs/E1/oof.npz`；
   - 若选中的是 `F1+win` 等：使用 E2 已产出的同特征行级 OOF：
-
-```text
-$V4_REPORTS_DIR/E2_work/oof_<selected_key>.npz
-```
+    - 优先：`$RUN_ROOT/E2/oof_<selected_key>.npz`（run_train 的 E2 work-dir）
+    - 回退：`$V4_REPORTS_DIR/E2_work/oof_<selected_key>.npz`（手工直跑 E2 的默认 work-dir）
 
 因此 E2 的 ADOPT 结论不会再被丢掉。
 

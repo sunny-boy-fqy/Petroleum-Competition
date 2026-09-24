@@ -87,12 +87,14 @@ def main(argv: list[str] | None = None) -> int:
                 "reports/E2_best_spec.json"):
         p = mirror / rel
         checks.append((f"E2 / {Path(rel).name}", p.is_file(), str(p)))
+    e2_run = mirror / "run_root" / "E2"
     e2_work = mirror / "reports" / "E2_work"
-    oofs = sorted(e2_work.glob("oof_*.npz")) if e2_work.is_dir() else []
-    checks.append(("E2 / row OOF (E2_work)", bool(oofs),
-                   f"{e2_work}  oof_files={len(oofs)}"))
-    if oofs:
-        checks.append(("E2 / best-spec row OOF", True, ", ".join(p.name for p in oofs[:4])))
+    oofs_run = sorted(e2_run.glob("oof_*.npz")) if e2_run.is_dir() else []
+    oofs_work = sorted(e2_work.glob("oof_*.npz")) if e2_work.is_dir() else []
+    oofs = oofs_run or oofs_work
+    checks.append(("E2 / row OOF", bool(oofs),
+                   f"run_root={len(oofs_run)} reports/E2_work={len(oofs_work)} "
+                   f"selected={','.join(p.name for p in oofs[:4])}"))
 
     # progress
     prog = state / "all_pipeline_progress.json"

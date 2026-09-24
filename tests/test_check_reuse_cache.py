@@ -35,11 +35,12 @@ class TestCheckReuseCache(unittest.TestCase):
         (e1 / "oof.npz").write_bytes(b"o")
         (e1 / "last.pt").write_bytes(b"p")
         reps = mir / "reports"
+        (mir / "run_root" / "E2").mkdir(parents=True, exist_ok=True)
         (reps / "E2_work").mkdir(parents=True, exist_ok=True)
         for name in ("E0_data_card.json", "E0_folds.json", "E0_local_contract_gate.json",
                      "E1_gate.json", "E2_ablation.json", "E2_gate.json", "E2_best_spec.json"):
             (reps / name).write_text("{}", encoding="utf-8")
-        (reps / "E2_work" / "oof_FX_win_w11-51-201_smsmmtc.npz").write_bytes(b"o")
+        (mir / "run_root" / "E2" / "oof_FX_win_w11-51-201_smsmmtc.npz").write_bytes(b"o")
         st.mkdir(parents=True, exist_ok=True)
         (st / "all_pipeline_progress.json").write_text(json.dumps({
             "tasks": {str(i): {"status": "done"} for i in range(1, 6)},

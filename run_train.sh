@@ -418,7 +418,7 @@ resolve_feature_spec() {
 }
 
 resolve_feature_spec_key() {
-  # 返回 E2 adopted 候选的 spec_key（用于找 E2_work/oof_<key>.npz 作为同特征行级基线）。
+  # 返回 E2 adopted 候选的 spec_key（用于找 $RUN_ROOT/E2/oof_<key>.npz 作为同特征行级基线）。
   if [[ -n "${V4_FEATURE_SPEC_KEY:-}" ]]; then
     printf '%s\n' "$V4_FEATURE_SPEC_KEY"
     return 0
@@ -564,11 +564,17 @@ PY
             e3_row_oof="$RUN_ROOT/E1/oof.npz"
           else
             e3_row_key="$(resolve_feature_spec_key)"
-            e3_row_oof="$REPORTS_DIR/E2_work/oof_${e3_row_key}.npz"
-            if [[ ! -f "$e3_row_oof" ]]; then
-              log "!! [E3] 找不到同特征行级 OOF（$e3_row_oof）。"
+            e3_row_oof=""
+            for _cand in "$RUN_ROOT/E2/oof_${e3_row_key}.npz" \
+                         "$REPORTS_DIR/E2_work/oof_${e3_row_key}.npz"; do
+              if [[ -f "$_cand" ]]; then e3_row_oof="$_cand"; break; fi
+            done
+            if [[ -z "$e3_row_oof" ]]; then
+              log "!! [E3] 找不到同特征行级 OOF："
+              log "      $RUN_ROOT/E2/oof_${e3_row_key}.npz"
+              log "      $REPORTS_DIR/E2_work/oof_${e3_row_key}.npz"
               log "    自动选中的 spec=$FEATURE_SPEC 不能用 F1/E1 基线做受控对照；"
-              log "    请检查 E2_work 是否已同步到 /data，或显式 V4_FEATURE_SPEC=F1 回退对照口径。"
+              log "    请检查 E2 OOF 是否已同步到 /data，或显式 V4_FEATURE_SPEC=F1 回退对照口径。"
               return 1
             fi
           fi

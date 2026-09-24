@@ -71,7 +71,7 @@ class TestRunTrainAutoSpecWiring(unittest.TestCase):
             "select_feature_spec.py",
             "resolve_feature_spec",
             "--spec \"$FEATURE_SPEC\"",
-            "E2_work/oof_${e3_row_key}.npz",
+            "RUN_ROOT/E2/oof_${e3_row_key}.npz",
         ):
             self.assertIn(token, src)
 
