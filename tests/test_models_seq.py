@@ -110,6 +110,17 @@ class TestSeqBackbones(unittest.TestCase):
         cls.unet = build_unet(F, base_ch=16, depth=3, dropout=0.0).eval()
         cls.tcn = build_tcn(F, channels=16, n_blocks=4, dilation_max=4, dropout=0.0).eval()
 
+    def test_ascend_dilation_cap_255(self):
+        """Ascend aclnn conv 的 dilation 上限是 255；默认配置也不得越界。"""
+        unet = build_unet(F, base_ch=8, depth=3, dilation_max=512)
+        tcn = build_tcn(F, channels=8, n_blocks=9, dilation_max=512)
+        for model in (unet, tcn):
+            for m in model.modules():
+                d = getattr(m, "dilation", None)
+                if isinstance(d, int):
+                    self.assertGreaterEqual(d, 1)
+                    self.assertLessEqual(d, 255)
+
     def test_full_segment_length_preserved(self):
         """全段 seq2seq：任意长度（含 257/1024）输出与输入逐行同长。"""
         for m in (self.unet, self.tcn):
@@ -162,6 +173,7 @@ class TestSeqBackbones(unittest.TestCase):
         因此这里用显式容差测"多远之外的扰动仍能改变输出"，并把经验值写进断言信息；
         `receptive_field()` 在报告里也只作为上界使用。
         """
+        torch.manual_seed(42)
         m = build_unet(F, base_ch=16, depth=4, dropout=0.0).eval()
         x = torch.randn(1, 512, F)
         with torch.no_grad():

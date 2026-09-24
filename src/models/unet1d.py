@@ -35,11 +35,16 @@ if HAS_TORCH:
     class SeparableBlock(nn.Module):
         """depthwise (k=5, groups=C) + pointwise + BN + GELU，可选空洞。"""
 
+        # Ascend aclnn conv 的 dilation 合法范围是 [1, 255]；超过 255 会
+        # 在 Conv2DBackpropInput 上报 "dilation is invalid"。这里统一截断。
+        ASCEND_MAX_DILATION = 255
+
         def __init__(self, ch: int, k: int = 5, dilation: int = 1, dropout: float = 0.0):
             super().__init__()
-            pad = (k - 1) * dilation // 2                 # 居中（非因果）
+            self.dilation = min(max(int(dilation), 1), int(self.ASCEND_MAX_DILATION))
+            pad = (k - 1) * self.dilation // 2            # 居中（非因果）
             self.pad = pad
-            self.dw = nn.Conv1d(ch, ch, k, padding=0, dilation=dilation, groups=ch)
+            self.dw = nn.Conv1d(ch, ch, k, padding=0, dilation=self.dilation, groups=ch)
             self.pw = nn.Conv1d(ch, ch, 1)
             self.bn = nn.BatchNorm1d(ch)
             self.drop = nn.Dropout(dropout) if dropout > 0 else nn.Identity()

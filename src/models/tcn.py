@@ -42,12 +42,17 @@ if HAS_TORCH:
     class TCNBlock(nn.Module):
         """残差块：`x + dropout(conv2(gelu(conv1(centered_pad(x)))))`。"""
 
+        # Ascend aclnn conv 的 dilation 合法范围是 [1, 255]；超过会在反传时报
+        # Conv2DBackpropInput dilation invalid。这里统一截断。
+        ASCEND_MAX_DILATION = 255
+
         def __init__(self, ch: int, k: int = 3, dilation: int = 1, dropout: float = 0.1,
                      use_weight_norm: bool = True):
             super().__init__()
-            self.pad = (k - 1) * dilation // 2        # 居中 -> 非因果
-            c1 = nn.Conv1d(ch, ch, k, dilation=dilation)
-            c2 = nn.Conv1d(ch, ch, k, dilation=dilation)
+            self.dilation = min(max(int(dilation), 1), int(self.ASCEND_MAX_DILATION))
+            self.pad = (k - 1) * self.dilation // 2   # 居中 -> 非因果
+            c1 = nn.Conv1d(ch, ch, k, dilation=self.dilation)
+            c2 = nn.Conv1d(ch, ch, k, dilation=self.dilation)
             self.conv1 = weight_norm(c1) if use_weight_norm else c1
             self.conv2 = weight_norm(c2) if use_weight_norm else c2
             self.drop = nn.Dropout(dropout)
