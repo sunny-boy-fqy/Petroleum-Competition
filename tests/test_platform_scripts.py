@@ -527,6 +527,14 @@ class TestRunTrainAllModeRunsFullPipeline(unittest.TestCase):
         for token in ("task_status", "already done", "task_local_ready"):
             self.assertIn(token, self.src)
 
+    def test_stale_pause_flag_is_cleared_on_new_run(self):
+        # 上次平台 SIGTERM / 手工暂停会在本地留下 pause.flag；新任务如果原样启动，
+        # 训练循环会在第一个 epoch 边界再次训练暂停，表现为"刚恢复就 failed"。
+        self.assertIn("clear_stale_pause_flag() {", self.src)
+        self.assertIn("V4_KEEP_PAUSE_FLAG", self.src)
+        self.assertIn("  all)\n    clear_stale_pause_flag\n", self.src)
+        self.assertIn("  stage) clear_stale_pause_flag; run_stage ;;", self.src)
+
 
 class TestCrossTaskStateMirror(unittest.TestCase):
     """本地 runtime 会随任务结束丢失，必须只把小状态文件镜像到 /data 并恢复。"""

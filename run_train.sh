@@ -132,6 +132,18 @@ export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$CACHE_ROOT/xdg}"
 
 log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
 
+clear_stale_pause_flag() {
+  # 平台信号/手工暂停会在本地留下 pause.flag；若新任务启动时还带着它，
+  # 训练循环会在第一个 epoch 边界立刻再次暂停，表现为"刚恢复就 failed"。
+  # 新一次运行默认清理这个残留标志；确实想保留可设 V4_KEEP_PAUSE_FLAG=1。
+  [[ "${V4_KEEP_PAUSE_FLAG:-0}" == "1" ]] && return 0
+  if [[ -e "$V4_PAUSE_FLAG" ]]; then
+    log "[pause] 检测到残留暂停标志：$V4_PAUSE_FLAG"
+    log "[pause] 新任务启动自动清理，避免恢复后第一个 epoch 又立即暂停"
+    rm -f "$V4_PAUSE_FLAG" || true
+  fi
+}
+
 # all 模式进度台账（本地 STATE_DIR，最终 publish 时随模型一起复制到 /data）
 mark_progress() {
   python3 - "$ALL_PROGRESS" "$1" "$2" "${3:-running}" <<'PY'
@@ -894,9 +906,9 @@ case "$MODE" in
   env)   run_env ;;
   data)  run_data ;;
   e0)    run_e0 ;;
-  smoke) run_smoke ;;
+  smoke) clear_stale_pause_flag; run_smoke ;;
   data-health) check_env_profile full ;;
-  stage) run_stage ;;
+  stage) clear_stale_pause_flag; run_stage ;;
   publish)
     publish_progress_to_network || true
     sync_state_to_network || true
@@ -907,6 +919,7 @@ case "$MODE" in
     restore_artifacts_from_network || exit $?
     ;;
   all)
+    clear_stale_pause_flag
     if ! [[ "$ALL_THROUGH" =~ ^[0-9]+$ ]] || (( ALL_THROUGH < 1 || ALL_THROUGH > 14 )); then
       log "!! --through/--all-to 只支持 1..14，got $ALL_THROUGH"
       exit 2

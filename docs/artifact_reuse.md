@@ -46,6 +46,7 @@ v4 采用**两层持久化**：
 `run_train.sh --mode all` 现在会自动：
 
 1. 启动时：
+   - 清理上次 SIGTERM / 手工暂停留下的 `pause.flag`（避免新任务第一个 epoch 又立即暂停）；
    - 从 `/data/v4/state` 恢复进度；
    - 调用 `restore_state_from_network` 恢复小状态；
    - 调用 `restore_artifacts_from_network` 恢复大成果 cache / 折结果 / 提交包 / state JSON。
@@ -55,6 +56,35 @@ v4 采用**两层持久化**：
 3. 任务/进程退出时：
    - `cleanup_state_mirror` 再同步一次小状态；
    - 再发布一次大成果，保证异常退出前已产出的内容也保存。
+
+### 3.1 暂停 / 中断后的恢复
+
+平台发送 `SIGTERM`，或手工执行：
+
+```bash
+touch /code/workspace/v4/state/pause.flag
+```
+
+训练会在下一个 epoch 边界保存 `last.pt` 并退出，同时留下本地
+`/code/workspace/v4/state/pause.flag`。如果新任务启动时不清理它，训练循环会认为
+暂停仍然有效，表现为：
+
+```text
+TrainingPaused: [seq fold0] stage1 stopped: paused
+```
+
+`run_train.sh --mode all` / `--mode stage` / `--mode smoke` 启动时会自动删除这个残留标志。
+如果确实需要保留，设置：
+
+```bash
+export V4_KEEP_PAUSE_FLAG=1
+```
+
+正常恢复训练时**不要**设置该变量。
+
+> 说明：`artifact_store.py restore` 在恢复大成果时会先打印
+> `[artifact_store] restore 开始 ...`。从网络盘复制 1 GiB 级 cache 可能需要数十秒；
+> 看到开始行后耐心等待完成行即可，不是交互式输入卡住。
 
 新机器上仍会重跑“本地缺失且无法复用”的步骤，例如：
 

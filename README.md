@@ -36,7 +36,7 @@
 
 | 项目 | 状态 |
 |---|---|
-| 代码实现 | E1–E10 模型/训练/推理/打包代码已实现；本次重构后全量测试 **888 项通过（跳过 3）** |
+| 代码实现 | E1–E10 模型/训练/推理/打包代码已实现；本次重构后全量测试 **889 项通过（跳过 3）** |
 | 本地口径层 | E0 数据契约、评分复算、折指纹、提交契约已通过 |
 | 云端训练 | **未完成**：正式 5 折 OOF、E1–E10 数值 Gate、Ascend 实机验证仍需平台任务 |
 | 最终提交 | **未生成**：需先完成云端训练与 E10 打包，且以官方 `result.zip` 为准 |
@@ -109,6 +109,10 @@ bash "$(find /code/workspace -name run_train.sh | head -1)" --mode smoke
 # 云端⑤ 单阶段训练（可续训）
 bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage E1 --resume
 ```
+
+> **恢复训练前清理暂停标志**：平台 `SIGTERM` 或手工 `touch pause.flag` 后，本地会留下
+> `/code/workspace/v4/state/pause.flag`。`run_train.sh --mode all/stage/smoke` 启动时会自动清理它，
+> 避免新任务在第一个 epoch 边界又立即 `TrainingPaused`。如果确实要保留，设置 `V4_KEEP_PAUSE_FLAG=1`。
 
 ### 1.4 本机无 torch 也可跑的口径层
 

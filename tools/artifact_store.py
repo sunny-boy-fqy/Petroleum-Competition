@@ -234,6 +234,8 @@ def publish(args: argparse.Namespace) -> int:
                   file=sys.stderr)
         return 3
 
+    print(f"[artifact_store] publish 开始：{local_root} -> {artifact_root} "
+          f"(files={len(entries)}, bytes={_fmt_bytes(total_bytes)})", flush=True)
     copied = 0
     copied_bytes = 0
     failed = 0
@@ -286,6 +288,7 @@ def restore(args: argparse.Namespace) -> int:
         print(f"[artifact_store] 无 artifact 目录，跳过 restore：{artifact_root}")
         return 0
 
+    print(f"[artifact_store] restore 开始：{artifact_root} -> {local_root}", flush=True)
     copied = 0
     failed = 0
     for source in SOURCES:
