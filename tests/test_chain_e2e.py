@@ -8,7 +8,7 @@
 断言：
   * 每个阶段的**报告/gate 文件按契约落地**（E1_metrics/E1_gate、E6_atomic_report/E6_P0_gate、
     E9_validation_report/E9_P0_gate、E9_submission_decision、E10_final_train）；
-  * 候选表由 E6 的 OOF 提供并被 E9 正确复算（`oof_total` 非空、护栏下限 = 81.7757）；
+  * 候选表由 E6 的 OOF 提供并被 E9 正确复算（`oof_total` 非空、本地护栏下限 = 79.382479）；
   * 决策 `--dry-run` **不写**候选表；E10 `--dry-run` **不落权重**；
   * 全程不污染仓库的 `versions/candidates.json` / `versions/registry.json`；
   * 失败时（缺 OOF）链路给出明确的非零退出码，而不是静默产出空结论。
@@ -110,7 +110,7 @@ class TestChainEndToEnd(unittest.TestCase):
         for cid, r in rows.items():
             self.assertIsNotNone(r["oof_total"], cid)
             self.assertTrue(r["guardrail_reason"])
-        self.assertAlmostEqual(val["guardrail"]["floor"], 81.7757, places=4)
+        self.assertAlmostEqual(val["guardrail"]["floor"], 79.382479, places=4)
         self.assertTrue((self.reports / "E9_P0_gate.json").is_file())
 
         # ---- E9/P0：决策（dry-run 不写候选表）
@@ -121,7 +121,7 @@ class TestChainEndToEnd(unittest.TestCase):
                               .read_text(encoding="utf-8"))
         self.assertIn("choice", decision)
         self.assertIn("shortlist", decision)
-        self.assertAlmostEqual(decision["guardrail_floor"], 81.7757, places=4)
+        self.assertAlmostEqual(decision["guardrail_floor"], 79.382479, places=4)
         stored = json.loads(self.cands.read_text(encoding="utf-8"))
         self.assertTrue(all(c["status"] == "local_only" for c in stored["candidates"]),
                         "dry-run 不得改候选状态")

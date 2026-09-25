@@ -276,9 +276,8 @@ def select_tau_per_target(score_fn=None, cont=None, q_atom=None, y=None, mask=No
     ya_all = None
     if y_atom is not None:
         ya_all = np.asarray(y_atom, dtype="float64")
-        if ya_all.shape != (yy.shape if 'yy' in locals() else np.asarray(y).shape):
-            # 形状检查放在 y/mask 解析后更准确；这里先记录，循环内再逐列检查
-            pass
+        if ya_all.shape != yy.shape:
+            raise ValueError(f"y_atom 形状 {ya_all.shape} != y 形状 {yy.shape}")
 
     for t, name in enumerate(C.TARGETS):
         obs = m[:, t] > 0
@@ -377,6 +376,7 @@ def misclassification_cost_report(score_fn=None, cont=None, q_atom=None, y=None,
     if c.shape != q.shape or yy.shape != c.shape or m.shape != c.shape:
         raise ValueError("cont/q_atom/y/mask must all be (N,3) with identical shapes")
     t = _tau_vector(tau)
+    from ..features import basic as FB
 
     report: dict = {}
     total_cont = total_switch = 0.0
@@ -387,7 +387,7 @@ def misclassification_cost_report(score_fn=None, cont=None, q_atom=None, y=None,
                             "acc_cont": 0.0, "acc_switch": 0.0, "delta": 0.0}
             continue
         fn = _resolve_score_fn(score_fn, j)
-        is_atom = np.abs(yy[:, j] - av[j]) <= C.PLACEHOLDER_ABS_TOL
+        is_atom = FB.is_atom_value(yy[:, j], name)
         hit = q[:, j] > t[j]
         n_false_atom = int(np.sum(obs & (~is_atom) & hit))
         n_missed_atom = int(np.sum(obs & is_atom & (~hit)))

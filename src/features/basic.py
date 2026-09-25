@@ -119,6 +119,26 @@ def _atom_tolerances() -> np.ndarray:
                       np.abs(np.spacing(vals.astype("float32")).astype("float64")))
 
 
+def atom_tolerance(target: str) -> float:
+    """返回某个目标原子值判定的 float32 ULP 容忍差（唯一判据实现）。"""
+    try:
+        idx = C.TARGETS.index(str(target))
+    except ValueError as exc:
+        raise KeyError(f"unknown target {target!r}; expected one of {C.TARGETS}") from exc
+    return float(_atom_tolerances()[idx])
+
+
+def is_atom_value(values: np.ndarray, target: str) -> np.ndarray:
+    """``values == ATOM_VALUES[target]`` 的 float32 往返安全版本。
+
+    生产分片把标签存为 float32，读回后再转 float64 时，POR/SW 等常量不再与
+    Python 字面量逐位相等。所有“原子行判定/占位行掩码”必须走本函数，
+    不得再写 ``y == C.ATOM_VALUES[t]`` 或 ``abs(y - ...) <= 1e-9``。
+    """
+    arr = np.asarray(values, dtype="float64")
+    return np.abs(arr - float(C.ATOM_VALUES[str(target)])) <= atom_tolerance(target)
+
+
 def build_labels(targets: np.ndarray, target_missing: np.ndarray,
                  placeholder: np.ndarray) -> dict[str, np.ndarray]:
     """构造训练标签（含 PERM 的 log10 变换、各目标掩码与**原子/联合**标签）。
@@ -153,11 +173,10 @@ def build_labels(targets: np.ndarray, target_missing: np.ndarray,
     mask = (~tmiss).astype("float32")
     y_ph = np.asarray(placeholder, dtype="float32")
 
-    # 原子标签（观测到 且 等于原子哨兵值）
-    atom_vals = np.asarray([C.ATOM_VALUES[t] for t in C.TARGETS], dtype="float64")
-    tol = _atom_tolerances()[None, :]
+    # 原子标签（观测到 且 等于原子哨兵值）——统一走 is_atom_value，避免 float32 往返失效。
     observed = ~tmiss
-    y_atom_hit = (np.abs(raw - atom_vals[None, :]) <= tol) & observed
+    y_atom_hit = np.stack([is_atom_value(raw[:, i], t) for i, t in enumerate(C.TARGETS)],
+                          axis=1) & observed
     y_atom = y_atom_hit.astype("float32")
     y_joint = (y_atom_hit.all(axis=1) & (~tmiss).any(axis=1)).astype("float32")
 
@@ -210,11 +229,9 @@ def fit_target_scalers(y_por: np.ndarray, y_sw: np.ndarray, mask: np.ndarray,
     if m.shape != (por.size, 3):
         raise ValueError(f"mask must be ({por.size},3) float/bool, got {tuple(m.shape)}")
 
-    av = np.asarray([C.ATOM_VALUES[t] for t in C.TARGETS], dtype="float64")
-    tol = _atom_tolerances()[None, :]
     hit = np.zeros((por.size, 3), dtype=bool)
-    hit[:, 0] = (np.abs(por - av[0]) <= float(tol[0, 0])) & m[:, 0] & np.isfinite(por)
-    hit[:, 2] = (np.abs(sw - av[2]) <= float(tol[0, 2])) & m[:, 2] & np.isfinite(sw)
+    hit[:, 0] = is_atom_value(por, "POR") & m[:, 0] & np.isfinite(por)
+    hit[:, 2] = is_atom_value(sw, "SW") & m[:, 2] & np.isfinite(sw)
 
     z = None
     if z_perm is not None:
@@ -228,8 +245,7 @@ def fit_target_scalers(y_por: np.ndarray, y_sw: np.ndarray, mask: np.ndarray,
         yp = np.asarray(y_perm, dtype="float64").reshape(-1)
         if yp.size != por.size:
             raise ValueError("y_perm must have the same length as y_por")
-        hit[:, 1] = ((np.abs(yp - av[1]) <= float(tol[0, 1]))
-                     & m[:, 1] & np.isfinite(yp))
+        hit[:, 1] = is_atom_value(yp, "PERM") & m[:, 1] & np.isfinite(yp)
 
     # 连续头尺度只由“非原子有效行”拟合；原子行由 q_atom 硬切换负责。
     vp = por[m[:, 0] & ~hit[:, 0] & np.isfinite(por)]
@@ -356,7 +372,7 @@ def decode_predictions(por, perm_z=None, sw=None,
         out = per_target_hard_switch(out, np.asarray(q_atom, dtype="float64"),
                                      tau_atom, atom_values)
     elif q_ph is not None and tau is not None:
-        hit = np.asarray(q_ph, dtype="float64") >= float(tau)
+        hit = np.asarray(q_ph, dtype="float64") > float(tau)
         for j, t in enumerate(C.TARGETS):
             out[hit, j] = C.ATOM_VALUES[t]
     if q_joint is not None and tau_high is not None:

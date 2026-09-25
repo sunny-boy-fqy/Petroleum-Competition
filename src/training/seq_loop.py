@@ -85,6 +85,7 @@ class SeqOptions:
     resume: bool = False
     save_checkpoints: bool = True
     select_tau: bool = True
+    placeholder_tau_constraint: float | None = None
     scaler_prefix: str = "E3"
     arch: str = "unet"
     run_dir: Path | None = None
@@ -205,6 +206,26 @@ def score_wells(preds: dict, wells: Sequence[str], cache, opt: SeqOptions,
             "n_rows": int(yt.shape[0]), "y_true": yt, "y_pred": yp, "mask": m}
 
 
+def _model_summary_with_arch(model, opt: SeqOptions, n_params: int) -> dict[str, Any]:
+    """汇总体结构与实际 dilation/RF，避免架构截断只藏在私有属性里。"""
+    out: dict[str, Any] = {"arch": opt.arch, "chunk": opt.chunk,
+                           "overlap": opt.overlap, "n_params": int(n_params)}
+    try:
+        if opt.arch == "tcn":
+            from ..models.tcn import model_summary as _summary
+            out.update(_summary(model))
+        elif opt.arch == "unet":
+            from ..models.unet1d import model_summary as _summary
+            out.update(_summary(model))
+        elif opt.arch == "patchtf":
+            from ..models.patchtf import model_summary as _summary
+            out.update(_summary(model))
+    except Exception as exc:                              # 报告失败不得阻断训练
+        out["summary_error"] = f"{type(exc).__name__}: {exc}"
+    out["n_params"] = int(n_params)
+    return out
+
+
 def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
                            opt: SeqOptions, arch_kwargs: dict | None = None) -> SeqFoldResult:
     """两阶段序列单折（协议与行级逐字一致，只是把"整折张量"换成"按 chunk 采样"）。"""
@@ -297,6 +318,7 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
                                      for w in inner_val], axis=0)
         sel = AG.select_tau_per_target(cont=cont_all, q_atom=q_all, y=y_all, mask=m_all,
                                        y_atom=ya_all,
+                                       min_placeholder_acc=opt.placeholder_tau_constraint,
                                        grid=np.linspace(0.05, 0.95, 19))
         tau_use = np.asarray(sel["tau"], dtype="float64")
         for w in inner_val:
@@ -413,10 +435,15 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
             ipreds[w] = predict_well_chunked(model, X, cfg, opt, dev)
         sc = score_wells(ipreds, inner_val, cache, opt, labels=labels_tr)
         from ..inference import atomic_gate as AG
+        ya_final = None
+        if all(labels_tr[w].get("y_atom") is not None for w in inner_val):
+            ya_final = np.concatenate([np.asarray(labels_tr[w]["y_atom"], dtype="float64")
+                                       for w in inner_val], axis=0)
         sel = AG.select_tau_per_target(cont=M.decode_continuous(
             {k: np.concatenate([ipreds[w][k] for w in inner_val]) for k in OUT_KEYS}),
             q_atom=np.concatenate([ipreds[w]["q_atom"] for w in inner_val]),
-            y=sc["y_true"], mask=sc["mask"])
+            y=sc["y_true"], mask=sc["mask"], y_atom=ya_final,
+            min_placeholder_acc=opt.placeholder_tau_constraint)
         tau_info = {"tau": [float(v) for v in sel["tau"]],
                     "objective": float(sel["objective"]),
                     "plateau": {k: [float(x) for x in v] for k, v in sel["plateau"].items()},
@@ -543,9 +570,9 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
         inner_val_wells=list(inner_val), fit_wells=list(scaler.fit_wells), scaler=scaler,
         target=dict(target), phys_params=phys, seconds=time.time() - t0, hist1=hist1,
         hist2=hist2, resumable=resumable, coverage=cov, labels=labels_va,
-        model_summary={"arch": opt.arch, "n_params": int(sum(
-            p.numel() for p in model2.parameters())), "chunk": opt.chunk,
-            "overlap": opt.overlap}, spec_dict=opt.spec.as_dict() if opt.spec else {"key": "F1"})
+        model_summary=_model_summary_with_arch(model2, opt, n_params=int(sum(
+            p.numel() for p in model2.parameters()))),
+        spec_dict=opt.spec.as_dict() if opt.spec else {"key": "F1"})
 
 
 def _train_loop(model, ds, cfg: L.TrainConfig, eval_fn, opt: SeqOptions, dev,

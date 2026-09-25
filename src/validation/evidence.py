@@ -84,3 +84,20 @@ def training_time_log_valid(reports_dir: str | Path) -> tuple[bool, dict[str, An
 def disk_budget_ok(level: str | None) -> bool:
     """磁盘证据的唯一判定：只有 `level == "ok"` 才算通过。"""
     return str(level or "").lower() == "ok"
+
+def no_retune_from_feedback(log: dict[str, Any] | None) -> tuple[bool, dict[str, Any]]:
+    """提交日志必须逐条显式声明 ``retune_from_feedback is False``。
+
+    提交后利用 A 榜反馈回头调参会破坏验证协议。这里不读取任何“自我声明 True”
+    之类无法验证的字段，而是要求日志记录留下明确的反向证据；缺日志或旧格式记录
+    一律判 False（宁严勿松）。
+    """
+    ev: dict[str, Any] = {"present": isinstance(log, dict)}
+    if not isinstance(log, dict):
+        return False, {**ev, "reason": "缺少提交日志"}
+    records = log.get("records")
+    if not isinstance(records, list) or not records:
+        return False, {**ev, "reason": "提交日志 records 为空，无法形成反向证据"}
+    bad = [i for i, r in enumerate(records)
+           if not (isinstance(r, dict) and r.get("retune_from_feedback") is False)]
+    return bool(not bad), {**ev, "n_records": len(records), "bad_records": bad}

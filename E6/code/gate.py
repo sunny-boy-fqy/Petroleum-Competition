@@ -10,8 +10,9 @@
 
 判据（E6/P2 §7）
 --------------
-`oof_total ≥ 82.0`、`min_joint_atom_auc ≥ 0.9`、`min_atom_acc ≥ 0.99`、
-`min_atom_recall ≥ 0.98`，外加 12 项 mandatory 与 `cpu_inference_ok`。
+`oof_total ≥ 82.0`、`min_joint_atom_auc ≥ 0.9`、**部署 τ*** 下的
+`min_atom_acc ≥ 0.99`、`min_atom_recall ≥ 0.98`，外加 12 项 mandatory 与
+`cpu_inference_ok`。τ=0.5 的指标只作“原子头裸强度”附报，不替部署 τ* 过关。
 """
 from __future__ import annotations
 
@@ -106,6 +107,8 @@ def build_gate(reports: Path, *, cv_path=None, oof_path=None, contract_path=None
     joint_auc = _mean((atomic or {}).get("joint_atom_auc") or [])
     min_atom_acc = (atomic or {}).get("min_atom_acc")
     min_atom_recall = (atomic or {}).get("min_atom_recall")
+    min_atom_acc_tau_half = (atomic or {}).get("min_atom_acc_tau_half")
+    min_atom_recall_tau_half = (atomic or {}).get("min_atom_recall_tau_half")
     oof_total = None
     if cv:
         oof_total = (cv.get("total") if isinstance(cv, dict) and "total" in cv
@@ -188,6 +191,9 @@ def build_gate(reports: Path, *, cv_path=None, oof_path=None, contract_path=None
             "delta_note": checks_note,
             "joint_atom_auc": joint_auc, "min_atom_acc": min_atom_acc,
             "min_atom_recall": min_atom_recall, "gated_total": gated_total,
+            "min_atom_acc_tau_half": min_atom_acc_tau_half,
+            "min_atom_recall_tau_half": min_atom_recall_tau_half,
+            "atom_acc_primary_tau": "tau_star",
             "cont_slice_total": cont_slice_acc, "oof_sha256": oof_sha,
             "checks": checks, "prereg_errors": perrs, "aggregate": agg,
             "evidence": {"atomic_report": str(atomic_report or reports / "E6_atomic_report.json"),

@@ -147,11 +147,11 @@ def run(args) -> int:
         obs = mask[:, i] > 0
         truth = y_atom[:, i] & obs
         if obs.any():
-            acc_star[t] = float(((q_atom[:, i] >= tau[i]) == truth)[obs].mean())
-            acc_half[t] = float(((q_atom[:, i] >= 0.5) == truth)[obs].mean())
+            acc_star[t] = float(((q_atom[:, i] > tau[i]) == truth)[obs].mean())
+            acc_half[t] = float(((q_atom[:, i] > 0.5) == truth)[obs].mean())
     cost = AG.misclassification_cost_report(cont=cont, q_atom=q_atom, y=y, mask=mask, tau=tau)
     # 连续切片 = 非「三目标同时等于各自原子值」的行（与 E1/E3/E5 同口径）
-    cs = ~np.column_stack([y[:, i] == C.ATOM_VALUES[t]
+    cs = ~np.column_stack([FB.is_atom_value(y[:, i], t)
                            for i, t in enumerate(C.TARGETS)]).all(axis=1)
     cont_slice = M.score_of(y[cs], cont[cs], mask[cs])
     gated_slice = M.score_of(y[cs], AG.per_target_hard_switch(cont, q_atom, tau)[cs],

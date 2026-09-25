@@ -48,6 +48,7 @@ if HAS_TORCH:
         def __init__(self, ch: int, k: int = 3, dilation: int = 1, dropout: float = 0.1,
                      use_weight_norm: bool = True):
             super().__init__()
+            self.requested_dilation = int(dilation)
             self.dilation = ascend_safe_dilation(k, dilation)
             self.pad = (k - 1) * self.dilation // 2   # 居中 -> 非因果
             c1 = nn.Conv1d(ch, ch, k, dilation=self.dilation)
@@ -74,6 +75,7 @@ if HAS_TORCH:
             self.n_features = int(n_features)
             self.n_blocks = int(n_blocks)
             self.k = int(k)
+            self.dilation_base = int(dilation_base)
             self.dilation_max = int(dilation_max)
             self.stem = nn.Conv1d(self.n_features, channels, 1)
             blocks = []
@@ -87,7 +89,13 @@ if HAS_TORCH:
                 init_stats)
 
         def dilations(self) -> list[int]:
-            return [b.pad * 2 // max(self.k - 1, 1) for b in self.blocks]
+            """实际生效的逐块 dilation（Ascend 反传约束可能已截断）。"""
+            return [int(b.dilation) for b in self.blocks]
+
+        def requested_dilations(self) -> list[int]:
+            """构造时按 `dilation_max` 请求的逐块 dilation（未截断）。"""
+            return [min(int(self.dilation_base) ** i, int(self.dilation_max))
+                    for i in range(self.n_blocks)]
 
         def receptive_field(self) -> int:
             """理论感受野（点）：1 + Σ 2·pad（居中卷积两侧各 pad）。"""
@@ -107,8 +115,15 @@ def build_tcn(n_features: int, init_stats: dict | None = None, **kw) -> Any:
 
 
 def model_summary(model) -> dict[str, Any]:
+    actual = model.dilations() if hasattr(model, "dilations") else None
+    requested = (model.requested_dilations()
+                 if hasattr(model, "requested_dilations") else None)
     return {"arch": type(model).__name__, "n_params": count_parameters(model),
             "n_blocks": getattr(model, "n_blocks", None),
+            "dilation_max": getattr(model, "dilation_max", None),
+            "dilations": actual, "requested_dilations": requested,
+            "dilation_truncated": bool(actual is not None and requested is not None
+                                       and actual != requested),
             "receptive_field_points": (model.receptive_field()
                                        if hasattr(model, "receptive_field") else None),
             "non_causal": True}

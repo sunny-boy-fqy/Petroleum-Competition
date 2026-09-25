@@ -3,12 +3,13 @@
 
 护栏下限（E9/P0 §9.4，用的是 `constants.py` 里的**冻结锚点**）
 ------------------------------------------------------------
-    floor = max(PASS_LINE,                       # 75.0   官方及格线
-                B0_LOCAL_OOF  − GUARDRAIL_TOLERANCE,        # 80.382479 − 1.0
-                B0_A_BOARD    − GUARDRAIL_ABOARD_MARGIN)    # 82.2757   − 0.5  = 81.7757
+    local_floor = max(PASS_LINE,                         # 75.0
+                      B0_LOCAL_OOF − GUARDRAIL_TOLERANCE)  # 80.382479 − 1.0 = 79.382479
 
-候选必须 `oof_total ≥ floor`（且若已知 A 榜分，还要 `a_board ≥ B0_A_BOARD − margin`）才算
-通过护栏；**A 榜分未知时不假装通过**，只评估本地 OOF 那一半并显式标注。
+候选必须 `oof_total ≥ local_floor`；若已知 A 榜分，再单独校验
+`a_board ≥ B0_A_BOARD − GUARDRAIL_ABOARD_MARGIN`。两个锚点来自**不同尺度**
+（本地 OOF 与 A 榜有系统偏移），不得合并成同一个 floor，否则会静默把本地口径
+额外加严约 1.9 分。A 榜分未知时不假装通过，只评估本地 OOF 并显式标注。
 
 本脚本只**读**候选表：`status` 的更新（shortlisted/rejected）由
 `E9/code/choose_submission.py` 负责（单点写入，避免两处互相覆盖）。
@@ -60,10 +61,13 @@ def write_json(path, payload) -> Path:
 
 
 def guardrail_floor() -> dict[str, float]:
-    """护栏下限与它的三个来源（全部来自 `constants.py`，禁止在脚本里硬编码数字）。"""
+    """本地 OOF 护栏下限（只与同尺度锚点比较）。
+
+    A 榜锚点由 `run()` 另行计算为 `a_board_floor`，仅在候选已有 A 榜分时启用；
+    不能在本函数里与本地锚点取 max。
+    """
     parts = {"pass_line": float(C.PASS_LINE),
-             "b0_local_oof_minus_tol": float(C.B0_LOCAL_OOF - C.GUARDRAIL_TOLERANCE),
-             "b0_a_board_minus_margin": float(C.B0_A_BOARD - C.GUARDRAIL_ABOARD_MARGIN)}
+             "b0_local_oof_minus_tol": float(C.B0_LOCAL_OOF - C.GUARDRAIL_TOLERANCE)}
     return {**parts, "floor": float(max(parts.values()))}
 
 
@@ -254,8 +258,9 @@ def run(args) -> int:
             "pilot_std": None, "mde_units": C.EXPECTED_N_TRAIN_WELLS,
             "min_detectable_effect": None, "planned_task_training_h": 1.0,
             "mandatory_checks": list(CORE_CHECKS) + list(P0_CHECKS), "decisions_locked": [],
-            "notes": ("E9/P0：候选必须 oof_total ≥ max(75, B0_local−1, B0_aboard−0.5)="
-                      f"{floor['floor']:.4f}；A 榜未知只评估本地那一半"),
+            "notes": ("E9/P0：候选本地 OOF 必须 ≥ max(75, B0_local−1)="
+                      f"{floor['floor']:.4f}；若已知 A 榜分则另按 "  # noqa: E501
+                      f"B0_aboard−{C.GUARDRAIL_ABOARD_MARGIN} 单独校验"),
         })
     prereg = json.loads(prereg_path.read_text(encoding="utf-8"))
     perrs = GATES.validate_prereg(prereg)

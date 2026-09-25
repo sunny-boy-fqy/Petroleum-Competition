@@ -411,8 +411,10 @@ def run(args) -> int:
               "notes": ("fp32 落盘；full_retrain 固定 epoch 不早停；"
                         "折集成复用已注册权重（不重训）")}
     write_json(reports / "E10_final_train.json", report)
+    _log_seconds = float(report.get("seconds") or 0.0)
     write_json(reports / "training_time_log.json",
-               {"stage": "E10/P0", "folds": [{"fold": 0, "seconds": report["seconds"]}]})
+               {"stage": "E10/P0", "folds": [{"fold": 0, "seconds": _log_seconds}],
+                "valid": bool(_log_seconds > 0.0)})
     gate = {"gate_id": "E10_P0_gate", "stage": "E10", "p_stage": "P0",
             "created_at": report["created_at"], "aggregate": args.aggregate,
             "exploratory": bool(args.exploratory or args.smoke or args.dry_run),

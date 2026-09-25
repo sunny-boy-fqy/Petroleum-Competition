@@ -1,7 +1,7 @@
 """E9/P0 测试（**口径层，无 torch**）：候选汇总、护栏下限与排名。
 
-护栏下限必须是 **constants 里冻结锚点算出来的** `max(75.0, 80.382479−1.0, 82.2757−0.5)=81.7757`，
-不允许在脚本里硬编码数字——测试直接比对 `constants.py` 的值。
+本地护栏下限必须是 **constants 里冻结锚点算出来的** `max(75.0, 80.382479−1.0)=79.382479`，
+不允许在脚本里硬编码数字——测试直接比对 `constants.py` 的值；A 榜锚点单独校验。
 
 断言要点：
   * `oof_total` 由 OOF **可复算**（同一份 OOF 重算结果一致），并按它排名；
@@ -89,10 +89,11 @@ class TestE9Aggregate(unittest.TestCase):
 
     def test_guardrail_floor_from_frozen_anchors(self):
         rep = _run(self.root, self.cand, self.reports)
-        expect = max(C.PASS_LINE, C.B0_LOCAL_OOF - C.GUARDRAIL_TOLERANCE,
-                     C.B0_A_BOARD - C.GUARDRAIL_ABOARD_MARGIN)
+        expect = max(C.PASS_LINE, C.B0_LOCAL_OOF - C.GUARDRAIL_TOLERANCE)
         self.assertAlmostEqual(rep["guardrail"]["floor"], expect, places=9)
-        self.assertAlmostEqual(rep["guardrail"]["floor"], 81.7757, places=4)
+        self.assertAlmostEqual(rep["guardrail"]["floor"], 79.382479, places=4)
+        self.assertAlmostEqual(rep["guardrail"]["a_board_floor"],
+                               C.B0_A_BOARD - C.GUARDRAIL_ABOARD_MARGIN, places=9)
         self.assertFalse(rep["protocol_matched"])
         self.assertIn("protocol_matched=false", rep["protocol_note"])
 
@@ -126,7 +127,7 @@ class TestE9Aggregate(unittest.TestCase):
 
     def test_a_board_below_floor_blocks_even_if_local_passes(self):
         cand = json.loads(self.cand.read_text(encoding="utf-8"))
-        cand["candidates"][0]["a_board_score"] = 80.0        # < 81.7757
+        cand["candidates"][0]["a_board_score"] = 80.0        # < A 榜护栏 81.7757
         p = self.root / "cand_low_a.json"
         p.write_text(json.dumps(cand), encoding="utf-8")
         rep = _run(self.root, p, self.reports)

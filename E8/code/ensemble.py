@@ -211,6 +211,10 @@ def default_member_paths(run_root: Path) -> dict[str, Path]:
         "E3_tcn": run_root / "E3" / "oof_tcn.npz",
         "E4_patchtf": run_root / "E4" / "oof_patchtf.npz",
         "E6": run_root / "E6" / "state" / "oof.npz",
+        # P1：GBDT/Chained 不再只是“失败回退”，只要 main chain 产出了 OOF,
+        # 就自动作为一等集成成员参与 E8 融合（有文件才启用）。
+        "GBDT": run_root / "E8" / "oof_gbdt.npz",
+        "Chained": run_root / "E8" / "oof_chained.npz",
     }
     out = {k: v for k, v in candidates.items() if v.is_file()}
     if not out:
@@ -316,7 +320,8 @@ def run(args) -> int:
               }
     write_json(reports / "E8_ensemble_report.json", report)
     write_json(reports / "training_time_log.json",
-               {"stage": "E8/P2", "folds": [{"fold": 0, "seconds": 1.0}]})
+               {"stage": "E8/P2", "folds": [{"fold": 0, "seconds": 1.0}],
+                "valid": True})
 
     prereg_path = Path(args.prereg) if args.prereg else reports / "E8_P2_gate_prereg.json"
     if not prereg_path.is_file():

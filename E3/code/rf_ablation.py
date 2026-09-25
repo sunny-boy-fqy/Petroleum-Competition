@@ -48,9 +48,14 @@ def main(argv: list[str] | None = None) -> int:
             sub + ["--arch", arch, "--arch-kwargs", json.dumps(kw), "--tag", tag]))
         met_path = reports / f"E3_metrics_{tag}.json"
         met = json.loads(met_path.read_text(encoding="utf-8")) if met_path.is_file() else {}
+        model_summary = met.get("model", {}) or {}
         rows.append({"tag": tag, "arch": arch, "kwargs": kw, "rc": int(rc),
                      "oof_total": met.get("oof_total"),
-                     "n_params": met.get("model", {}).get("n_params"),
+                     "n_params": model_summary.get("n_params"),
+                     "dilations": model_summary.get("dilations"),
+                     "requested_dilations": model_summary.get("requested_dilations"),
+                     "dilation_truncated": model_summary.get("dilation_truncated"),
+                     "receptive_field_points": model_summary.get("receptive_field_points"),
                      "seconds": met.get("seconds_total"),
                      "exploratory": bool(args.exploratory)})
         print(f"[rf] {tag}: oof={rows[-1]['oof_total']} params={rows[-1]['n_params']} "
@@ -76,7 +81,8 @@ def main(argv: list[str] | None = None) -> int:
         "best_unet": _best(rows, lambda r: r["arch"] == "unet"),
         "best_tcn": _best(rows, lambda r: r["arch"] == "tcn"),
         "dilation_saturated_at_512": saturated,
-        "decision": ("512 与 64 无差异 -> 有效感受野已饱和，禁止继续加到 1024"
+        "decision": ("512 请求臂在 Ascend 上可能被截断为实际 dilation；必须以 "
+                     "`dilations`/`receptive_field_points` 复核后再解释 512 是否饱和"
                      if saturated else "512 仍有增量（或数据不足）-> 保留 512，暂不上 1024"),
         "seconds_total": round(time.time() - t0, 2),
         "note": ("exploratory 运行只做资源预检，结论不进 Gate 数值"

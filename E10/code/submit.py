@@ -28,6 +28,7 @@ sys.path.insert(0, str(V4))
 
 from src import constants as C  # noqa: E402
 from src.training import metrics as M  # noqa: E402
+from src.validation import evidence as EVID  # noqa: E402
 from src.validation import gates as GATES  # noqa: E402
 from src.versioning import registry as REG  # noqa: E402
 
@@ -112,6 +113,8 @@ def run(args) -> int:
               "a_board_score": (None if args.score is None else float(args.score)),
               "error": args.error, "reason": args.reason,
               "budget": {"per_day": int(args.budget_per_day), "used_before": used_today},
+              # 提交后禁止根据 A 榜反馈回头调参：写入显式反向证据，供 EVID 校验。
+              "retune_from_feedback": False,
               "frozen": bool(args.freeze and args.score is not None and not args.error)}
     rejected = None
     if not budget_ok:
@@ -170,20 +173,30 @@ def run(args) -> int:
         disk = disk_report(os.environ.get("V4_DATA_ROOT", "/"))
     except Exception as exc:
         disk = {"level": "unknown", "error": str(exc)}
+    atomic_ok, atomic_ev = EVID.atomic_precision_reported(reports)
+    resume_ok, resume_ev = EVID.checkpoint_resumable(reports)
+    time_ok, time_ev = EVID.training_time_log_valid(reports)
+    leak_ok, leak_ev = EVID.leakage_audit_ok(reports)
+    check_log = {"records": list(log.get("records", [])) + ([record] if args.dry_run else [])}
+    no_retune_ok, no_retune_ev = EVID.no_retune_from_feedback(check_log)
     checks = {
         "contract_ok": bool(not perrs),
-        "atomic_precision_reported": True,
+        "atomic_precision_reported": bool(atomic_ok),
         "disk_budget_ok": bool(disk.get("level") == "ok"),
-        "training_time_log_valid": bool((reports / "training_time_log.json").is_file()),
-        "checkpoint_resumable": True,
-        "no_label_leak": True,
+        "training_time_log_valid": bool(time_ok),
+        "checkpoint_resumable": bool(resume_ok),
+        "no_label_leak": bool(leak_ok),
         "submission_log_complete": bool(budget_ok and (args.dry_run or
                                                        log.get("records") is not None)),
         "zip_fingerprint_recorded": bool(zip_sha is not None),
         "budget_ok": budget_ok,
         "candidate_frozen_after_submit": bool(record["frozen"] or not args.freeze),
-        "no_retune_from_feedback": True,
+        "no_retune_from_feedback": bool(no_retune_ok),
     }
+    evidence = {"atomic": atomic_ev, "resumable": resume_ev, "time_log": time_ev,
+                "leakage": leak_ev, "no_retune": no_retune_ev}
+    report["evidence"] = evidence
+    write_json(reports / "E10_submission_report.json", report)
     result = {"checks": checks, "submission_recorded": bool(budget_ok and zip_sha)}
     try:
         agg = GATES.aggregate_gate(prereg, result)
@@ -196,6 +209,7 @@ def run(args) -> int:
             "nogo": bool(passed is False), "choice": args.choice,
             "candidate_id": candidate_id, "budget_ok": budget_ok,
             "checks": checks, "prereg_errors": perrs, "aggregate": agg, "disk": disk,
+            "evidence": evidence,
             "report_path": str(reports / "E10_submission_report.json")}
     write_json(reports / "E10_P2_gate.json", gate)
     print(json.dumps({"stage": "E10/P2", "choice": args.choice,

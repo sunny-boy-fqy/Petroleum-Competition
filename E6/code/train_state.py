@@ -291,7 +291,7 @@ def atom_metrics(y_atom, q_atom, tau_scalar: float, mask=None) -> dict:
     for i, t in enumerate(C.TARGETS):
         valid = (np.ones(y.shape[0], dtype=bool) if mm is None
                  else (mm if mm.ndim == 1 else mm[:, i]))
-        pred = q[valid, i] >= float(taus[i])
+        pred = q[valid, i] > float(taus[i])
         acc[t] = float((pred == y[valid, i]).mean()) if valid.any() else float("nan")
     return {"tau": [float(v) for v in taus], "tau_per_target": [float(v) for v in taus],
             "per_target": pr, "per_target_acc": acc,
@@ -637,7 +637,8 @@ def run(args) -> int:
         except Exception as exc:
             print(f"[E6/state] fold{k} 缓存写入失败（{exc}），不影响本次训练", file=sys.stderr)
         print(f"[E6/state] fold{k} state_auc={rec['state_auc']} "
-              f"min_atom_acc={m_half['min_acc']:.5f} min_recall={m_half['min_recall']:.5f} "
+              f"tau*_acc={m_best['min_acc']:.5f} tau*_rec={m_best['min_recall']:.5f} "
+              f"tau_half_acc={m_half['min_acc']:.5f} tau_half_rec={m_half['min_recall']:.5f} "
               f"tau={[round(float(v), 3) for v in tau]} frozen_ok={q_frozen_ok} "
               f"{rec['seconds']:.1f}s", flush=True)
 
@@ -690,9 +691,13 @@ def run(args) -> int:
     # ---------------- 汇总 + Gate
     recs_ok = bool(fold_records)
     aucs = [r["state_auc"] for r in fold_records if r["state_auc"] is not None]
-    min_acc = min([r["atom_metrics_tau_half"]["min_acc"] for r in fold_records] or [None])
-    min_recall = min([r["atom_metrics_tau_half"]["min_recall"] for r in fold_records]
+    min_acc = min([r["atom_metrics_tau_star"]["min_acc"] for r in fold_records] or [None])
+    min_recall = min([r["atom_metrics_tau_star"]["min_recall"] for r in fold_records]
                      or [None])
+    min_acc_half = min([r["atom_metrics_tau_half"]["min_acc"] for r in fold_records]
+                       or [None])
+    min_recall_half = min([r["atom_metrics_tau_half"]["min_recall"] for r in fold_records]
+                          or [None])
     report = {
         "stage": "E6", "p_stage": "P0", "tag": args.tag,
         "exploratory": bool(args.exploratory), "selection_score_only": True,
@@ -715,6 +720,9 @@ def run(args) -> int:
         "atom_metrics_tau_half": [r["atom_metrics_tau_half"] for r in fold_records],
         "atom_metrics_tau_star": [r["atom_metrics_tau_star"] for r in fold_records],
         "min_atom_acc": min_acc, "min_atom_recall": min_recall,
+        "min_atom_acc_tau_half": min_acc_half,
+        "min_atom_recall_tau_half": min_recall_half,
+        "atom_acc_primary_tau": "tau_star",
         "tau_source": "inner_oof_only",
         "tau_per_fold": [r["tau"] for r in fold_records],
         "no_interpolation": all(r["no_interpolation"]["ok"] for r in fold_records),
@@ -817,6 +825,7 @@ def run(args) -> int:
               "delta": delta, "paired_ci_low": paired_ci_low,
               "delta_source": "oof_gated_vs_CONST_per_well_bootstrap",
               "atom_acc": min_acc, "atom_recall": min_recall,
+              "atom_acc_tau_half": min_acc_half, "atom_recall_tau_half": min_recall_half,
               "joint_atom_auc": (float(np.mean(report["joint_atom_auc"]))
                                  if report["joint_atom_auc"] else None)}
     try:
@@ -829,12 +838,16 @@ def run(args) -> int:
             "exploratory": bool(args.exploratory or args.smoke), "passed": passed,
             "nogo": bool(passed is False), "state_auc": report["state_auc"],
             "min_atom_acc": min_acc, "min_atom_recall": min_recall,
+            "min_atom_acc_tau_half": min_acc_half,
+            "min_atom_recall_tau_half": min_recall_half,
             "checks": checks, "prereg_errors": perrs, "aggregate": agg, "disk": disk,
             "report_path": str(reports / "E6_atomic_report.json"),
             "checkpoints": ckpts}
     write_json(reports / "E6_P0_gate.json", gate)
     print(json.dumps({"stage": "E6/P0", "state_auc": report["state_auc"],
                       "min_atom_acc": min_acc, "min_atom_recall": min_recall,
+                      "min_atom_acc_tau_half": min_acc_half,
+                      "min_atom_recall_tau_half": min_recall_half,
                       "gate_passed": passed, "checks": checks},
                      ensure_ascii=False, indent=2))
     if args.exploratory or args.smoke or passed is None:

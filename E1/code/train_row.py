@@ -205,7 +205,7 @@ def oof_contract(oof: dict) -> dict:
     else:
         checks["sw_nonatom_p05_ok"] = bool(
             float(np.percentile(y_pred[non_atom, 2], 5)) >= C.SW_LOW_GUARD_NONATOM_P05_MIN)
-    hit = q_atom >= tau
+    hit = q_atom > tau
     atom_ok = np.ones_like(y_pred, dtype=bool)
     for t, name in enumerate(C.TARGETS):
         atom_ok[:, t] = (~hit[:, t]) | np.isclose(y_pred[:, t], C.ATOM_VALUES[name], atol=1e-9)

@@ -159,11 +159,11 @@ def aligned_loss(y_por, p_por, z_perm, zhat_perm, y_sw, p_sw, mask=None,
     m_perm = None if mask is None else mask[..., 1]
     m_sw = None if mask is None else mask[..., 2]
 
-    s_por = align_score_relative(y_por, p_por, 0.08, eps, alpha, beta)
+    s_por = align_score_relative(y_por, p_por, C.DELTA_POR, eps, alpha, beta)
     s_perm = align_score_log(z_perm, zhat_perm, alpha, beta, clamp=perm_clamp,
                             over_weight=perm_over_weight,
                             under_weight=perm_under_weight)
-    s_sw = align_score_relative(y_sw, p_sw, 0.05, eps, alpha, beta)
+    s_sw = align_score_relative(y_sw, p_sw, C.DELTA_SW, eps, alpha, beta)
     if slice_weight is not None:
         W = _as_slice_weight(slice_weight, s_por)
         m_por = W[..., 0] if m_por is None else m_por * W[..., 0]

@@ -41,6 +41,7 @@ import numpy as np  # noqa: E402
 
 from src import constants as C  # noqa: E402
 from src.data import row_dataset as RD  # noqa: E402
+from src.features import basic as FB  # noqa: E402
 from src.features import groups as G  # noqa: E402
 from src.inference import atomic_gate as AG  # noqa: E402
 from src.losses import score_aligned as SAL  # noqa: E402
@@ -205,9 +206,9 @@ def well_labels(cache, wells) -> dict:
         sw = np.asarray(lab["sw"], dtype="float64")
         out[w] = {"y": M.label_scale_stack(por, lab["perm_z"], sw),
                   "mask": np.asarray(lab["mask"], dtype="bool"),
-                  "y_atom": np.column_stack([por == C.ATOM_VALUES["POR"],
-                                             perm == C.ATOM_VALUES["PERM"],
-                                             sw == C.ATOM_VALUES["SW"]])}
+                  "y_atom": np.column_stack([F.is_atom_value(por, "POR"),
+                                             F.is_atom_value(perm, "PERM"),
+                                             F.is_atom_value(sw, "SW")])}
     return out
 
 
@@ -361,7 +362,7 @@ def eval_head(head, states, labels, wells, tau_por, dev) -> tuple[dict, dict]:
     rec = {"por_cont_acc": _por_acc_np(y, p, m), "por_gated_acc": _por_acc_np(y, gated, m)}
     for name, sel in (("por_eq_0", m & (y == 0.0)),
                       ("por_lt_0p1", m & (y < 0.1)),
-                      ("por_eq_atom", m & (y == C.ATOM_VALUES["POR"]))):
+                      ("por_eq_atom", m & FB.is_atom_value(y, "POR"))):
         rec[f"{name}_acc"] = (float(_por_acc_np(y[sel], p[sel], np.ones(int(sel.sum()),
                                                                        dtype=bool)))
                               if sel.any() else None)

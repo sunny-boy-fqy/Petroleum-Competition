@@ -550,7 +550,7 @@ def atom_slice_report(y_true: Any, y_pred: Any, mask: Any) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for name, sel in (("por_eq_0", obs & (por == 0.0)),
                       ("por_lt_0p1", obs & (por < 0.1)),
-                      ("por_eq_atom", obs & (np.abs(por - C.ATOM_VALUES["POR"]) <= 1e-9))):
+                      ("por_eq_atom", obs & F.is_atom_value(por, "POR"))):
         n = int(sel.sum())
         entry: dict[str, Any] = {"n_rows": n}
         if n:

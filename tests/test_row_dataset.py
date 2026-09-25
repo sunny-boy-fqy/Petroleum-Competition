@@ -176,6 +176,45 @@ class TestRowPipeline(unittest.TestCase):
         self.assertGreaterEqual(rep["por_lt_0p1"]["n_rows"], rep["por_eq_0"]["n_rows"])
         self.assertAlmostEqual(rep["por_eq_0"]["acc_por"], 1.0, places=6)
         self.assertIsInstance(rep["por_eq_0"]["n_rows"], int, "n_rows 必须是 int 而不是 float")
+        # C1：float32 分片往返后 POR 原子行仍必须被统计到。
+        self.assertGreater(rep["por_eq_atom"]["n_rows"], 0,
+                           "por_eq_atom 切片不应因 float32 往返而恒为空")
+        self.assertAlmostEqual(rep["por_eq_atom"]["acc_por"], 1.0, places=6)
+
+    def test_atom_values_survive_float32_shard_roundtrip(self):
+        """C1 回归：write_well_shard → read_well_shard 后原子判定仍正确。"""
+        from src.data import parse as P
+        from src.inference import atomic_gate as AG
+
+        with tempfile.TemporaryDirectory() as td:
+            cache = Path(td) / "cache"
+            n = 4
+            targets = np.zeros((n, 3), dtype="float64")
+            for i, t in enumerate(C.TARGETS):
+                targets[:, i] = C.ATOM_VALUES[t]
+            rec = P.WellRecord(
+                well_id="atom_rt", depth=np.arange(n, dtype="float32") * 0.1,
+                inputs=np.zeros((n, len(C.INPUT_COLUMNS)), dtype="float32"),
+                targets=targets, n_rows=n)
+            D.write_well_shard(rec, cache, "train")
+            sh = D.read_well_shard(cache, "atom_rt", "train")
+            self.assertEqual(sh["targets"].dtype, np.float32)
+            # 生产事实：POR/SW 经 float32 往返后已不与 Python 常量逐位相等。
+            self.assertNotEqual(float(sh["targets"][0, 0]), C.ATOM_VALUES["POR"])
+            self.assertNotEqual(float(sh["targets"][0, 2]), C.ATOM_VALUES["SW"])
+            lab = F.build_labels(sh["targets"], sh["target_missing"], sh["placeholder"])
+            self.assertTrue(lab["y_atom"].astype(bool).all())
+            for i, t in enumerate(C.TARGETS):
+                self.assertTrue(F.is_atom_value(sh["targets"][:, i], t).all(), t)
+            y = np.column_stack([lab["por"], np.power(10.0, lab["perm_z"]), lab["sw"]])
+            rep = RD.atom_slice_report(y, y, lab["mask"].astype(bool))
+            self.assertEqual(rep["por_eq_atom"]["n_rows"], n)
+            cost = AG.misclassification_cost_report(
+                cont=y, q_atom=np.ones((n, 3), dtype="float64"), y=y,
+                mask=lab["mask"], tau=np.zeros(3, dtype="float64"))
+            self.assertEqual(cost["POR"]["n_atom"], n)
+            self.assertEqual(cost["POR"]["n_missed_atom"], 0)
+            self.assertEqual(cost["POR"]["n_false_atom"], 0)
 
     def test_por_parameterization_can_represent_zero(self):
         """`por = por_max·sigmoid(g)`：g 负得多时必须能逼近 0（禁止 `0.1+softplus`）。"""

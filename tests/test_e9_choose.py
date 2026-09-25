@@ -45,7 +45,7 @@ def _fixture(root: Path, *, passing=(("PD1", 83.2), ("E6b", 82.0)),
     rows += [{"candidate_id": cid, "guardrail_pass": False, "oof_total": 60.0,
               "guardrail_reason": "冻结候选"} for cid in immutable]
     (reports / "E9_validation_report.json").write_text(json.dumps({
-        "guardrail": {"floor": 81.7757,
+        "guardrail": {"floor": 79.382479,
                       "anchors": {"B0_LOCAL_OOF": 80.382479, "B0_A_BOARD": 82.2757,
                                   "PASS_LINE": 75.0}},
         "protocol_note": "B0 协议不完全一致（protocol_matched=false）",
@@ -110,7 +110,7 @@ class TestChooseSubmission(unittest.TestCase):
         for key in ("choice", "reason", "candidate_oof", "guardrail_floor", "reference_oof",
                     "protocol_matched"):
             self.assertIn(key, d)
-        self.assertAlmostEqual(d["guardrail_floor"], 81.7757, places=4)
+        self.assertAlmostEqual(d["guardrail_floor"], 79.382479, places=4)
         self.assertFalse(d["protocol_matched"])
         self.assertIn("protocol_matched=false", d["protocol_note"])
         self.assertAlmostEqual(d["candidate_oof"], 83.2, places=6)

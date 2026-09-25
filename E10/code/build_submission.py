@@ -104,13 +104,6 @@ def _included(rel: Path) -> bool:
     return not rel.name.endswith(EXCLUDE_SUFFIX)
 
 
-def collect(root: Path) -> list[Path]:
-    out = []
-    for p in sorted(Path(root).rglob("*")):
-        if p.is_file() and _included(p.relative_to(root)):
-            out.append(p)
-    return out
-
 
 def requirements_audit(path: Path) -> dict:
     if not path.is_file():

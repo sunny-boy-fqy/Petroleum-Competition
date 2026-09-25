@@ -187,9 +187,9 @@ def well_labels(cache, wells: Sequence[str]) -> dict[str, dict]:
         sw = np.asarray(lab["sw"], dtype="float64")
         out[w] = {"y": M.label_scale_stack(por, lab["perm_z"], sw),
                   "mask": np.asarray(lab["mask"], dtype=bool),
-                  "y_atom": np.column_stack([por == C.ATOM_VALUES["POR"],
-                                             perm == C.ATOM_VALUES["PERM"],
-                                             sw == C.ATOM_VALUES["SW"]])}
+                  "y_atom": np.column_stack([F.is_atom_value(por, "POR"),
+                                             F.is_atom_value(perm, "PERM"),
+                                             F.is_atom_value(sw, "SW")])}
     return out
 
 

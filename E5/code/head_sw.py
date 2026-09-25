@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np  # noqa: E402
 
 from src import constants as C  # noqa: E402
+from src.features import basic as FB  # noqa: E402
 from src.features import groups as G  # noqa: E402
 from src.losses import score_aligned as SAL  # noqa: E402
 from src.portability import HAS_TORCH  # noqa: E402
@@ -184,7 +185,7 @@ def run(args) -> int:
         gated = sw_decode(sw_pred, q_sw if args.tau_source == "head" else q_backbone, tau)
         base_gated = sw_decode(base_sw, q_backbone, tau)
         valid = mask & (y >= args.valid_lo) & (y <= args.valid_hi)
-        placeholder = mask & (y == C.SW_PLACEHOLDER)
+        placeholder = mask & FB.is_atom_value(y, "SW")
         rec = {"fold": k, "best_epoch": best_epoch, "inner_sw_acc": inner_score,
                "tau": tau_info, "sw_mu": mu, "sw_sigma": sigma,
                "n_rows": int(y.shape[0]), "n_valid_rows": int(valid.sum()),
@@ -233,7 +234,7 @@ def run(args) -> int:
         np.ones_like(acc["mask"], dtype=bool)
     mask_all = acc["mask"].astype(bool)
     valid = mask_all & (acc["sw"] >= args.valid_lo) & (acc["sw"] <= args.valid_hi)
-    placeholder = mask_all & (acc["sw"] == C.SW_PLACEHOLDER)
+    placeholder = mask_all & FB.is_atom_value(acc["sw"], "SW")
     sw_valid = sw_acc_np(acc["sw"], acc["sw_pred"], valid)
     base_valid = sw_acc_np(acc["sw"], acc["base_sw"], valid)
     n_wells = len(well_ids)

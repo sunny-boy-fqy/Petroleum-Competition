@@ -101,8 +101,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--dropout", type=float, default=0.1)
     ap.add_argument("--patience", type=int, default=5)
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--chunk", type=int, default=1024)
-    ap.add_argument("--overlap", type=int, default=128)
+    ap.add_argument("--chunk", type=int, default=2048)
+    ap.add_argument("--overlap", type=int, default=256)
     ap.add_argument("--batch-chunks", type=int, default=4)
     ap.add_argument("--weight-kind", default="triangular",
                     choices=("triangular", "hann", "equal"))
@@ -116,6 +116,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--exploratory", action="store_true")
     ap.add_argument("--gate-threshold", type=float, default=81.0)
+    ap.add_argument("--placeholder-tau-constraint", type=float, default=0.985,
+                    help="τ 搜索时要求占位行 Acc ≥ 该值；与 E1 行级协议对齐")
     ap.add_argument("--tag", default="", help="产物后缀（消融用，避免互相覆盖）")
     return ap
 
@@ -200,6 +202,7 @@ def run_arch(args) -> int:
                             batch_chunks=args.batch_chunks, weight_kind=args.weight_kind,
                             max_wells=args.max_wells, smoke=args.smoke, resume=args.resume,
                             save_checkpoints=True, select_tau=not args.smoke,
+                            placeholder_tau_constraint=args.placeholder_tau_constraint,
                             scaler_prefix=f"E3_{args.arch}", arch=args.arch,
                             run_dir=run_dir / args.arch, scalers_dir=scalers,
                             tb_run_name=f"E3_{args.arch}_fold{k}")
@@ -277,9 +280,14 @@ def run_arch(args) -> int:
 
     budget_path = reports / "E3_param_budget.json"
     budget = json.loads(budget_path.read_text(encoding="utf-8")) if budget_path.is_file() else {}
+    model_summary = metrics.get("model") or {}
     budget[tag] = {"arch": args.arch, "arch_kwargs": kwargs,
-                   "n_params": (results[0].model_summary.get("n_params") if results else None),
+                   "n_params": model_summary.get("n_params"),
                    "chunk": args.chunk, "overlap": args.overlap, "rows_oof": metrics["n_rows"],
+                   "dilations": model_summary.get("dilations"),
+                   "requested_dilations": model_summary.get("requested_dilations"),
+                   "dilation_truncated": model_summary.get("dilation_truncated"),
+                   "receptive_field_points": model_summary.get("receptive_field_points"),
                    "seconds_total": metrics["seconds_total"],
                    "seconds_per_fold": [round(r.seconds, 2) for r in results]}
     write_json(budget_path, budget)
@@ -346,13 +354,19 @@ def run_arch(args) -> int:
             "boundary_summary": {"max_edge_gap": boundary["max_edge_gap"],
                                  "within_threshold": boundary["within_threshold"]},
             "metrics_path": str(reports / f"E3_metrics_{tag}.json"),
-            "oof_path": str(oof_path)}
+            "oof_path": str(oof_path),
+            "model_summary": metrics.get("model") or {},
+            "actual_dilations": (metrics.get("model") or {}).get("dilations"),
+            "dilation_truncated": (metrics.get("model") or {}).get("dilation_truncated")}
     write_json(reports / f"E3_gate_{tag}.json" if tag != "unet" and tag != "tcn"
                else reports / "E3_gate.json", gate)
     print(json.dumps({"arch": args.arch, "tag": tag, "oof_total": metrics["oof_total"],
                       "gate_passed": gate["passed"], "checks": checks,
                       "boundary_max_gap": boundary["max_edge_gap"],
                       "n_params": budget[tag]["n_params"], "exploratory": gate["exploratory"],
+                      "actual_dilations": budget[tag].get("dilations"),
+                      "requested_dilations": budget[tag].get("requested_dilations"),
+                      "dilation_truncated": budget[tag].get("dilation_truncated"),
                       "rss_growth_mb": mem["growth_mb"]},
                      ensure_ascii=False, indent=2))
     if not (args.exploratory or args.smoke) and gate["passed"]:
