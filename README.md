@@ -36,7 +36,7 @@
 
 | 项目 | 状态 |
 |---|---|
-| 代码实现 | E1–E10 模型/训练/推理/打包代码已实现；本次重构后全量测试 **894 项通过（跳过 3）** |
+| 代码实现 | E1–E10 模型/训练/推理/打包代码已实现；本次重构后全量测试 **895 项通过（跳过 3）** |
 | 本地口径层 | E0 数据契约、评分复算、折指纹、提交契约已通过 |
 | 云端训练 | **未完成**：正式 5 折 OOF、E1–E10 数值 Gate、Ascend 实机验证仍需平台任务 |
 | 最终提交 | **未生成**：需先完成云端训练与 E10 打包，且以官方 `result.zip` 为准 |
@@ -223,7 +223,8 @@ E0 契约 → E1 行级基线 → E2 特征 → E3 序列主干 → E4 多尺度
       训练、内折评估、outer 推理都不再逐 chunk 读盘；新增 `PreloadedSeqDataset`
       与 `RowScaler.transform_blocked`，在 16 GiB 主机内存下把 NPU 等待降到最低。
       E3 早停改为 gated proxy tau（与最终 Gate 口径对齐），fold cache/checkpoint
-      增加 `data_pipeline_rev`，代码/口径变化后旧缓存自动失效
+      增加 `data_pipeline_rev`，代码/口径变化后旧缓存自动失效；stage1/stage2 恢复
+      都会校验 spec/arch/pipeline_rev，旧权重不会被误加载
 - [x] **旧 checkpoint 自动迁移**：`tools/migrate_checkpoints.py` 在 E3/E4 启动前把旧
       torch/torch_npu `.pt` 重新保存为当前格式，避免反复出现 "file storing weights is old" 警告；
       新 checkpoint 写入 `checkpoint_format=2`，已迁移文件自动跳过

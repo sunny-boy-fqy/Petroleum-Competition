@@ -438,9 +438,19 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
         register_cleanup_paths([fold_dir / "last_prev.pt"])
         register_cache_dirs([Path(cache) / "tmp"])
         if opt.resume and (fold_dir / "last.pt").is_file():
-            rr = CK.load_for_resume(fold_dir / "last.pt", model2, optimizer=opt2)
-            resume_epoch = int(rr["epoch"])
-            resume_sched = rr.get("scheduler_state")
+            # 阶段 2 也必须校验兼容性：旧 spec/arch/数据管线版本的 last.pt
+            # 绝不能直接 load，否则会恢复错误权重并触发旧格式警告。
+            try:
+                last_man2 = CK.read_manifest(fold_dir / "last.pt")
+            except Exception:
+                last_man2 = None
+            if last_man2 is not None and _compatible(last_man2):
+                rr = CK.load_for_resume(fold_dir / "last.pt", model2, optimizer=opt2)
+                resume_epoch = int(rr["epoch"])
+                resume_sched = rr.get("scheduler_state")
+            else:
+                print(f"[seq fold{fold}] stage2 last.pt 与当前 spec/arch/pipeline_rev "
+                      f"不兼容，忽略并从头训练 stage2", file=sys.stderr, flush=True)
 
     save_last_hook = capacity_hook = None
     state = {"epoch": int(resume_epoch), "sched": None}

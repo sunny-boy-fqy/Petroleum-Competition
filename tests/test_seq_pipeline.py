@@ -290,6 +290,12 @@ class TestSeqFoldSmoke(unittest.TestCase):
         self.assertTrue(set(r.inner_val_wells).issubset(set(r.tr_wells)))
         self.assertEqual(set(r.inner_val_wells) & set(r.va_wells), set())
 
+    def test_stage2_resume_checks_pipeline_rev(self):
+        """旧 spec/arch/pipeline_rev 的 stage2 last.pt 绝不能被直接恢复。"""
+        src = (V4 / "src" / "training" / "seq_loop.py").read_text(encoding="utf-8")
+        self.assertIn("stage2 last.pt 与当前 spec/arch/pipeline_rev", src)
+        self.assertIn("SEQ_DATA_PIPELINE_REV", src)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
