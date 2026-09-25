@@ -192,6 +192,24 @@ class TestChunkDataset(unittest.TestCase):
         ds_again = SD.SeqChunkDataset(self.cache, self.wells, chunk=64, overlap=16, seed=0)
         np.testing.assert_allclose(ds_again[0]["X"].numpy(), X0, rtol=1e-6)
 
+    def test_preloaded_dataset_matches_disk_dataset(self):
+        """E3 优化：预加载整折后逐 chunk 切片，必须与旧磁盘 Dataset 逐值一致。"""
+        from src.data import row_dataset as RD
+        fit = RD.fit_scalers_from_wells(self.wells, self.cache, return_tensors=True)
+        scaler = fit["scaler"]
+        tensors = fit["tensors"]
+        tensors.X = scaler.transform_blocked(tensors.X)
+        pre = SD.PreloadedSeqDataset(tensors, self.wells, chunk=64, overlap=16, seed=0)
+        disk = SD.SeqChunkDataset(self.cache, self.wells, chunk=64, overlap=16, seed=0,
+                                  scaler=scaler)
+        self.assertEqual(pre.order_digest(), disk.order_digest())
+        self.assertEqual(pre.coverage(), disk.coverage())
+        for i in range(len(pre)):
+            a, b = pre[i], disk[i]
+            np.testing.assert_allclose(a["X"].numpy(), b["X"].numpy(), rtol=0.0, atol=0.0)
+            for key in ("por", "perm_z", "sw", "mask", "y_atom", "y_joint"):
+                np.testing.assert_array_equal(a[key].numpy(), b[key].numpy())
+
 
 @unittest.skipUnless(HAS_TORCH, "torch not installed")
 class TestSeqFoldSmoke(unittest.TestCase):

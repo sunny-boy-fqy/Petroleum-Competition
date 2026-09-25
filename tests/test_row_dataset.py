@@ -115,6 +115,23 @@ class TestRowPipeline(unittest.TestCase):
         np.testing.assert_allclose(s.transform(t.X), back.transform(t.X))
         self.assertIn("feature_names", s.to_dict())
 
+    def test_transform_blocked_matches_full(self):
+        """分块标准化必须与整表 transform 逐元素一致（E3 用它降峰值内存）。"""
+        t = RD.assemble(WELLS, self.cache, scaler=None, with_targets=False)
+        s = RD.RowScaler.fit(t.X[:200])
+        full = s.transform(t.X[:200])
+        blocked = s.transform_blocked(t.X[:200], block_rows=17)
+        np.testing.assert_allclose(full, blocked, rtol=0.0, atol=0.0)
+
+    def test_fit_scalers_can_return_tensors_opt_in(self):
+        """E3 用 return_tensors=True 复用整折张量；默认调用方保持旧返回结构。"""
+        fit = RD.fit_scalers_from_wells(WELLS[:4], self.cache, return_tensors=True)
+        self.assertIn("tensors", fit)
+        self.assertEqual(int(fit["tensors"].n_rows), int(fit["n_train_rows"]))
+        self.assertEqual(tuple(fit["tensors"].well_ids), tuple(WELLS[:4]))
+        fit_default = RD.fit_scalers_from_wells(WELLS[:2], self.cache)
+        self.assertNotIn("tensors", fit_default)
+
     def test_median_imputation_is_applied_on_transform(self):
         s = RD.RowScaler.fit(np.array([[1.0, 10.0], [3.0, 30.0]], dtype="float64"))
         out = s.transform(np.array([[np.nan, 30.0]], dtype="float64"))

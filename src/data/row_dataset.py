@@ -192,6 +192,26 @@ class RowScaler:
         filled = np.where(np.isfinite(X), X, self.median[None, :])
         return ((filled - self.mean[None, :]) / self.std[None, :]).astype("float32")
 
+    def transform_blocked(self, X: "np.ndarray", block_rows: int = 65536
+                          ) -> "np.ndarray":
+        """分块调用 ``transform``，峰值内存从 O(float64 整表) 降到 O(block)。
+
+        逐元素计算与整表 ``transform`` 一致，因此不改变数值结果；
+        只是避免 E3 在 584k×266 输入上一次性分配多份 float64。
+        """
+        arr = np.asarray(X)
+        if arr.ndim != 2:
+            raise ValueError(f"RowScaler.transform_blocked expects 2-D, got {arr.shape}")
+        if arr.shape[1] != self.median.shape[0]:
+            raise ValueError(f"RowScaler.transform_blocked: expected "
+                             f"{self.median.shape[0]} cols, got {arr.shape[1]}")
+        out = np.empty((arr.shape[0], arr.shape[1]), dtype="float32")
+        step = max(int(block_rows), 1)
+        for start in range(0, arr.shape[0], step):
+            stop = min(start + step, arr.shape[0])
+            out[start:stop] = self.transform(arr[start:stop])
+        return out
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "kind": "median_mean_std",
@@ -353,8 +373,13 @@ def assemble(wells: Sequence[str], cache_root: str | Path, scaler: RowScaler | N
 
 
 def fit_scalers_from_wells(train_wells: Sequence[str], cache_root: str | Path,
-                           spec=None) -> dict[str, Any]:
+                           spec=None, return_tensors: bool = False) -> dict[str, Any]:
     """由**显式给定的训练井**拟合标准化与目标尺度（折内 fit 的唯一入口）。
+
+    ``return_tensors=True`` 时额外返回 ``out["tensors"]``，即用于拟合的
+    ``FoldTensors``（X 尚未标准化）。E3 序列路径可复用它，避免训练时逐 chunk
+    重新读盘；默认 False 保持旧调用方行为不变。
+
 
     `fit_fold` 是"按 outer 折号"的语法糖；本函数供两阶段协议里的
     "inner-train 井"与"全部 outer-train 井"分别调用，语义完全一致：
@@ -376,6 +401,8 @@ def fit_scalers_from_wells(train_wells: Sequence[str], cache_root: str | Path,
            "train_wells": train_wells}
     if phys is not None:
         out["phys_params"] = phys
+    if return_tensors:
+        out["tensors"] = tr
     return out
 
 

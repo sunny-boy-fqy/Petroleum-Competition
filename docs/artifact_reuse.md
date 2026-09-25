@@ -62,11 +62,11 @@ v4 采用**两层持久化**：
 平台发送 `SIGTERM`，或手工执行：
 
 ```bash
-touch /code/workspace/v4/state/pause.flag
+touch "$V4_STATE_DIR/pause.flag"
 ```
 
 训练会在下一个 epoch 边界保存 `last.pt` 并退出，同时留下本地
-`/code/workspace/v4/state/pause.flag`。如果新任务启动时不清理它，训练循环会认为
+`$V4_STATE_DIR/pause.flag`。如果新任务启动时不清理它，训练循环会认为
 暂停仍然有效，表现为：
 
 ```text

@@ -269,6 +269,102 @@ if HAS_TORCH:
                 h.update(f"{self.wells[wi]}:{s}:{L};".encode())
             return h.hexdigest()[:16]
 
+    class PreloadedSeqDataset(Dataset):
+        """基于整折内存张量的 chunk 数据集（训练期不碰磁盘）。
+
+        与 :class:`SeqChunkDataset` 的差别：
+        - 输入不是 cache 路径，而是已经装配好的 ``row_dataset.FoldTensors``；
+        - ``__getitem__`` 直接从整折 ``X`` / labels 切片，不再逐 chunk 重新读井分片；
+        - 调用方应传入**已经标准化**的 ``tensors.X``；``scaler`` 只作为 loss 的
+          物理项元数据（列名），不会在 ``__getitem__`` 里二次 transform。
+        """
+
+        def __init__(self, tensors, wells: Sequence[str] | None = None,
+                     chunk: int = DEFAULT_CHUNK, overlap: int = DEFAULT_OVERLAP,
+                     seed: int = 42, epoch: int = 0, scaler=None,
+                     with_targets: bool | None = None):
+            self.tensors = tensors
+            self.X = tensors.X
+            all_wells = [str(w) for w in tensors.well_ids]
+            selected = all_wells if wells is None else [str(w) for w in wells]
+            lookup = {w: i for i, w in enumerate(all_wells)}
+            missing = [w for w in selected if w not in lookup]
+            if missing:
+                raise KeyError(f"PreloadedSeqDataset: tensors 中没有井 {missing}")
+            offsets = [int(x) for x in tensors.offsets]
+            self.wells = selected
+            self.offsets = offsets
+            self.well_slices: dict[str, tuple[int, int]] = {}
+            for w in selected:
+                i = lookup[w]
+                self.well_slices[w] = (offsets[i], offsets[i + 1])
+            self.chunk = int(chunk)
+            self.overlap = int(overlap)
+            self.seed = int(seed)
+            self.epoch = int(epoch)
+            # 约定：X 已标准化；scaler 只供 loss 读取列名，不在这里二次变换。
+            self.scaler = scaler
+            self.with_targets = (tensors.y_por is not None) if with_targets is None \
+                else bool(with_targets)
+            self.index: list[tuple[int, int, int]] = []      # (well_idx, start, length)
+            self.well_lengths: dict[str, int] = {}
+            for wi, w in enumerate(self.wells):
+                a, b = self.well_slices[w]
+                n = int(b - a)
+                self.well_lengths[w] = n
+                for s0, L in chunks_for(n, self.chunk, self.overlap):
+                    self.index.append((wi, s0, L))
+            rng = np.random.default_rng((self.seed, self.epoch))
+            self.order = rng.permutation(len(self.index)).tolist()
+
+        def __len__(self) -> int:
+            return len(self.index)
+
+        def set_epoch(self, epoch: int) -> None:
+            """每个 epoch 开始重算采样顺序；固定 seed/epoch 下可复现。"""
+            self.epoch = int(epoch)
+            rng = np.random.default_rng((self.seed, self.epoch))
+            self.order = rng.permutation(len(self.index)).tolist()
+
+        def _span(self, w: str, start: int, length: int) -> tuple[int, int]:
+            a, _b = self.well_slices[w]
+            return a + int(start), a + int(start) + int(length)
+
+        def __getitem__(self, i: int) -> dict[str, Any]:
+            wi, s0, L = self.index[self.order[i]]
+            w = self.wells[wi]
+            a, b = self._span(w, s0, L)
+            X = np.asarray(self.X[a:b])
+            item = {"X": torch.from_numpy(np.ascontiguousarray(X)),
+                    "well_idx": torch.tensor(wi, dtype=torch.long),
+                    "start": torch.tensor(int(s0), dtype=torch.long)}
+            if self.with_targets:
+                fields = (("por", "y_por"), ("perm_z", "y_perm_z"), ("sw", "y_sw"),
+                          ("mask", "mask"), ("y_atom", "y_atom"), ("y_joint", "y_joint"))
+                for out_key, attr in fields:
+                    v = getattr(self.tensors, attr, None)
+                    if v is not None:
+                        item[out_key] = torch.from_numpy(
+                            np.ascontiguousarray(np.asarray(v)[a:b]))
+            return item
+
+        def coverage(self) -> dict[str, Any]:
+            total = sum(len(chunks_for(n, self.chunk, self.overlap))
+                        for n in self.well_lengths.values())
+            ok = all(coverage_report(n, chunks_for(n, self.chunk, self.overlap))["complete"]
+                     for n in self.well_lengths.values())
+            return {"n_wells": len(self.wells), "n_chunks": total, "complete": bool(ok),
+                    "chunk": self.chunk, "overlap": self.overlap,
+                    "total_rows": int(sum(self.well_lengths.values()))}
+
+        def order_digest(self) -> str:
+            import hashlib
+            h = hashlib.sha256()
+            for i in self.order:
+                wi, s0, L = self.index[i]
+                h.update(f"{self.wells[wi]}:{s0}:{L};".encode())
+            return h.hexdigest()[:16]
+
     def collate_chunks(items: Sequence[dict[str, Any]]) -> dict[str, Any]:
         """把同长度的 chunk 拼成 batch（chunk 定长，因此可直接 stack）。"""
         out: dict[str, Any] = {}

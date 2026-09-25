@@ -35,6 +35,39 @@ from . import metrics as M
 OUT_KEYS = ("por", "perm_z", "sw", "q_atom", "q_joint")
 
 
+def _well_span(tensors, well: str) -> tuple[int, int]:
+    """整折 ``FoldTensors`` 中一口井的 row 区间 [a,b)。"""
+    ids = [str(w) for w in tensors.well_ids]
+    try:
+        i = ids.index(str(well))
+    except ValueError as exc:
+        raise KeyError(f"tensors 中没有井 {well!r}; wells={ids}") from exc
+    return int(tensors.offsets[i]), int(tensors.offsets[i + 1])
+
+
+def well_matrix_from_tensors(tensors, well: str) -> "np.ndarray":
+    """从整折张量取出单井特征矩阵（训练路径已经标准化时也适用）。"""
+    a, b = _well_span(tensors, well)
+    return np.asarray(tensors.X[a:b], dtype="float32")
+
+
+def labels_from_tensors(tensors, wells: Sequence[str] | None = None) -> dict[str, Any]:
+    """构造 ``score_wells`` 使用的逐井标签快照，避免训练/推理期反复读盘。"""
+    wells = [str(w) for w in (wells if wells is not None else tensors.well_ids)]
+    out: dict[str, Any] = {}
+    for w in wells:
+        a, b = _well_span(tensors, w)
+        out[w] = {
+            "y": M.label_scale_stack(tensors.y_por[a:b], tensors.y_perm_z[a:b],
+                                     tensors.y_sw[a:b]),
+            "mask": np.asarray(tensors.mask[a:b], dtype="float32"),
+            "y_atom": (np.asarray(tensors.y_atom[a:b], dtype="float32")
+                       if getattr(tensors, "y_atom", None) is not None else None),
+            "depth": np.asarray(tensors.depth[a:b], dtype="float64"),
+        }
+    return out
+
+
 @dataclass
 class SeqOptions:
     spec: Any = None
@@ -78,6 +111,7 @@ class SeqFoldResult:
     coverage: dict = field(default_factory=dict)
     model_summary: dict = field(default_factory=dict)
     spec_dict: dict = field(default_factory=dict)
+    labels: dict[str, Any] = field(default_factory=dict)
 
 
 def build_seq_model(arch: str, n_features: int, init_stats: dict | None = None, **kw):
@@ -128,23 +162,35 @@ def predict_well_chunked(model, X: "np.ndarray", cfg: L.TrainConfig, opt: SeqOpt
 
 
 # ---------------------------------------------------------------- 训练
-def score_wells(preds: dict, wells: Sequence[str], cache, opt: SeqOptions) -> dict[str, Any]:
-    """按井打分（官方口径；`missing_mode="drop"`）——直接读 labels 分片，避免整表常驻。"""
+def score_wells(preds: dict, wells: Sequence[str], cache, opt: SeqOptions,
+                labels: dict[str, Any] | None = None) -> dict[str, Any]:
+    """按井打分（官方口径；`missing_mode="drop"`）。
+
+    ``labels`` 为 ``None`` 时按旧路径逐井读 labels 分片；E3 训练/内折评估传入
+    ``labels_from_tensors(...)`` 的快照后完全不再碰磁盘。
+    """
     from ..data import dataset as D
     from ..features import basic as F
     from ..score import score_arrays
 
     y_true, y_pred, mask = [], [], []
     for w in wells:
-        sh = D.read_well_shard(cache, w, "train")
-        lab = F.build_labels(sh["targets"], sh["target_missing"], sh["placeholder"])
+        if labels is not None and w in labels:
+            lab = labels[w]
+            yt = np.asarray(lab["y"], dtype="float64")
+            m = np.asarray(lab["mask"], dtype="float32")
+        else:
+            sh = D.read_well_shard(cache, w, "train")
+            lab = F.build_labels(sh["targets"], sh["target_missing"], sh["placeholder"])
+            yt = M.label_scale_stack(lab["por"], lab["perm_z"], lab["sw"])
+            m = np.asarray(lab["mask"], dtype="float32")
         p = preds[w]
         cont = M.decode_continuous(p)
         tau = p.get("tau")
         gated = M.atom_gate(cont, p["q_atom"], tau) if tau is not None else cont
-        y_true.append(M.label_scale_stack(lab["por"], lab["perm_z"], lab["sw"]))
+        y_true.append(yt)
         y_pred.append(gated)
-        mask.append(np.asarray(lab["mask"], dtype="float32"))
+        mask.append(m)
     yt = np.concatenate(y_true) if y_true else np.zeros((0, 3))
     yp = np.concatenate(y_pred) if y_pred else np.zeros((0, 3))
     m = np.concatenate(mask) if mask else np.zeros((0, 3))
@@ -168,7 +214,7 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
     tr_wells, va_wells = RD.fold_wells(folds, fold)
     if opt.max_wells:
         tr_wells, va_wells = tr_wells[:opt.max_wells], va_wells[:opt.max_wells]
-    fit = RD.fit_scalers_from_wells(tr_wells, cache, spec=opt.spec)
+    fit = RD.fit_scalers_from_wells(tr_wells, cache, spec=opt.spec, return_tensors=True)
     scaler, target, phys = fit["scaler"], fit["target"], fit.get("phys_params")
     if opt.scalers_dir is not None:
         RD.save_scaler_json(Path(opt.scalers_dir) / f"{opt.scaler_prefix}_fold{fold}.json",
@@ -179,6 +225,17 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
                              "physics_params": phys.as_dict() if phys else None,
                              "note": "序列主干：尺度参数同样只由训练折拟合"})
     n_features = int(scaler.median.shape[0])
+
+    # ---- 整折数据只装配/标准化一次；训练与内折评估都从内存张量切片，不再逐 chunk 读盘。
+    tr_all = fit.get("tensors")
+    if tr_all is None:                                    # 兼容旧调用路径（正常不会触发）
+        tr_all = RD.assemble(tr_wells, cache, scaler=None, with_targets=True,
+                             spec=opt.spec, phys_params=phys)
+    tr_all.X = scaler.transform_blocked(tr_all.X)
+    labels_tr = labels_from_tensors(tr_all, tr_wells)
+    va_all = RD.assemble(va_wells, cache, scaler=scaler, with_targets=True,
+                         spec=opt.spec, phys_params=phys)
+    labels_va = labels_from_tensors(va_all, va_wells)
 
     inner_tr, inner_val = FR.inner_split(tr_wells, cfg.seed)
     if len(inner_val) < 1 or len(inner_tr) < 2:
@@ -195,9 +252,8 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
     select_dir = fold_dir / "select" if fold_dir is not None else None
     if select_dir is not None:
         select_dir.mkdir(parents=True, exist_ok=True)
-    ds_in = SD.SeqChunkDataset(cache, inner_tr, chunk=opt.chunk, overlap=opt.overlap,
-                               split="train", spec=opt.spec, phys_params=phys,
-                               seed=cfg.seed, epoch=0, scaler=scaler)
+    ds_in = SD.PreloadedSeqDataset(tr_all, inner_tr, chunk=opt.chunk, overlap=opt.overlap,
+                                   seed=cfg.seed, epoch=0, scaler=scaler)
 
     logger = None
     try:
@@ -206,13 +262,20 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
     except Exception:
         logger = None
 
+    tr_well_id_set = {str(w) for w in tr_all.well_ids}
+
     def eval_inner(m) -> dict:
         preds = {}
         for w in inner_val:
-            X = scaler.transform(np.asarray(
-                RD._well_feature_matrix(cache, w, "train", opt.spec, phys)[0], "float32"))
+            if str(w) in tr_well_id_set:
+                X = well_matrix_from_tensors(tr_all, w)
+            else:
+                # smoke 极小井数下 inner_split 可能退化为 outer-val；保留旧磁盘路径兜底。
+                X = scaler.transform(np.asarray(
+                    RD._well_feature_matrix(cache, w, "train", opt.spec, phys)[0],
+                    "float32"))
             preds[w] = predict_well_chunked(m, X, cfg, opt, dev)
-        sc = score_wells(preds, inner_val, cache, opt)
+        sc = score_wells(preds, inner_val, cache, opt, labels=labels_tr)
         return {"total": sc["total"], "acc_por": sc["acc_por"], "acc_perm": sc["acc_perm"],
                 "acc_sw": sc["acc_sw"]}
 
@@ -332,9 +395,8 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
     cfg2 = L.TrainConfig(**{**cfg.as_dict(), "epochs": max(best_epoch + 1, 1),
                             "patience": 10 ** 9})
     model2 = _mk().to(dev)
-    ds_all = SD.SeqChunkDataset(cache, tr_wells, chunk=opt.chunk, overlap=opt.overlap,
-                                split="train", spec=opt.spec, phys_params=phys,
-                                seed=cfg.seed, epoch=0, scaler=scaler)
+    ds_all = SD.PreloadedSeqDataset(tr_all, tr_wells, chunk=opt.chunk, overlap=opt.overlap,
+                                    seed=cfg.seed, epoch=0, scaler=scaler)
     opt2 = torch.optim.AdamW(model2.parameters(), lr=float(cfg.lr),
                              weight_decay=float(cfg.weight_decay))
     fold_dir = Path(opt.run_dir) / f"fold{fold}" if opt.run_dir is not None else None
@@ -416,23 +478,20 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
         CK.prune_keep_only(fold_dir, ("best.pt", "last.pt", "last_prev.pt"))
         resumable = CK.verify_resumable(fold_dir / "best.pt", _mk)
 
-    # ---- outer-val 只推理一次（分块 + 拼接）
+    # ---- outer-val 只推理一次（分块 + 拼接）；特征已常驻内存，不再读盘。
     pred: dict[str, Any] = {}
-    y_true, mask = [], []
     for w in va_wells:
-        X = scaler.transform(np.asarray(
-            RD._well_feature_matrix(cache, w, "train", opt.spec, phys)[0], "float32"))
+        X = well_matrix_from_tensors(va_all, w)
         pred[w] = predict_well_chunked(model2, X, cfg2, opt, dev)
         pred[w]["tau"] = np.asarray(tau_info["tau"], dtype="float64")
-    sc = score_wells(pred, va_wells, cache, opt)
+    sc = score_wells(pred, va_wells, cache, opt, labels=labels_va)
     if logger is not None:
         logger.close()
 
     from ..data import seq_dataset as _SD
     cov = {"chunk": opt.chunk, "overlap": opt.overlap, "weight_kind": opt.weight_kind,
            "n_chunks": int(sum(len(_SD.chunks_for(
-               int(np.asarray(RD._well_feature_matrix(cache, w, "train", opt.spec,
-                                                     phys)[0]).shape[0]),
+               int(_well_span(va_all, w)[1] - _well_span(va_all, w)[0]),
                opt.chunk, opt.overlap)) for w in va_wells)),
            "wells": len(va_wells), "rows": int(sc["n_rows"])}
     return SeqFoldResult(
@@ -441,7 +500,7 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
         tr_wells=list(tr_wells), inner_tr_wells=list(inner_tr),
         inner_val_wells=list(inner_val), fit_wells=list(scaler.fit_wells), scaler=scaler,
         target=dict(target), phys_params=phys, seconds=time.time() - t0, hist1=hist1,
-        hist2=hist2, resumable=resumable, coverage=cov,
+        hist2=hist2, resumable=resumable, coverage=cov, labels=labels_va,
         model_summary={"arch": opt.arch, "n_params": int(sum(
             p.numel() for p in model2.parameters())), "chunk": opt.chunk,
             "overlap": opt.overlap}, spec_dict=opt.spec.as_dict() if opt.spec else {"key": "F1"})
@@ -599,22 +658,35 @@ def assemble_oof_seq(results: Sequence["SeqFoldResult"], cache) -> dict[str, Any
     offset = 0
     for r in results:
         yt, yp, mask, ya, dep = [], [], [], [], []
+        labels_snap = getattr(r, "labels", None) or {}
         for w in r.va_wells:
-            sh = D.read_well_shard(cache, w, "train")
-            lab = F.build_labels(sh["targets"], sh["target_missing"], sh["placeholder"])
+            if w in labels_snap:
+                snap = labels_snap[w]
+                yt_w = np.asarray(snap["y"], dtype="float64")
+                mask_w = np.asarray(snap["mask"], dtype="float32")
+                ya_w = np.asarray(snap["y_atom"], dtype="float32")
+                dep_w = np.asarray(snap["depth"], dtype="float64")
+            else:
+                sh = D.read_well_shard(cache, w, "train")
+                lab = F.build_labels(sh["targets"], sh["target_missing"],
+                                     sh["placeholder"])
+                yt_w = M.label_scale_stack(lab["por"], lab["perm_z"], lab["sw"])
+                mask_w = np.asarray(lab["mask"], dtype="float32")
+                ya_w = np.asarray(lab["y_atom"], dtype="float32")
+                dep_w = np.asarray(sh["depth"], dtype="float64")
             p = r.pred[w]
             cont = M.decode_continuous(p)
             tau = np.asarray(p.get("tau", r.tau["tau"]), dtype="float64")
             gated = M.atom_gate(cont, p["q_atom"], tau)
-            yt.append(M.label_scale_stack(lab["por"], lab["perm_z"], lab["sw"]))
+            yt.append(yt_w)
             yp.append(gated)
-            mask.append(np.asarray(lab["mask"], dtype="float32"))
-            ya.append(np.asarray(lab["y_atom"], dtype="float32"))
-            dep.append(np.asarray(sh["depth"], dtype="float64"))
+            mask.append(mask_w)
+            ya.append(ya_w)
+            dep.append(dep_w)
             acc["cont"].append(cont)
             acc["q_atom"].append(np.asarray(p["q_atom"]))
             acc["q_joint"].append(np.asarray(p["q_joint"]))
-            acc["tau_per_row"].append(np.tile(tau[None, :], (len(lab["por"]), 1)))
+            acc["tau_per_row"].append(np.tile(tau[None, :], (len(yt_w), 1)))
         n = sum(len(x) for x in yt)
         well_ids += list(r.va_wells)
         acc["y_true"].append(np.concatenate(yt))
@@ -694,7 +766,8 @@ def boundary_report(preds_by_well: dict, cache, edge_m: float = 10.0,
 
 def fold_metrics_seq(res: "SeqFoldResult", cache, opt: SeqOptions) -> dict[str, Any]:
     """单折指标（序列版）：与行级 `fold_runner.fold_metrics` 同字段，便于并列比较。"""
-    sc = score_wells(res.pred, res.va_wells, cache, opt)
+    labels = getattr(res, "labels", None) or None
+    sc = score_wells(res.pred, res.va_wells, cache, opt, labels=labels)
     const = {w: {"por": np.full_like(np.asarray(res.pred[w]["por"], dtype="float64"),
                                      C.ATOM_VALUES["POR"]),
                  "perm_z": np.zeros_like(np.asarray(res.pred[w]["por"], dtype="float64")),
@@ -704,7 +777,7 @@ def fold_metrics_seq(res: "SeqFoldResult", cache, opt: SeqOptions) -> dict[str, 
                  "q_joint": np.zeros(np.asarray(res.pred[w]["por"]).size),
                  "tau": np.asarray([2.0, 2.0, 2.0])}      # τ>1 -> 不切换，保持常数
              for w in res.va_wells}
-    sconst = score_wells(const, res.va_wells, cache, opt)
+    sconst = score_wells(const, res.va_wells, cache, opt, labels=labels)
     return {"fold": res.fold, "n_rows": int(sc["n_rows"]), "total": float(sc["total"]),
             "por": float(sc["acc_por"]), "perm": float(sc["acc_perm"]),
             "sw": float(sc["acc_sw"]), "const_total": float(sconst["total"]),

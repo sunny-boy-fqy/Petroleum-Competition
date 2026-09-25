@@ -36,7 +36,7 @@
 
 | 项目 | 状态 |
 |---|---|
-| 代码实现 | E1–E10 模型/训练/推理/打包代码已实现；本次重构后全量测试 **889 项通过（跳过 3）** |
+| 代码实现 | E1–E10 模型/训练/推理/打包代码已实现；本次重构后全量测试 **892 项通过（跳过 3）** |
 | 本地口径层 | E0 数据契约、评分复算、折指纹、提交契约已通过 |
 | 云端训练 | **未完成**：正式 5 折 OOF、E1–E10 数值 Gate、Ascend 实机验证仍需平台任务 |
 | 最终提交 | **未生成**：需先完成云端训练与 E10 打包，且以官方 `result.zip` 为准 |
@@ -110,8 +110,8 @@ bash "$(find /code/workspace -name run_train.sh | head -1)" --mode smoke
 bash "$(find /code/workspace -name run_train.sh | head -1)" --mode stage --stage E1 --resume
 ```
 
-> **恢复训练前清理暂停标志**：平台 `SIGTERM` 或手工 `touch pause.flag` 后，本地会留下
-> `/code/workspace/v4/state/pause.flag`。`run_train.sh --mode all/stage/smoke` 启动时会自动清理它，
+> **恢复训练前清理暂停标志**：平台 `SIGTERM` 或手工 `touch "$V4_STATE_DIR/pause.flag"` 后，
+> 本地会留下 `pause.flag`。`run_train.sh --mode all/stage/smoke` 启动时会自动清理它，
 > 避免新任务在第一个 epoch 边界又立即 `TrainingPaused`。如果确实要保留，设置 `V4_KEEP_PAUSE_FLAG=1`。
 
 ### 1.4 本机无 torch 也可跑的口径层
@@ -219,6 +219,9 @@ E0 契约 → E1 行级基线 → E2 特征 → E3 序列主干 → E4 多尺度
       `runs/**/*.pkl`、提交包、候选/注册表写入 `/data/v4/artifacts`，新机器启动时自动恢复
 - [x] **E2→E3+ 自动特征选择**：`tools/select_feature_spec.py` 读取 `E2_ablation.json`，
       自动把唯一 ADOPT 的特征组（当前为 `F1+win`）传给 E3–E8/E10，不再全程默认 F1
+- [x] **E3/E4 序列数据管线 NPU 友好化**：整折特征只装配/标准化一次并常驻内存，
+      训练、内折评估、outer 推理都不再逐 chunk 读盘；新增 `PreloadedSeqDataset`
+      与 `RowScaler.transform_blocked`，在 16 GiB 主机内存下把 NPU 等待降到最低
 
 **审查闭环**：原始审查发现 1 个严重交付缺陷、7 个高优先级、8 个中优先级问题；其中绝大多数已由
 `6b2a580`、`5faf4e1`、`fafaf7c` 等提交修复。当前仍需特别关注的遗留项见

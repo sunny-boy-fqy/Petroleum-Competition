@@ -3,7 +3,7 @@
 > **原始报告**：[`../../docs/CODE_REVIEW.md`](../../docs/CODE_REVIEW.md)（项目工作区根目录，v4 仓库外）。
 > **原始审查基线**：commit `3fa65da`（2026-09-21）。
 > **本状态页代码快照**：commit `fafaf7c`（2026-09-24）。
-> **本次复核**：`./.venv-torch/bin/python tests/run_all.py` → Ran 889 tests, OK（skipped=3）。
+> **本次复核**：`./.venv-torch/bin/python tests/run_all.py` → Ran 892 tests, OK（skipped=3）。
 > **用途**：避免把历史审查报告中的问题当成“当前仍全部存在”，也避免在没有证据时宣布“已全部修复”。
 >
 > 本页只记录代码/测试可复核的处置状态；详细背景与复现命令仍以原始报告为准。
