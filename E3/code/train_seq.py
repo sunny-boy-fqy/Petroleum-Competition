@@ -172,6 +172,7 @@ def run_arch(args) -> int:
     # RSS 会涨 ~400 MB）。因此基线取**首个折跑完后的稳态 RSS**，检查的是
     # "后续折是否持续增长" —— 这才等价于"没有把分片/井矩阵攒在内存里"。
     base_rss = None
+    rss_start = SD.WellShardReader.rss_mb()
     for k in fold_list:
         cache_file = fold_cache / f"fold{k}.pkl"
         resume_stamp = {"spec": spec.as_dict(), "arch": args.arch, "arch_kwargs": kwargs}
@@ -219,10 +220,17 @@ def run_arch(args) -> int:
         print(f"[E3/{args.arch}] fold{k} done {r.seconds:.1f}s inner={r.inner_oof_total} "
               f"rss={SD.WellShardReader.rss_mb()}MiB", flush=True)
     rss_end = SD.WellShardReader.rss_mb()
-    SD.WellShardReader.assert_worker_budget(limit_mb=300.0, baseline_mb=float(base_rss or 0.0))
-    mem = {"rss_steady_mb": float(base_rss or 0.0), "rss_end_mb": rss_end,
-           "growth_mb": round(rss_end - float(base_rss or 0.0), 1), "limit_mb": 300.0,
-           "note": "稳态基线取首折后 RSS；检查的是后续折的持续增长（泄漏检测）"}
+    rss_steady = float(base_rss if base_rss is not None else rss_start)
+    # E3 现在整折预加载（F1+win 单折约 0.6–1 GB），不再适用旧版“每 worker 增量
+    # <300 MB”的硬预算；这里只报告 RSS，超过 13 GiB 给 OOM 预警，不中断流程。
+    mem = {"rss_start_mb": float(rss_start), "rss_steady_mb": rss_steady,
+           "rss_end_mb": rss_end, "growth_mb": round(rss_end - rss_steady, 1),
+           "peak_rss_mb": SD.WellShardReader.peak_rss_mb(), "limit_mb": None,
+           "note": ("E3/E4 整折预加载内存模型：不再使用 300 MiB worker 硬预算；"
+                    "超过 13 GiB 时需要关注 OOM")}
+    if rss_end > 13.0 * 1024:
+        mem["warning"] = f"RSS {rss_end:.0f} MiB 接近 16 GiB 主机内存上限"
+        print(f"!! [E3] {mem['warning']}", file=sys.stderr, flush=True)
 
     oof = SL.assemble_oof_seq(results, cache)
     tag = args.tag or args.arch

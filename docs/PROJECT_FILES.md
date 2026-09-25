@@ -286,6 +286,7 @@ v4/
 │   ├── sync_state.py             小状态持久化（checkpoint/OOF/report/scaler -> /data/v4/mirror）
 │   ├── artifact_store.py         **大成果持久化**（cache/pkl/zip/state -> /data/v4/artifacts）
 │   ├── select_feature_spec.py    从 E2_ablation.json 自动选择下游最优特征版本
+│   ├── migrate_checkpoints.py   旧 torch/torch_npu checkpoint -> 当前格式（E3/E4 启动前自动调用）
 │   ├── check_reuse_cache.py      检查 /data 上 E0/E1/E2 复用缓存是否齐备
 │   ├── sync_plan_stats.py        把实测行数同步进文档（**复用 plan_stats 的同一份正则**）
 │   ├── sync_prereg_templates.py  由 P 级计划的 ```json 块重建 33 份预注册模板（防手工副本漂移）

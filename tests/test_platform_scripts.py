@@ -527,6 +527,10 @@ class TestRunTrainAllModeRunsFullPipeline(unittest.TestCase):
         for token in ("task_status", "already done", "task_local_ready"):
             self.assertIn(token, self.src)
 
+    def test_checkpoint_migration_hooked_for_e3_e4(self):
+        self.assertIn('migrate_checkpoints_for "$RUN_ROOT/E3"', self.src)
+        self.assertIn('migrate_checkpoints_for "$RUN_ROOT/E4"', self.src)
+
     def test_stale_pause_flag_is_cleared_on_new_run(self):
         # 上次平台 SIGTERM / 手工暂停会在本地留下 pause.flag；新任务如果原样启动，
         # 训练循环会在第一个 epoch 边界再次训练暂停，表现为"刚恢复就 failed"。

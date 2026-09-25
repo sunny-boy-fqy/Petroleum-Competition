@@ -167,7 +167,24 @@ class WellShardReader:
     # ------------------------------------------------------------ 内存纪律
     @staticmethod
     def rss_mb() -> float:
-        """当前进程常驻内存（MiB；Linux ru_maxrss 单位为 KiB）。"""
+        """当前进程常驻内存 VmRSS（MiB）。
+
+        之前返回 ``ru_maxrss``（历史峰值），在多折/预加载场景下会让
+        "RSS 增量"只增不减，造成误判；这里优先读 ``/proc/self/status`` 的
+        当前 VmRSS，非 Linux 环境回退到 ``ru_maxrss``。
+        """
+        try:
+            with open("/proc/self/status", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        return round(int(line.split()[1]) / 1024.0, 1)
+        except Exception:
+            pass
+        return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 1)
+
+    @staticmethod
+    def peak_rss_mb() -> float:
+        """历史峰值 RSS（MiB）；仅用于报告，不参与 worker 预算判定。"""
         return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 1)
 
     @classmethod

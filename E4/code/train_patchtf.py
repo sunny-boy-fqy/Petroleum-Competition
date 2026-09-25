@@ -161,6 +161,7 @@ def run_variant(cache: Path, run_dir: Path, scalers: Path, spec, folds, fold_lis
     t0 = time.time()
     tracker = L.TimeTracker("E4", args.time_budget_h)
     results, base_rss = [], None
+    rss_start = SD.WellShardReader.rss_mb()
     for k in fold_list:
         opt = SL.SeqOptions(spec=spec, chunk=args.chunk, overlap=args.overlap,
                             batch_chunks=args.batch_chunks, weight_kind=args.weight_kind,
@@ -177,7 +178,10 @@ def run_variant(cache: Path, run_dir: Path, scalers: Path, spec, folds, fold_lis
         if base_rss is None:
             base_rss = SD.WellShardReader.rss_mb()
     rss_end = SD.WellShardReader.rss_mb()
-    SD.WellShardReader.assert_worker_budget(limit_mb=300.0, baseline_mb=float(base_rss or 0.0))
+    rss_steady = float(base_rss if base_rss is not None else rss_start)
+    if rss_end > 13.0 * 1024:
+        print(f"!! [E4] RSS {rss_end:.0f} MiB 接近 16 GiB 主机内存上限", file=sys.stderr,
+              flush=True)
     oof = SL.assemble_oof_seq(results, cache)
     gated = M.score_of(oof["y_true"], oof["y_pred"], oof["mask"])
     cont = M.score_of(oof["y_true"], oof["cont"], oof["mask"])
@@ -188,8 +192,11 @@ def run_variant(cache: Path, run_dir: Path, scalers: Path, spec, folds, fold_lis
             "inner_oof_mean": float(np.mean([r.inner_oof_total or np.nan for r in results])),
             "seconds": round(float(time.time() - t0), 2),
             "seconds_per_fold": [round(r.seconds, 2) for r in results],
-            "mem": {"rss_steady_mb": float(base_rss or 0.0), "rss_end_mb": rss_end,
-                    "growth_mb": round(rss_end - float(base_rss or 0.0), 1), "limit_mb": 300.0},
+            "mem": {"rss_start_mb": float(rss_start), "rss_steady_mb": rss_steady,
+                    "rss_end_mb": rss_end,
+                    "growth_mb": round(rss_end - rss_steady, 1),
+                    "peak_rss_mb": SD.WellShardReader.peak_rss_mb(), "limit_mb": None,
+                    "note": "E4 整折预加载：不再使用 300 MiB worker 硬预算"},
             "model": results[0].model_summary if results else {}}
 
 

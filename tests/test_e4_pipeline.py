@@ -136,8 +136,9 @@ class TestE4ScriptContract(unittest.TestCase):
 
     def test_run_train_dispatches_e4(self):
         src = (V4 / "run_train.sh").read_text(encoding="utf-8")
-        self.assertIn("E4) python3", src)
-        self.assertIn("E4/code/train_patchtf.py", src)
+        block = src[src.index("    E4)"):src.index("    E5)")]
+        self.assertIn('migrate_checkpoints_for "$RUN_ROOT/E4"', block)
+        self.assertIn("E4/code/train_patchtf.py", block)
 
     def test_help_lists_e4_knobs(self):
         import subprocess

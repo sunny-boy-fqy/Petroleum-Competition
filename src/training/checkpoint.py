@@ -52,6 +52,7 @@ def save_checkpoint(path: str | Path, model, meta: dict[str, Any] | None = None,
         "state_dict": _tensor_to_bf16(state) if bf16 else state,
         "dtype": "bfloat16" if bf16 else "float32",
         "format": 1,
+        "checkpoint_format": 2,
     }
     if optimizer is not None:
         payload["optimizer"] = optimizer.state_dict()
@@ -65,6 +66,7 @@ def save_checkpoint(path: str | Path, model, meta: dict[str, Any] | None = None,
         "path": str(p),
         "bytes": int(p.stat().st_size),
         "dtype": payload["dtype"],
+        "checkpoint_format": 2,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "torch": getattr(torch, "__version__", "unknown"),
         "git_revision": _git_revision(),

@@ -412,6 +412,20 @@ publish_artifacts_to_network() {
   python3 "$ARTIFACT_STORE" publish --local-root "$DATA_ROOT" --remote-root "$NETWORK_ROOT"     --max-gb "${V4_ARTIFACT_MAX_GB:-24}" --quiet
 }
 
+migrate_checkpoints_for() {
+  # 旧 torch/torch_npu checkpoint 重新保存为当前格式，避免每次 resume 都提示
+  # "file storing weights is old ... please use newer torch to re-store"。
+  local root="$1"
+  [[ -f "$HERE/tools/migrate_checkpoints.py" ]] || return 0
+  [[ -d "$root" ]] || return 0
+  log "[checkpoint] 检查/迁移旧格式 checkpoint：$root"
+  if python3 "$HERE/tools/migrate_checkpoints.py" --root "$root" --quiet 2>&1 | tee -a "$LOG"; then
+    return 0
+  fi
+  log "!! [checkpoint] 迁移失败（不阻塞训练，后续仍会给出旧格式警告）"
+  return 0
+}
+
 resolve_feature_spec() {
   # 自动读取 E2 的唯一 ADOPT 结论；显式 V4_FEATURE_SPEC 优先。
   if [[ -n "${V4_FEATURE_SPEC:-}" ]]; then
@@ -517,6 +531,7 @@ run_stage() {
             --reports-dir "$REPORTS_DIR" --work-dir "$RUN_ROOT/E2" 2>&1 | tee -a "$LOG" || return 1
         fi ;;
     E3)
+        migrate_checkpoints_for "$RUN_ROOT/E3"
         # `--phase main|ablation|compare|all`；缺省 main 保持旧行为。
         # all = TCN 主配置 + U-Net 主配置 + 感受野消融 + 行级/序列受控对照。
         e3_phase="main"
@@ -602,7 +617,9 @@ PY
             --seq-oof "$e3_seq_oof" --row-oof "$e3_row_oof" \
             --reports-dir "$REPORTS_DIR" 2>&1 | tee -a "$LOG" || return 1
         fi ;;
-    E4) python3 "$HERE/E4/code/train_patchtf.py" \
+    E4)
+        migrate_checkpoints_for "$RUN_ROOT/E4"
+        python3 "$HERE/E4/code/train_patchtf.py" \
           --cache-root "$CACHE_ROOT" --reports-dir "$REPORTS_DIR" \
           --run-root "$RUN_ROOT" --spec "$FEATURE_SPEC" \
           "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" 2>&1 | tee -a "$LOG" ;;
