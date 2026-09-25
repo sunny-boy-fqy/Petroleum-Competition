@@ -175,7 +175,8 @@ def run_arch(args) -> int:
     rss_start = SD.WellShardReader.rss_mb()
     for k in fold_list:
         cache_file = fold_cache / f"fold{k}.pkl"
-        resume_stamp = {"spec": spec.as_dict(), "arch": args.arch, "arch_kwargs": kwargs}
+        resume_stamp = {"spec": spec.as_dict(), "arch": args.arch, "arch_kwargs": kwargs,
+                        "pipeline_rev": SL.SEQ_DATA_PIPELINE_REV}
         if args.resume and cache_file.is_file():
             try:
                 payload = pickle.loads(cache_file.read_bytes())

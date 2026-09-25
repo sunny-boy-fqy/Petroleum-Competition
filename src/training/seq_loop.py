@@ -34,6 +34,10 @@ from . import metrics as M
 
 OUT_KEYS = ("por", "perm_z", "sw", "q_atom", "q_joint")
 
+# 数据管线/早停口径版本号；写进 fold cache 与 checkpoint manifest，
+# 旧代码/旧口径的缓存与 checkpoint 一律不复用。
+SEQ_DATA_PIPELINE_REV = 2
+
 
 def _well_span(tensors, well: str) -> tuple[int, int]:
     """整折 ``FoldTensors`` 中一口井的 row 区间 [a,b)。"""
@@ -275,9 +279,31 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
                     RD._well_feature_matrix(cache, w, "train", opt.spec, phys)[0],
                     "float32"))
             preds[w] = predict_well_chunked(m, X, cfg, opt, dev)
+        # P0 修复：早停/选 best_epoch 必须对齐最终 gated 目标；旧实现对 inner-val
+        # 只算 continuous 分数，会出现“continuous 早停最好、gated Gate 最差”的错位。
+        from ..inference import atomic_gate as AG
+        cont_all = np.concatenate([M.decode_continuous(preds[w]) for w in inner_val],
+                                  axis=0)
+        q_all = np.concatenate([np.asarray(preds[w]["q_atom"], dtype="float64")
+                                for w in inner_val], axis=0)
+        y_all = np.concatenate([np.asarray(labels_tr[w]["y"], dtype="float64")
+                                for w in inner_val], axis=0)
+        m_all = np.concatenate([np.asarray(labels_tr[w]["mask"], dtype="float64")
+                                for w in inner_val], axis=0)
+        ya_all = None
+        if all(labels_tr[w].get("y_atom") is not None for w in inner_val):
+            ya_all = np.concatenate([np.asarray(labels_tr[w]["y_atom"], dtype="float64")
+                                     for w in inner_val], axis=0)
+        sel = AG.select_tau_per_target(cont=cont_all, q_atom=q_all, y=y_all, mask=m_all,
+                                       y_atom=ya_all,
+                                       grid=np.linspace(0.05, 0.95, 19))
+        tau_use = np.asarray(sel["tau"], dtype="float64")
+        for w in inner_val:
+            preds[w]["tau"] = tau_use
         sc = score_wells(preds, inner_val, cache, opt, labels=labels_tr)
         return {"total": sc["total"], "acc_por": sc["acc_por"], "acc_perm": sc["acc_perm"],
-                "acc_sw": sc["acc_sw"]}
+                "acc_sw": sc["acc_sw"], "inner_tau": [float(x) for x in tau_use],
+                "inner_tau_objective": float(sel["objective"])}
 
     # ---- 阶段 1 checkpoint：select_last.pt 每 epoch；select_best.pt 仅在 inner-OOF 提升时。
     opt1 = torch.optim.AdamW(model.parameters(), lr=float(cfg.lr),
@@ -291,7 +317,8 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
         want_spec = opt.spec.as_dict() if opt.spec else None
         return (man.get("arch") == opt.arch
                 and man.get("arch_kwargs") == arch_kwargs
-                and man.get("feature_spec") == want_spec)
+                and man.get("feature_spec") == want_spec
+                and man.get("data_pipeline_rev") == SEQ_DATA_PIPELINE_REV)
 
     if select_dir is not None and opt.resume and (select_dir / "last.pt").is_file():
         try:
@@ -329,6 +356,7 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
                               **dict(arch_kwargs)},
                     "arch_kwargs": arch_kwargs,
                     "physics_params": phys.as_dict() if phys else None,
+                    "data_pipeline_rev": SEQ_DATA_PIPELINE_REV,
                     "feature_spec": opt.spec.as_dict() if opt.spec else None}
 
         def save_select(epoch: int, rec: dict, model_, opt_, sched_) -> None:
@@ -377,10 +405,12 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
     if opt.select_tau and not opt.smoke:
         ipreds = {}
         for w in inner_val:
-            X = scaler.transform(np.asarray(
-                RD._well_feature_matrix(cache, w, "train", opt.spec, phys)[0], "float32"))
+            X = well_matrix_from_tensors(tr_all, w) if str(w) in tr_well_id_set else \
+                scaler.transform(np.asarray(
+                    RD._well_feature_matrix(cache, w, "train", opt.spec, phys)[0],
+                    "float32"))
             ipreds[w] = predict_well_chunked(model, X, cfg, opt, dev)
-        sc = score_wells(ipreds, inner_val, cache, opt)
+        sc = score_wells(ipreds, inner_val, cache, opt, labels=labels_tr)
         from ..inference import atomic_gate as AG
         sel = AG.select_tau_per_target(cont=M.decode_continuous(
             {k: np.concatenate([ipreds[w][k] for w in inner_val]) for k in OUT_KEYS}),
@@ -427,6 +457,7 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
                               **dict(arch_kwargs)},
                     "arch_kwargs": arch_kwargs,
                     "physics_params": phys.as_dict() if phys else None,
+                    "data_pipeline_rev": SEQ_DATA_PIPELINE_REV,
                     "feature_spec": opt.spec.as_dict() if opt.spec else None}
 
         def save_last(epoch: int, rec: dict, model, opt_, sched_) -> None:

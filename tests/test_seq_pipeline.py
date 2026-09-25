@@ -251,6 +251,9 @@ class TestSeqFoldSmoke(unittest.TestCase):
         select = Path(self._td.name) / "unet" / "fold0" / "select"
         self.assertTrue((select / "last.pt").is_file(), "阶段 1 必须每 epoch 落 last.pt")
         self.assertTrue((select / "best.pt").is_file(), "阶段 1 必须落 best.pt")
+        from src.training import checkpoint as CK
+        man = CK.read_manifest(select / "last.pt")
+        self.assertEqual(int(man.get("data_pipeline_rev", -1)), SL.SEQ_DATA_PIPELINE_REV)
         self.assertGreater(r.coverage["n_chunks"], 0)
 
     def test_tcn_fold_produces_full_length_output(self):

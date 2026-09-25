@@ -221,7 +221,9 @@ E0 契约 → E1 行级基线 → E2 特征 → E3 序列主干 → E4 多尺度
       自动把唯一 ADOPT 的特征组（当前为 `F1+win`）传给 E3–E8/E10，不再全程默认 F1
 - [x] **E3/E4 序列数据管线 NPU 友好化**：整折特征只装配/标准化一次并常驻内存，
       训练、内折评估、outer 推理都不再逐 chunk 读盘；新增 `PreloadedSeqDataset`
-      与 `RowScaler.transform_blocked`，在 16 GiB 主机内存下把 NPU 等待降到最低
+      与 `RowScaler.transform_blocked`，在 16 GiB 主机内存下把 NPU 等待降到最低。
+      E3 早停改为 gated proxy tau（与最终 Gate 口径对齐），fold cache/checkpoint
+      增加 `data_pipeline_rev`，代码/口径变化后旧缓存自动失效
 - [x] **旧 checkpoint 自动迁移**：`tools/migrate_checkpoints.py` 在 E3/E4 启动前把旧
       torch/torch_npu `.pt` 重新保存为当前格式，避免反复出现 "file storing weights is old" 警告；
       新 checkpoint 写入 `checkpoint_format=2`，已迁移文件自动跳过
