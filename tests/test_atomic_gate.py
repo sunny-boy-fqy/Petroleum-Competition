@@ -201,6 +201,13 @@ class TestHardSwitch(unittest.TestCase):
         mixed = (out != cont) & (out != av[None, :])
         self.assertFalse(bool(mixed.any()))
 
+    def test_nonfinite_cont_fails_fast(self):
+        """B-2：NaN/Inf 必须显式报错，不能伪装成 interpolation。"""
+        cont = np.array([[np.nan, 1.0, 2.0]], dtype="float64")
+        q = np.ones((1, 3), dtype="float64")
+        with self.assertRaises(FloatingPointError):
+            per_target_hard_switch(cont, q, [0.5, 0.5, 0.5])
+
     def test_tau_validation(self):
         cont = np.zeros((2, 3)); q = np.zeros((2, 3))
         with self.assertRaises(ValueError):
@@ -323,6 +330,15 @@ class TestSelectTau(unittest.TestCase):
         self.assertGreaterEqual(res["placeholder_acc"]["POR"], 0.99)
         tau_por = float(res["tau"][0])
         self.assertLess(tau_por, 0.5)   # 必须把 q=0.5 的占位行切到原子值
+
+    def test_nonfinite_select_tau_raises(self):
+        """B-2：τ 搜索拿到 NaN 连续预测时必须拒绝，而不是静默塌到 grid 边界。"""
+        cont = np.array([[np.nan, 1.0, 2.0]], dtype="float64")
+        q = np.ones((1, 3), dtype="float64")
+        y = np.ones((1, 3), dtype="float64")
+        mask = np.ones((1, 3), dtype="float64")
+        with self.assertRaises(FloatingPointError):
+            select_tau_per_target(cont=cont, q_atom=q, y=y, mask=mask)
 
     def test_extreme_probability_reproduces_atom(self):
         n = 50

@@ -138,7 +138,14 @@ def run_arch(args) -> int:
     for d in (reports, run_dir, scalers):
         d.mkdir(parents=True, exist_ok=True)
     if not (cache / "raw" / "train").is_dir():
-        print("[E3] FATAL: 缺少 raw 分片（先跑 run_train.sh --mode data）", file=sys.stderr)
+        print(
+            f"[E3] FATAL: 缺少 raw 分片：{cache / 'raw' / 'train'}\n"
+            "  请先部署数据并构建分片缓存（缺一不可）：\n"
+            "    bash run_train.sh --mode data   # 只部署 data/\n"
+            "    bash run_train.sh --mode e0     # 构建 cache/raw + labels\n"
+            "  或一条命令：bash run_train.sh --mode all --through 3\n"
+            "  若直接跑本脚本，请显式传 --cache-root <包含 raw/train 的 cache 根>。",
+            file=sys.stderr)
         return 4
 
     spec = G.spec_from_name(args.spec)

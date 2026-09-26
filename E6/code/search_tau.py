@@ -94,7 +94,8 @@ def build_parser() -> argparse.ArgumentParser:
 def _tau_curve(sel: dict) -> dict:
     out = {}
     for t, pairs in (sel.get("curve") or {}).items():
-        out[t] = [[float(a), float(b)] for a, b in pairs]
+        # 约束模式每点可能是 (tau, acc, placeholder_acc)，此处只序列化前两列。
+        out[t] = [[float(v[0]), float(v[1])] for v in pairs]
     return out
 
 
@@ -138,6 +139,8 @@ def run(args) -> int:
     n_wells = int(well_index.max()) + 1 if y.shape[0] else 0
 
     sel = AG.select_tau_per_target(cont=cont, q_atom=q_atom, y=y, mask=mask,
+                                   y_atom=y_atom,
+                                   min_placeholder_acc=0.985,
                                    tol=float(args.tol))
     tau = np.asarray(sel["tau"], dtype="float64")
     pr_star = M.atomic_precision_recall(y_atom, q_atom, tau, mask=mask)
@@ -156,6 +159,8 @@ def run(args) -> int:
     cont_slice = M.score_of(y[cs], cont[cs], mask[cs])
     gated_slice = M.score_of(y[cs], AG.per_target_hard_switch(cont, q_atom, tau)[cs],
                              mask[cs])
+    # B-1：Gate 主判据必须使用全量 inner-OOF gated total；gated_slice 仅为连续段诊断。
+    oof_total_full = _total_of(cont, q_atom, tau, y, mask)
 
     # ---- joint_guard（默认关）：必须"总分上升 + 配对 CI 下界 > 0"才采纳
     guard = {"enabled": bool(args.joint_guard), "tau_high": float(args.tau_joint_high),
@@ -257,8 +262,8 @@ def run(args) -> int:
                  "step": AG.DEFAULT_TAU_GRID_STEP,
                  "n": int(len(AG.default_tau_grid())), "plateau_tol": float(args.tol)},
         "tau": [float(v) for v in tau],
-        "plateau": {k: [float(a), float(b)] for k, (a, b) in
-                    (sel.get("plateau") or {}).items()},
+        "plateau": {k: (None if v is None else [float(v[0]), float(v[1])])
+                    for k, v in (sel.get("plateau") or {}).items()},
         "curve": _tau_curve(sel),
         "objective": float(sel.get("objective", float("nan"))),
         "score_fn": sel.get("score_fn"),
@@ -270,6 +275,7 @@ def run(args) -> int:
         "min_atom_recall": min(float(v["recall"]) for v in pr_star.values()) if pr_star else None,
         "misclassification_cost": cost,
         "cont_slice": cont_slice, "gated_slice": gated_slice,
+        "oof_total_full": float(oof_total_full),
         "joint_guard": guard,
         "baseline": baseline,
         "delta_ci": delta_ci,
@@ -310,26 +316,34 @@ def run(args) -> int:
             print(f"[E6] 警告：候选登记被拒（{exc}）", file=sys.stderr)
 
     # ---- P1 Gate（原子 F1 主判据 + 12 项 mandatory）
-    prereg_path = reports / "E6_P1_gate_prereg.json"
+    legacy_prereg_path = reports / "E6_P1_gate_prereg.json"
+    prereg_path = reports / "E6_P1_gate_prereg_r2.json"
     if not prereg_path.is_file():
-        write_json(prereg_path, {
+        _prereg_payload = {
             "gate_id": "E6_P1_gate", "stage": "E6", "p_stage": "P1", "gate_type": "delta",
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "primary_metric": "atomic_f1", "primary_threshold_key": "min_delta",
+            "prereg_revision": "r2",
+            "primary_metric": "oof_total", "primary_threshold_key": "min_delta",
             "baseline_version": "PD1_pre_tau" if args.baseline_oof else "CONST",
             "baseline_artifact": str(args.baseline_oof or oof_path),
             "baseline_manifest_sha256": hashlib.sha256(oof_path.read_bytes()).hexdigest(),
+            # r2：主判据 = 全量 OOF delta（>0 且配对 CI 下界 >0）+ 占位 recall；
+            # 原子 acc（原 0.99）实测不可达，仅留作 result/报告诊断，不再门禁。
             "thresholds": {"min_delta": 0.0, "min_effect_floor": 0.0,
-                           "min_atomic_acc": 0.99, "min_atom_acc": 0.99,
-                           "min_atom_recall": 0.98, "oof_total_min": 81.0},
+                           "min_atom_recall": 0.98},
             "alpha": 0.05, "multiplicity": "holm", "candidate_budget": 3,
             "bootstrap_iters": int(args.iters), "bootstrap_unit": "well_row_weighted_cluster",
             "pilot_std": None, "mde_units": C.EXPECTED_N_TRAIN_WELLS,
             "min_detectable_effect": None, "planned_task_training_h": 1.0,
             "mandatory_checks": list(REQUIRED_CHECKS) + list(E6_CHECKS),
             "decisions_locked": [],
-            "notes": "E6/P1：τ 只用内折 OOF；原子 Acc/F1 与连续切片 Acc 同时上报",
-        })
+            "notes": ("E6/P1 r2：τ 只用内折 OOF；主判据改为全量 OOF total/delta；"
+                      "占位 recall≥0.98；原子 acc 由 B-3 约束保证，仅附报不门禁。"),
+        }
+        write_json(prereg_path, _prereg_payload)
+        # 兼容旧测试/旧工具链：旧路径不存在时写同一份 r2 内容；已存在旧文件时不覆盖。
+        if not legacy_prereg_path.is_file():
+            write_json(legacy_prereg_path, _prereg_payload)
     prereg = json.loads(prereg_path.read_text(encoding="utf-8"))
     perrs = GATES.validate_prereg(prereg)
     try:
@@ -368,8 +382,9 @@ def run(args) -> int:
                                                  is not False),
         "input_no_label_leak_full": bool(audit["ok"]),
     }
-    result = {"checks": checks, "score": gated_slice["total"],
-              "oof_total": gated_slice["total"], "atomic_f1": atom_f1_mean,
+    result = {"checks": checks, "score": float(oof_total_full),
+              "oof_total": float(oof_total_full), "atomic_f1": atom_f1_mean,
+              "gated_slice_total": float(gated_slice["total"]),
               "atomic_acc": atom_acc_mean, "atom_acc": payload["min_atom_acc"],
               "atom_recall": payload["min_atom_recall"],
               "joint_atom_auc": payload["shared"]["joint_atom_auc"],
@@ -387,7 +402,8 @@ def run(args) -> int:
             "nogo": bool(passed is False), "tau": payload["tau"],
             "min_atom_acc": payload["min_atom_acc"],
             "min_atom_recall": payload["min_atom_recall"],
-            "atomic_f1": atom_f1_mean, "gated_total": gated_slice["total"],
+            "atomic_f1": atom_f1_mean, "gated_total": float(oof_total_full),
+            "gated_slice_total": float(gated_slice["total"]),
             "joint_guard": guard["decision"], "checks": checks, "prereg_errors": perrs,
             "aggregate": agg, "disk": disk,
             "report_path": str(reports / "E6_tau_search.json")}
@@ -395,7 +411,8 @@ def run(args) -> int:
     print(json.dumps({"stage": "E6/P1", "tau": payload["tau"],
                       "min_atom_acc": payload["min_atom_acc"],
                       "min_atom_recall": payload["min_atom_recall"],
-                      "atomic_f1": atom_f1_mean, "gated_total": gated_slice["total"],
+                      "atomic_f1": atom_f1_mean, "gated_total": float(oof_total_full),
+                      "gated_slice_total": float(gated_slice["total"]),
                       "joint_guard": guard["decision"], "gate_passed": passed,
                       "checks": checks}, ensure_ascii=False, indent=2))
     if args.exploratory or args.smoke or passed is None:

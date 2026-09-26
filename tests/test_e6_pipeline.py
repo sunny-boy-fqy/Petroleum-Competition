@@ -69,8 +69,13 @@ class TestE6Pipeline(unittest.TestCase):
     def test_smoke_reports_and_mandatory_checks(self):
         gate = self._run()
         for name in ("E6_atomic_report.json", "E6_P0_gate.json", "E6_P0_gate_prereg.json",
-                     "training_time_log.json"):
+                     "E6_P0_gate_prereg_r2.json", "training_time_log.json"):
             self.assertTrue((self.reports / name).is_file(), name)
+        _p0_r2 = json.loads((self.reports / "E6_P0_gate_prereg_r2.json")
+                            .read_text(encoding="utf-8"))
+        self.assertEqual(_p0_r2.get("prereg_revision"), "r2")
+        self.assertNotIn("min_atom_acc", _p0_r2["thresholds"])
+        self.assertEqual(_p0_r2["thresholds"]["min_atom_recall"], 0.98)
         self.assertTrue((self.scalers / "E6_state_fold0.json").is_file())
         rep = json.loads((self.reports / "E6_atomic_report.json").read_text(encoding="utf-8"))
         self.assertEqual(rep["stage"], "E6")

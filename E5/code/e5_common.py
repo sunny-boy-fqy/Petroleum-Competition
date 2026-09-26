@@ -224,7 +224,7 @@ def collect_fold(args, cache, folds, k, spec, scalers, device) -> dict[str, Any]
     preds = {}
     for w in dict.fromkeys(list(va_wells) + list(inner_val)):
         preds[w] = SL.predict_well_chunked(model, scaled_well(cache, w, spec, scaler, phys),
-                                          cfg, opt, device)
+                                          cfg, opt, device, well_id=w)
     return {"fold": k, "tr_wells": tr_wells, "va_wells": va_wells,
             "inner_tr": list(inner_tr), "inner_val": list(inner_val),
             "states": states, "target": target, "scaler": scaler, "phys": phys,

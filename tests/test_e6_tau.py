@@ -103,7 +103,7 @@ class TestE6TauSearch(unittest.TestCase):
         self.assertEqual(set(rep["curve"]), set(C.TARGETS))
         for t in C.TARGETS:
             self.assertEqual(len(rep["curve"][t]), len(grid))
-            self.assertEqual(len(rep["plateau"][t]), 2)
+            self.assertTrue(rep["plateau"][t] is None or len(rep["plateau"][t]) == 2)
         for t in C.TARGETS:
             v = rep["per_target_atom_metrics_tau_star"][t]
             for key in ("precision", "recall", "f1"):
@@ -113,6 +113,17 @@ class TestE6TauSearch(unittest.TestCase):
         self.assertIsNotNone(rep["min_atom_acc"])
         self.assertIsNotNone(rep["min_atom_recall"])
         self.assertIn("total", rep["misclassification_cost"])
+        # B-1：全量 inner-OOF 与连续切片分数必须分开上报，Gate 主判据取全量。
+        self.assertIn("oof_total_full", rep)
+        self.assertIn("gated_slice", rep)
+        self.assertAlmostEqual(gate["gated_total"], rep["oof_total_full"], places=9)
+        self.assertAlmostEqual(gate["gated_slice_total"], rep["gated_slice"]["total"], places=9)
+        _p1_r2 = json.loads((self.reports / "E6_P1_gate_prereg_r2.json")
+                            .read_text(encoding="utf-8"))
+        self.assertEqual(_p1_r2.get("prereg_revision"), "r2")
+        self.assertNotIn("min_atom_acc", _p1_r2["thresholds"])
+        self.assertNotIn("oof_total_min", _p1_r2["thresholds"])
+        self.assertEqual(_p1_r2["thresholds"]["min_atom_recall"], 0.98)
         self.assertEqual(rep["joint_guard"]["decision"], "off")
         self.assertIsNone(gate["passed"], "smoke 不判 Gate")
         self.assertTrue(gate["checks"]["tau_t_inner_oof_only"])

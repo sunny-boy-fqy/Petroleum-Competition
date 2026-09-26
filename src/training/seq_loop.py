@@ -136,7 +136,7 @@ def build_seq_model(arch: str, n_features: int, init_stats: dict | None = None, 
 
 # ---------------------------------------------------------------- 推理
 def predict_well_chunked(model, X: "np.ndarray", cfg: L.TrainConfig, opt: SeqOptions,
-                         device) -> dict[str, "np.ndarray"]:
+                         device, well_id: str | None = None) -> dict[str, "np.ndarray"]:
     """整井分块推理 + 加权拼接 → 逐行输出（长度 == `X.shape[0]`）。"""
     require("torch")
     import torch
@@ -152,7 +152,15 @@ def predict_well_chunked(model, X: "np.ndarray", cfg: L.TrainConfig, opt: SeqOpt
             with L.amp_context(cfg, device):
                 out = model(torch.from_numpy(xs).to(device))
             for k in OUT_KEYS:
-                v = out[k].float().cpu().numpy()
+                v = out[k]
+                if not torch.isfinite(v).all():
+                    n_bad = int((~torch.isfinite(v)).sum().item())
+                    xabs = float(np.nanmax(np.abs(xs))) if xs.size else 0.0
+                    raise FloatingPointError(
+                        f"seq forward 非有限输出：well={well_id!r} key={k} "
+                        f"n_bad={n_bad} batch_chunks={[(int(a), int(b)) for a, b in batch]} "
+                        f"input_abs_max={xabs:.6g}；请先查 TCN/bf16/输入极端值")
+                v = v.float().cpu().numpy()
                 for j, (s, ln) in enumerate(batch):
                     per_key[k].append(v[j, :ln])
     stitched: dict[str, Any] = {}
@@ -300,7 +308,7 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
                 X = scaler.transform(np.asarray(
                     RD._well_feature_matrix(cache, w, "train", opt.spec, phys)[0],
                     "float32"))
-            preds[w] = predict_well_chunked(m, X, cfg, opt, dev)
+            preds[w] = predict_well_chunked(m, X, cfg, opt, dev, well_id=w)
         # P0 修复：早停/选 best_epoch 必须对齐最终 gated 目标；旧实现对 inner-val
         # 只算 continuous 分数，会出现“continuous 早停最好、gated Gate 最差”的错位。
         from ..inference import atomic_gate as AG
@@ -432,7 +440,7 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
                 scaler.transform(np.asarray(
                     RD._well_feature_matrix(cache, w, "train", opt.spec, phys)[0],
                     "float32"))
-            ipreds[w] = predict_well_chunked(model, X, cfg, opt, dev)
+            ipreds[w] = predict_well_chunked(model, X, cfg, opt, dev, well_id=w)
         sc = score_wells(ipreds, inner_val, cache, opt, labels=labels_tr)
         from ..inference import atomic_gate as AG
         ya_final = None
@@ -446,7 +454,8 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
             min_placeholder_acc=opt.placeholder_tau_constraint)
         tau_info = {"tau": [float(v) for v in sel["tau"]],
                     "objective": float(sel["objective"]),
-                    "plateau": {k: [float(x) for x in v] for k, v in sel["plateau"].items()},
+                    "plateau": {k: (None if v is None else [float(x) for x in v])
+                                for k, v in sel["plateau"].items()},
                     "score_fn": sel["score_fn"]}
 
     # ---- 阶段 2：全部 outer-train 重训 best_epoch
@@ -551,7 +560,7 @@ def run_two_phase_seq_fold(fold: int, folds: dict, cache, cfg: L.TrainConfig,
     pred: dict[str, Any] = {}
     for w in va_wells:
         X = well_matrix_from_tensors(va_all, w)
-        pred[w] = predict_well_chunked(model2, X, cfg2, opt, dev)
+        pred[w] = predict_well_chunked(model2, X, cfg2, opt, dev, well_id=w)
         pred[w]["tau"] = np.asarray(tau_info["tau"], dtype="float64")
     sc = score_wells(pred, va_wells, cache, opt, labels=labels_va)
     if logger is not None:

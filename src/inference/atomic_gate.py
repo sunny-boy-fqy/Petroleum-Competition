@@ -121,11 +121,12 @@ def _resolve_score_fn(score_fn, t: int):
 def _assert_no_interpolation(cont: np.ndarray, out: np.ndarray, hit_t: np.ndarray,
                              atom_value: float, col: int) -> None:
     """锁死"硬切换、无插值"：命中列必须精确等于原子值，未命中列必须与连续值逐位相同。"""
-    if not np.array_equal(out[hit_t, col], np.full(int(hit_t.sum()), atom_value)):
+    if not np.array_equal(out[hit_t, col], np.full(int(hit_t.sum()), atom_value),
+                          equal_nan=True):
         raise AssertionError(
             f"per_target_hard_switch: column {col} atom branch is not exactly the atom value")
     miss = ~hit_t
-    if not np.array_equal(out[miss, col], cont[miss, col]):
+    if not np.array_equal(out[miss, col], cont[miss, col], equal_nan=True):
         raise AssertionError(
             f"per_target_hard_switch: column {col} continuous branch was modified (interpolation?)")
 
@@ -148,6 +149,12 @@ def per_target_hard_switch(cont, q_atom, tau, atom_values: dict | None = None) -
     if q.shape != c.shape:
         raise ValueError(f"q_atom must have the same shape as cont {tuple(c.shape)}, got {tuple(q.shape)}")
     t = _tau_vector(tau)
+    for _name, _arr in (("cont", c), ("q_atom", q)):
+        if not np.isfinite(_arr).all():
+            _bad = [(j, int((~np.isfinite(_arr[:, j])).sum())) for j in range(_arr.shape[1])]
+            raise FloatingPointError(
+                f"per_target_hard_switch: {_name} 含 NaN/Inf（列,个数）={_bad}；"
+                "请先修前向/连续预测，禁止进入硬切换")
 
     hit = q > t[None, :]
     out = c.copy()
@@ -259,6 +266,12 @@ def select_tau_per_target(score_fn=None, cont=None, q_atom=None, y=None, mask=No
         raise ValueError(
             f"cont/q_atom/y/mask must all be (N,3): {tuple(c.shape)} {tuple(q.shape)} "
             f"{tuple(yy.shape)} {tuple(m.shape)}")
+    for _name, _arr in (("cont", c), ("q_atom", q), ("y", yy), ("mask", m)):
+        if not np.isfinite(_arr).all():
+            _bad = [(j, int((~np.isfinite(_arr[:, j])).sum())) for j in range(_arr.shape[1])]
+            raise FloatingPointError(
+                f"select_tau_per_target: {_name} 含 NaN/Inf（列,个数）={_bad}；"
+                "拒绝在非有限数据上搜索 τ")
     if grid is None:
         grid = default_tau_grid()
     grid = np.asarray(grid, dtype="float64").reshape(-1)
@@ -289,6 +302,11 @@ def select_tau_per_target(score_fn=None, cont=None, q_atom=None, y=None, mask=No
                 acc_curve[gi] = 0.0
                 continue
             acc_curve[gi] = float(fn(yy[obs, t], pred[obs], m[obs, t]))
+        if not np.isfinite(acc_curve).all():
+            _bad = int((~np.isfinite(acc_curve)).sum())
+            raise FloatingPointError(
+                f"select_tau_per_target[{name}]: acc_curve 含 {_bad} 个非有限值；"
+                "连续预测/评分含 NaN/Inf，τ 搜索不可信")
         obj_curve = float(C.TARGET_WEIGHTS[t]) * acc_curve
         ph_curve = None
         if ya_all is not None and min_placeholder_acc is not None:
@@ -300,6 +318,11 @@ def select_tau_per_target(score_fn=None, cont=None, q_atom=None, y=None, mask=No
                 for gi, tau in enumerate(grid):
                     pred = np.where(q[:, t] > tau, av[t], c[:, t])
                     ph_curve[gi] = float(fn(yy[atom_sel, t], pred[atom_sel], m[atom_sel, t]))
+                if not np.isfinite(ph_curve).all():
+                    _bad = int((~np.isfinite(ph_curve)).sum())
+                    raise FloatingPointError(
+                        f"select_tau_per_target[{name}]: placeholder_acc curve 含 {_bad} "
+                        "个非有限值；占位约束不可用，拒绝静默回退")
         if ph_curve is not None:
             feasible = ph_curve >= float(min_placeholder_acc) - 1e-12
             constraint_feasible[name] = bool(feasible.any())
@@ -319,7 +342,8 @@ def select_tau_per_target(score_fn=None, cont=None, q_atom=None, y=None, mask=No
                 plateau[name] = None
                 continue
             else:
-                placeholder_accs[name] = float(np.nanmax(ph_curve))
+                # ph_curve 已在上面校验有限；仅“无可行 τ”时记录最大占位 Acc。
+                placeholder_accs[name] = float(np.max(ph_curve))
         else:
             constraint_feasible[name] = None
             constrained[name] = False
