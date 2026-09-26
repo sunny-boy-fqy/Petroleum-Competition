@@ -18,9 +18,7 @@
 当前仍应特别关注的边界：
 
 1. **M5**：E6 原子阈值 `min_atom_acc=0.99`、`min_atom_recall=0.98` 未调整，实机可达性未证明。
-2. **H5 残余**：`E10/code/submit.py` 仍有 3 项硬编码 Gate check（`atomic_precision_reported`、
-   `checkpoint_resumable`、`no_label_leak`），且 `training_time_log_valid` 仍只查文件存在；
-   需要统一改为从 `src/validation/evidence.py` 读取。
+2. **H5 残余已复核为已修复**（2026-09-26实测）：`E10/code/submit.py:176-179` 四项均走 `EVID.*`（`atomic_precision_reported/checkpoint_resumable/training_time_log_valid/leakage_audit_ok`），`training_time_log_valid` 查 `training_time_log.json::valid is True`（`src/validation/evidence.py:74-81`）而非仅文件存在；无需再改。
 3. **L1**：数据缓存仍使用 `np.load(..., allow_pickle=True)`；需要显式安全边界或改为 `allow_pickle=False`。
 4. **L3**：项目根 `rules.md` 的旧“须过滤”表述与 §5.3 项目决策冲突；该文件在 v4 仓库外，需在项目级维护时同步。
 
@@ -35,7 +33,7 @@
 | H2 | E2 物理特征缓存绕过折内 `phys_params`，造成分布泄漏 | ✅ 已修复 | `src/data/row_dataset.py::_well_feature_matrix` 对含 `phys` 的 spec 强制使用折内参数；`tests/test_features_e2.py` |
 | H3 | `--resume` / checkpoint 承诺不成立 | ✅ 已修复 | 每 epoch 写 `last.pt`，保存实际 epoch，恢复 scheduler，seq 路径接入 resume，磁盘 hook 接入；`tests/test_training_core.py`、`tests/test_e1_pipeline.py`、`tests/test_seq_pipeline.py` |
 | H4 | E6 delta Gate `paired_ci_low=0.0` 恒不过；原子指标误用 `y>=0.5` | ✅ 已修复 | `E6/code/search_tau.py` 使用 `inner_oof.y_atom` 计算原子指标与真实配对 CI；`tests/test_e6_tau.py`、`tests/test_atomic_gate.py` |
-| H5 | E9/E10 多个 mandatory check 硬编码/恒真 | 🟡 部分修复 | E9 已统一走 `src/validation/evidence.py`；`tests/test_evidence.py`、`tests/test_e9_leakage.py`。**残余**：`E10/code/submit.py` 仍硬编码 3 项 True，`training_time_log_valid` 仍只查文件存在 |
+| H5 | E9/E10 多个 mandatory check 硬编码/恒真 | ✅ 已修复 | E9 已统一走 `src/validation/evidence.py`；`tests/test_evidence.py`、`tests/test_e9_leakage.py`。**E10残余经2026-09-26复核不存在**：`E10/code/submit.py:176-179` 四项均走 `EVID.*`，`training_time_log_valid` 查 `valid is True`（`evidence.py:74-81`） |
 | H6 | 候选/版本注册表写在临时目录，跨任务丢失 | ✅ 已修复 | `run_train.sh` 将 candidates/registry/state 放到本地 runtime，并随最终产物 publish；`V4_CANDIDATES`/`V4_REGISTRY` 可覆盖 |
 | H7 | `--mode all` 名实不符、E6/P2 未接线 | ✅ 已修复 | `run_train.sh --mode all` 已串行 14 个任务，支持 `--through` 断点续跑；E6 `p0/p1/p2/all` 已接线 |
 | M1 | E9 对 E1/E3 OOF 取错预测列 | ✅ 已修复 | `E9/code/aggregate_oof.py` 统一 OOF schema 读取规则；`tests/test_e9_aggregate.py` |
