@@ -1,0 +1,8 @@
+{
+  "version": "CONST",
+  "n_wells": 10,
+  "n_rows": 95948,
+  "sha256": "0a7652c23dc890c1",
+  "contract_ok": true,
+  "note": "CPU-light numpy baseline 70.4907, 可提交保底"
+}
